@@ -1,0 +1,11 @@
+pub mod affinities;
+pub mod config;
+pub mod embedding;
+pub mod kernels;
+pub mod kl_divergence;
+pub mod manifolds;
+pub mod matrices;
+pub mod metrics;
+pub mod optimizer;
+pub mod synthetic_data;
+pub mod visualisation;
