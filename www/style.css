@@ -65,6 +65,14 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 button.primary { background: #2980b9; border-color: #3498db; }
 button.primary:hover { background: #3498db; }
 
+.button-group {
+    display: flex;
+    gap: 8px;
+}
+.button-group button {
+    flex: 1;
+}
+
 /* Main area */
 .main {
     flex: 1;
