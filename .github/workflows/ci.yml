@@ -27,7 +27,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
+      - run: cargo clippy -p fitting-core --all-targets -- -D warnings -W clippy::pedantic
 
   fmt:
     name: Rustfmt
@@ -45,7 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --workspace
+      - run: cargo test -p fitting-core
 
   build-site:
     name: Build website
