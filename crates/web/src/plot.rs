@@ -19,8 +19,10 @@ pub fn draw_embedding(
     labels: Option<&[u32]>,
     projection: SphericalProjection,
 ) -> Result<(), JsValue> {
-    let Projection2D { coords: projected, scale } =
-        project_to_2d(points, n_points, ambient_dim, curvature, projection);
+    let Projection2D {
+        coords: projected,
+        scale,
+    } = project_to_2d(points, n_points, ambient_dim, curvature, projection);
 
     // Fixed bounds centered at origin
     let half = if curvature < 0.0 {

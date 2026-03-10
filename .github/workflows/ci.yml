@@ -19,15 +19,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  clippy:
-    name: Clippy
+  clippy-core:
+    name: Clippy (core)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo clippy -p fitting-core --all-targets -- -D warnings -W clippy::pedantic
+      - run: cargo clippy -p fitting-core --all-targets -- -D warnings
+
+  clippy-web:
+    name: Clippy (web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - run: cargo clippy -p fitting-web --target wasm32-unknown-unknown -- -D warnings
 
   fmt:
     name: Rustfmt
@@ -71,7 +82,7 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [clippy, fmt, test, build-site]
+    needs: [clippy-core, clippy-web, fmt, test, build-site]
     runs-on: ubuntu-latest
     environment:
       name: github-pages

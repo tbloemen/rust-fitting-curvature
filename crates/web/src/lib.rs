@@ -48,6 +48,7 @@ pub struct EmbeddingRunner {
 impl EmbeddingRunner {
     /// Create a runner from raw data (Random mode).
     #[wasm_bindgen(constructor)]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         canvas_id: &str,
         data: &[f64],
@@ -88,6 +89,7 @@ impl EmbeddingRunner {
     }
 
     /// Create a runner from a named synthetic dataset.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_synthetic(
         canvas_id: &str,
         dataset_name: &str,

@@ -111,7 +111,12 @@ impl Manifold for Euclidean {
         }
     }
 
-    fn scaling_loss(&self, _points: &[f64], n_points: usize, ambient_dim: usize) -> (f64, Vec<f64>) {
+    fn scaling_loss(
+        &self,
+        _points: &[f64],
+        n_points: usize,
+        ambient_dim: usize,
+    ) -> (f64, Vec<f64>) {
         // No-op for Euclidean — scaling loss only applies to hyperbolic.
         (0.0, vec![0.0; n_points * ambient_dim])
     }

@@ -31,7 +31,8 @@ impl EmbeddingState {
         let ambient_dim = manifold.ambient_dim(config.embed_dim);
 
         let p_base = compute_perplexity_affinities(data, n_points, n_features, config.perplexity);
-        let points = manifold.init_points(n_points, config.embed_dim, config.init_scale, config.seed);
+        let points =
+            manifold.init_points(n_points, config.embed_dim, config.init_scale, config.seed);
         let optimizer = RiemannianSGDMomentum::new(
             config.learning_rate,
             config.momentum_early,
