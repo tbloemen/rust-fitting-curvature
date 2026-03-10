@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Curvature Embedding — Rust/WASM</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="sidebar">
+        <h1>Constant Curvature Embedding</h1>
+
+        <div class="section">
+            <div class="section-title">Data Source</div>
+            <div class="toggle-group">
+                <button id="btn-random" class="active">Random</button>
+                <button id="btn-synthetic">Synthetic</button>
+            </div>
+
+            <div id="random-controls">
+                <div class="control-group">
+                    <label for="n_points">Points</label>
+                    <input type="number" id="n_points" value="200" min="10" max="5000">
+                </div>
+                <div class="control-group">
+                    <label for="n_features">Features</label>
+                    <input type="number" id="n_features" value="50" min="2" max="1000">
+                </div>
+            </div>
+
+            <div id="synthetic-controls" style="display:none">
+                <div class="control-group">
+                    <label for="dataset">Dataset</label>
+                    <select id="dataset">
+                        <option value="uniform_grid">Uniform Grid (Eucl.)</option>
+                        <option value="gaussian_blob">Gaussian Blob (Eucl.)</option>
+                        <option value="concentric_circles">Concentric Circles (Eucl.)</option>
+                        <option value="uniform_sphere">Uniform Sphere</option>
+                        <option value="von_mises_fisher">Von Mises-Fisher</option>
+                        <option value="antipodal_clusters">Antipodal Clusters</option>
+                        <option value="uniform_hyperbolic" selected>Uniform Hyperbolic</option>
+                        <option value="tree_structured">Tree Structured</option>
+                        <option value="hyperbolic_shells">Hyperbolic Shells</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="synth_n_points">Points</label>
+                    <input type="number" id="synth_n_points" value="300" min="10" max="5000">
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Embedding Parameters</div>
+            <div class="control-group">
+                <label for="curvature">Curvature</label>
+                <input type="number" id="curvature" value="-1" step="0.1">
+            </div>
+            <div class="control-group">
+                <label for="perplexity">Perplexity</label>
+                <input type="number" id="perplexity" value="30" min="5" max="100">
+            </div>
+            <div class="control-group">
+                <label for="iterations">Iterations</label>
+                <input type="number" id="iterations" value="500" min="10" max="5000">
+            </div>
+            <div class="control-group">
+                <label for="lr">Learning Rate</label>
+                <input type="number" id="lr" value="200" step="10">
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Display</div>
+            <div class="control-group">
+                <label for="render_every">Render every N iters</label>
+                <input type="number" id="render_every" value="10" min="1" max="100">
+            </div>
+        </div>
+
+        <button id="run-btn" class="primary">Run</button>
+    </div>
+
+    <div class="main">
+        <canvas id="canvas" width="700" height="700"></canvas>
+        <p id="status">Loading WASM module...</p>
+        <p class="loss-display" id="loss-display"></p>
+    </div>
+
+    <script src="./index.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,111 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    display: flex;
+    min-height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+    width: 280px;
+    padding: 20px;
+    background: #16213e;
+    border-right: 1px solid #333;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+.sidebar h1 { font-size: 1.2rem; margin-bottom: 20px; }
+
+.section { margin-bottom: 16px; }
+.section-title {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #888;
+    margin-bottom: 8px;
+}
+
+.control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-bottom: 10px;
+}
+label { font-size: 0.8rem; color: #aaa; }
+input, select {
+    background: #0f3460;
+    border: 1px solid #444;
+    color: #e0e0e0;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    width: 100%;
+}
+input:focus, select:focus {
+    outline: none;
+    border-color: #5dade2;
+}
+
+button {
+    background: #0f3460;
+    color: #e0e0e0;
+    border: 1px solid #555;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    width: 100%;
+    margin-top: 8px;
+}
+button:hover { background: #1a4a7a; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.primary { background: #2980b9; border-color: #3498db; }
+button.primary:hover { background: #3498db; }
+
+/* Main area */
+.main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+canvas {
+    background: white;
+    border-radius: 4px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+}
+#status {
+    margin-top: 12px;
+    font-size: 0.85rem;
+    color: #888;
+}
+.loss-display {
+    margin-top: 8px;
+    font-size: 0.85rem;
+    font-family: monospace;
+    color: #5dade2;
+}
+
+/* Data source toggle */
+.toggle-group {
+    display: flex;
+    gap: 0;
+    margin-bottom: 10px;
+}
+.toggle-group button {
+    flex: 1;
+    margin: 0;
+    border-radius: 0;
+    font-size: 0.75rem;
+    padding: 6px 8px;
+}
+.toggle-group button:first-child { border-radius: 4px 0 0 4px; }
+.toggle-group button:last-child { border-radius: 0 4px 4px 0; }
+.toggle-group button.active {
+    background: #2980b9;
+    border-color: #3498db;
+}

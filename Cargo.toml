@@ -1,0 +1,6 @@
+[workspace]
+members = ["crates/core", "crates/web"]
+resolver = "3"
+
+[profile.release]
+lto = true
