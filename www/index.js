@@ -1,6 +1,5 @@
 import {
-  run_embedding_animated,
-  run_synthetic_embedding,
+  EmbeddingRunner,
   generate_sample_data,
   get_dataset_names,
   default as init,
@@ -8,8 +7,10 @@ import {
 
 // State
 let dataSource = "random";
+let runner = null;
+let animationId = null;
 
-// DOM refs (set in main)
+// DOM refs
 let canvas, status, lossDisplay, runBtn;
 
 initialize();
@@ -43,13 +44,15 @@ function setupUI() {
 }
 
 function setupCanvas() {
-  const dpr = window.devicePixelRatio || 1.0;
-  const aspectRatio = canvas.width / canvas.height;
-  const size = canvas.parentNode.offsetWidth * 0.8;
-  canvas.style.width = size + "px";
-  canvas.style.height = size / aspectRatio + "px";
+  const container = canvas.parentNode;
+  // Use the smaller of available width/height to keep it square and fitting
+  const maxW = container.clientWidth - 32;
+  const maxH = window.innerHeight - 100;
+  const size = Math.min(maxW, maxH, 600);
   canvas.width = size;
-  canvas.height = size / aspectRatio;
+  canvas.height = size;
+  canvas.style.width = size + "px";
+  canvas.style.height = size + "px";
 }
 
 function setDataSource(source) {
@@ -66,35 +69,61 @@ function setDataSource(source) {
     source === "synthetic" ? "block" : "none";
 }
 
+function getParams() {
+  return {
+    curvature: parseFloat(document.getElementById("curvature").value),
+    perplexity: parseFloat(document.getElementById("perplexity").value),
+    iterations: parseInt(document.getElementById("iterations").value),
+    lr: parseFloat(document.getElementById("lr").value),
+    renderEvery: parseInt(document.getElementById("render_every").value),
+    eeFactor: parseFloat(document.getElementById("ee_factor").value),
+    eeIterations: parseInt(document.getElementById("ee_iterations").value),
+    centeringWeight: parseFloat(
+      document.getElementById("centering_weight").value,
+    ),
+    scalingLoss: document.getElementById("scaling_loss").value,
+    projection: document.getElementById("projection").value,
+  };
+}
+
 function runEmbedding() {
+  // Cancel any running animation
+  if (animationId !== null) {
+    cancelAnimationFrame(animationId);
+    animationId = null;
+  }
+  if (runner !== null) {
+    runner.free();
+    runner = null;
+  }
+
   runBtn.disabled = true;
-  status.textContent = "Running...";
+  status.textContent = "Initializing...";
   lossDisplay.textContent = "";
 
-  const curvature = parseFloat(document.getElementById("curvature").value);
-  const perplexity = parseFloat(document.getElementById("perplexity").value);
-  const iterations = parseInt(document.getElementById("iterations").value);
-  const lr = parseFloat(document.getElementById("lr").value);
-  const renderEvery = parseInt(document.getElementById("render_every").value);
+  const p = getParams();
 
-  // Use setTimeout so the UI paints "Running..." before we block
+  // Use setTimeout so the UI paints before we do the (potentially slow) init
   setTimeout(() => {
-    const t0 = performance.now();
     try {
       if (dataSource === "synthetic") {
         const dataset = document.getElementById("dataset").value;
         const nPoints = parseInt(
           document.getElementById("synth_n_points").value,
         );
-        run_synthetic_embedding(
+        runner = EmbeddingRunner.from_synthetic(
           "canvas",
           dataset,
           nPoints,
-          curvature,
-          iterations,
-          perplexity,
-          lr,
-          renderEvery,
+          p.curvature,
+          p.iterations,
+          p.perplexity,
+          p.lr,
+          p.eeFactor,
+          p.eeIterations,
+          p.centeringWeight,
+          p.scalingLoss,
+          p.projection,
         );
       } else {
         const nPoints = parseInt(document.getElementById("n_points").value);
@@ -102,24 +131,49 @@ function runEmbedding() {
           document.getElementById("n_features").value,
         );
         const data = generate_sample_data(nPoints, nFeatures, 42);
-        run_embedding_animated(
+        runner = new EmbeddingRunner(
           "canvas",
           data,
           nPoints,
           nFeatures,
-          curvature,
-          iterations,
-          perplexity,
-          lr,
-          renderEvery,
+          p.curvature,
+          p.iterations,
+          p.perplexity,
+          p.lr,
+          p.eeFactor,
+          p.eeIterations,
+          p.centeringWeight,
+          p.scalingLoss,
+          p.projection,
         );
       }
-      const elapsed = Math.ceil(performance.now() - t0);
-      status.textContent = `Done in ${elapsed}ms`;
+
+      status.textContent = "Running...";
+      const t0 = performance.now();
+
+      function animate() {
+        const hasMore = runner.step(p.renderEvery);
+        runner.render();
+
+        const iter = runner.iteration();
+        const loss = runner.loss();
+        lossDisplay.textContent = `iter=${iter}  loss=${loss.toFixed(4)}`;
+
+        if (hasMore) {
+          animationId = requestAnimationFrame(animate);
+        } else {
+          animationId = null;
+          const elapsed = Math.ceil(performance.now() - t0);
+          status.textContent = `Done in ${elapsed}ms (${iter} iterations)`;
+          runBtn.disabled = false;
+        }
+      }
+
+      animationId = requestAnimationFrame(animate);
     } catch (e) {
       status.textContent = "Error: " + e;
       console.error(e);
+      runBtn.disabled = false;
     }
-    runBtn.disabled = false;
-  }, 50);
+  }, 20);
 }
