@@ -433,8 +433,9 @@ fn circle_points(cx: f64, cy: f64, r: f64, n: usize) -> Vec<(f64, f64)> {
 
 /// Format a tick value, dropping unnecessary trailing zeros.
 fn format_tick(v: f64) -> String {
-    if v == v.round() {
-        format!("{}", v as i64)
+    let rounded = v.round();
+    if (v - rounded).abs() < 1e-9 {
+        format!("{}", rounded as i64)
     } else {
         format!("{:.1}", v)
     }
