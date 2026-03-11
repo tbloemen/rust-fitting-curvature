@@ -3,8 +3,9 @@ use web_sys::HtmlCanvasElement;
 
 use fitting_core::config::{ScalingLossType, TrainingConfig};
 use fitting_core::embedding::EmbeddingState;
+use fitting_core::metrics;
 use fitting_core::synthetic_data;
-use fitting_core::visualisation::SphericalProjection;
+use fitting_core::visualisation::{self, SphericalProjection};
 
 mod plot;
 
@@ -214,6 +215,53 @@ impl EmbeddingRunner {
     pub fn is_done(&self) -> bool {
         self.state.is_done()
     }
+
+    /// Total number of iterations configured.
+    pub fn total_iterations(&self) -> usize {
+        self.state.config().n_iterations
+    }
+
+    /// Compute all quality metrics after training.
+    /// Returns a JS object with metric names as keys.
+    pub fn compute_metrics(&self) -> Result<JsValue, JsValue> {
+        let n = self.state.n_points;
+        let high_dim_dist = self.state.high_dim_distances();
+        let embed_dist = self.state.embedded_distances();
+
+        // Project to 2D for visualization-space metrics
+        let proj = visualisation::project_to_2d(
+            &self.state.points,
+            n,
+            self.state.ambient_dim,
+            self.state.config().curvature,
+            self.projection,
+        );
+
+        let k = (self.state.config().perplexity as usize).min(n - 2).max(1);
+
+        // A. Local structure preservation (on manifold distances)
+        let trust = metrics::trustworthiness(&high_dim_dist, &embed_dist, n, k);
+        let cont = metrics::continuity(&high_dim_dist, &embed_dist, n, k);
+        let knn = metrics::knn_overlap(&high_dim_dist, &embed_dist, n, k);
+
+        let obj = js_sys::Object::new();
+        set_prop(&obj, "trustworthiness", trust)?;
+        set_prop(&obj, "continuity", cont)?;
+        set_prop(&obj, "knn_overlap", knn)?;
+
+        // D. Perceptual evaluation (on 2D projected coordinates)
+        if let Some(labels) = &self.labels {
+            let cdm = metrics::class_density_measure(&proj.coords, labels, n);
+            let cldm = metrics::cluster_density_measure(&proj.coords, labels, n);
+            let db_ratio =
+                metrics::davies_bouldin_ratio(&high_dim_dist, &proj.coords, labels, n);
+            set_prop(&obj, "class_density_measure", cdm)?;
+            set_prop(&obj, "cluster_density_measure", cldm)?;
+            set_prop(&obj, "davies_bouldin_ratio", db_ratio)?;
+        }
+
+        Ok(obj.into())
+    }
 }
 
 /// Generate sample data (Gaussian blob) for testing.
@@ -230,6 +278,11 @@ pub fn get_dataset_names() -> Vec<String> {
         .iter()
         .map(|s| s.to_string())
         .collect()
+}
+
+fn set_prop(obj: &js_sys::Object, key: &str, val: f64) -> Result<(), JsValue> {
+    js_sys::Reflect::set(obj, &JsValue::from_str(key), &JsValue::from_f64(val))?;
+    Ok(())
 }
 
 fn get_canvas(canvas_id: &str) -> Result<HtmlCanvasElement, JsValue> {

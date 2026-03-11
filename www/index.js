@@ -13,6 +13,7 @@ let mnistCache = null;
 
 // DOM refs
 let canvas, status, lossDisplay, runBtn, stopBtn, stepBtn;
+let progressContainer, progressBar, metricsPanel, metricsContent;
 
 initialize();
 
@@ -28,6 +29,10 @@ function main() {
   runBtn = document.getElementById("run-btn");
   stopBtn = document.getElementById("stop-btn");
   stepBtn = document.getElementById("step-btn");
+  progressContainer = document.getElementById("progress-container");
+  progressBar = document.getElementById("progress-bar");
+  metricsPanel = document.getElementById("metrics-panel");
+  metricsContent = document.getElementById("metrics-content");
 
   setupCanvas();
   setupUI();
@@ -242,8 +247,11 @@ async function createRunner() {
 
 function updateDisplay() {
   const iter = runner.iteration();
+  const total = runner.total_iterations();
   const loss = runner.loss();
-  lossDisplay.textContent = `iter=${iter}  loss=${loss.toFixed(4)}`;
+  lossDisplay.textContent = `iter=${iter}/${total}  loss=${loss.toFixed(4)}`;
+  const pct = (iter / total) * 100;
+  progressBar.style.width = pct + "%";
 }
 
 function stopEmbedding() {
@@ -269,7 +277,38 @@ function resetEmbedding() {
   runBtn.disabled = false;
   stepBtn.disabled = false;
   lossDisplay.textContent = "";
+  progressContainer.style.display = "none";
+  metricsPanel.style.display = "none";
   status.textContent = "Reset. Click Run or Step to start.";
+}
+
+const METRIC_LABELS = {
+  trustworthiness: ["Trustworthiness", "higher is better"],
+  continuity: ["Continuity", "higher is better"],
+  knn_overlap: ["KNN Overlap", "higher is better"],
+  class_density_measure: ["Class Density (CDM)", "higher is better"],
+  cluster_density_measure: ["Cluster Density (ClDM)", "higher is better"],
+  davies_bouldin_ratio: ["DB Ratio", "higher is better"],
+};
+
+function showMetrics() {
+  try {
+    const m = runner.compute_metrics();
+    let html = '<div class="metrics-grid">';
+    for (const [key, [label, hint]] of Object.entries(METRIC_LABELS)) {
+      if (m[key] !== undefined) {
+        html += `<div class="metric-row">
+          <span class="metric-name" title="${hint}">${label}</span>
+          <span class="metric-value">${m[key].toFixed(4)}</span>
+        </div>`;
+      }
+    }
+    html += "</div>";
+    metricsContent.innerHTML = html;
+    metricsPanel.style.display = "block";
+  } catch (e) {
+    console.error("Metrics computation failed:", e);
+  }
 }
 
 async function stepEmbedding() {
@@ -285,6 +324,8 @@ async function stepEmbedding() {
       await createRunner();
       runner.render();
       updateDisplay();
+      progressContainer.style.display = "block";
+      metricsPanel.style.display = "none";
       stopBtn.textContent = "Reset";
       stopBtn.disabled = false;
       runBtn.disabled = false;
@@ -308,6 +349,7 @@ async function stepEmbedding() {
       stopBtn.textContent = "Reset";
       stopBtn.disabled = false;
       stepBtn.disabled = true;
+      showMetrics();
     }
   } catch (e) {
     status.textContent = "Error: " + e;
@@ -339,7 +381,12 @@ async function runEmbedding() {
   stopBtn.disabled = false;
   stepBtn.disabled = true;
   status.textContent = "Running...";
-  if (!resuming) lossDisplay.textContent = "";
+  if (!resuming) {
+    lossDisplay.textContent = "";
+    metricsPanel.style.display = "none";
+  }
+  progressContainer.style.display = "block";
+  progressBar.style.width = "0%";
 
   const t0 = performance.now();
 
@@ -353,7 +400,15 @@ async function runEmbedding() {
     } else {
       animationId = null;
       const elapsed = Math.ceil(performance.now() - t0);
-      status.textContent = `Done in ${elapsed}ms (${runner.iteration()} iterations)`;
+      status.textContent = `Done in ${elapsed}ms — computing metrics...`;
+      progressBar.style.width = "100%";
+
+      // Compute metrics asynchronously (via setTimeout to let UI update)
+      setTimeout(() => {
+        showMetrics();
+        status.textContent = `Done in ${elapsed}ms (${runner.iteration()} iterations)`;
+      }, 10);
+
       runBtn.disabled = false;
       stopBtn.textContent = "Reset";
       stopBtn.disabled = false;
