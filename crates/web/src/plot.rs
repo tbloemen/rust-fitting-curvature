@@ -39,7 +39,7 @@ pub fn draw_embedding(
             })
             .fold(0.0f64, f64::max);
         // Always show at least the data with margin, capped at full disk view
-        (max_r * 1.3).max(0.05).min(1.15)
+        (max_r * 1.3).clamp(0.05, 1.15)
     } else if curvature > 0.0 {
         match projection {
             SphericalProjection::Stereographic => 1.15,
@@ -75,7 +75,10 @@ pub fn draw_embedding(
     };
 
     let title = match curvature {
-        k if k < 0.0 => format!("Hyperbolic (k={}) \u{2014} Poincar\u{e9} disk", format_curvature(k)),
+        k if k < 0.0 => format!(
+            "Hyperbolic (k={}) \u{2014} Poincar\u{e9} disk",
+            format_curvature(k)
+        ),
         k if k > 0.0 => format!("Spherical (k={}) \u{2014} {proj_name}", format_curvature(k)),
         _ => "Euclidean".to_string(),
     };
