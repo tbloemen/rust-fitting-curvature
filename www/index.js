@@ -12,8 +12,10 @@ let animationId = null;
 let mnistCache = null;
 
 // DOM refs
-let canvas, status, lossDisplay, runBtn, stopBtn, stepBtn;
+let canvas, status, lossDisplay, fpsDisplay, runBtn, stopBtn, stepBtn;
 let progressContainer, progressBar, metricsPanel, metricsContent;
+let lastFrameTime = 0;
+let fpsSmoothed = 0;
 
 initialize();
 
@@ -26,6 +28,7 @@ function main() {
   canvas = document.getElementById("canvas");
   status = document.getElementById("status");
   lossDisplay = document.getElementById("loss-display");
+  fpsDisplay = document.getElementById("fps-display");
   runBtn = document.getElementById("run-btn");
   stopBtn = document.getElementById("stop-btn");
   stepBtn = document.getElementById("step-btn");
@@ -390,7 +393,19 @@ async function runEmbedding() {
 
   const t0 = performance.now();
 
+  lastFrameTime = performance.now();
+  fpsSmoothed = 0;
+
   function animate() {
+    const now = performance.now();
+    const dt = now - lastFrameTime;
+    lastFrameTime = now;
+    if (dt > 0) {
+      const instantFps = 1000 / dt;
+      fpsSmoothed = fpsSmoothed === 0 ? instantFps : fpsSmoothed * 0.9 + instantFps * 0.1;
+      fpsDisplay.textContent = `${Math.round(fpsSmoothed)} FPS`;
+    }
+
     const hasMore = runner.step(1);
     runner.render();
     updateDisplay();
@@ -409,6 +424,7 @@ async function runEmbedding() {
         status.textContent = `Done in ${elapsed}ms (${runner.iteration()} iterations)`;
       }, 10);
 
+      fpsDisplay.textContent = "";
       runBtn.disabled = false;
       stopBtn.textContent = "Reset";
       stopBtn.disabled = false;
