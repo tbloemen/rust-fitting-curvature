@@ -253,8 +253,7 @@ impl EmbeddingRunner {
         if let Some(labels) = &self.labels {
             let cdm = metrics::class_density_measure(&proj.coords, labels, n);
             let cldm = metrics::cluster_density_measure(&proj.coords, labels, n);
-            let db_ratio =
-                metrics::davies_bouldin_ratio(&high_dim_dist, &proj.coords, labels, n);
+            let db_ratio = metrics::davies_bouldin_ratio(&high_dim_dist, &proj.coords, labels, n);
             set_prop(&obj, "class_density_measure", cdm)?;
             set_prop(&obj, "cluster_density_measure", cldm)?;
             set_prop(&obj, "davies_bouldin_ratio", db_ratio)?;

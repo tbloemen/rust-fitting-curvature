@@ -5,7 +5,7 @@
 //! - B. Global geometry preservation (geodesic_distortion)
 //! - C. Space efficiency (radial_distribution)
 //! - D. Perceptual evaluation (class_density_measure, cluster_density_measure,
-//!      davies_bouldin, davies_bouldin_ratio)
+//!   davies_bouldin, davies_bouldin_ratio)
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -362,8 +362,8 @@ pub fn class_density_measure(pts_2d: &[f64], labels: &[u32], n: usize) -> f64 {
     let mut num_pairs = 0usize;
     for ci in 0..num_classes {
         for cj in (ci + 1)..num_classes {
-            for p in 0..num_pixels {
-                cdm += (density_images[ci][p] - density_images[cj][p]).abs();
+            for (a, b) in density_images[ci].iter().zip(&density_images[cj]) {
+                cdm += (a - b).abs();
             }
             num_pairs += 1;
         }
@@ -465,10 +465,7 @@ pub fn davies_bouldin(distances: &[f64], labels: &[u32], n: usize) -> f64 {
         // Find medoid (point with smallest total distance to others)
         let mut best_total = f64::INFINITY;
         for &candidate in indices {
-            let total: f64 = indices
-                .iter()
-                .map(|&j| distances[candidate * n + j])
-                .sum();
+            let total: f64 = indices.iter().map(|&j| distances[candidate * n + j]).sum();
             if total < best_total {
                 best_total = total;
                 medoid_indices[ci] = candidate;
