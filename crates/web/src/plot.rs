@@ -224,9 +224,15 @@ fn draw_hyperbolic_grid(chart: &mut Chart, radius: f64, half: f64) -> Result<(),
         .draw_series(LineSeries::new(vec![(0.0, -half), (0.0, half)], AXIS_COLOR))
         .map_err(map_err)?;
 
-    // Tick labels along x-axis
+    // Tick labels along x-axis, skipping when too close together
     let font = ("sans-serif", 10).into_font().color(&AXIS_COLOR);
+    let min_gap = half * 0.08; // minimum spacing between labels in disk coords
+    let mut last_label_pos = f64::NEG_INFINITY;
     for &(a, geo_d) in &ticks {
+        if a - last_label_pos < min_gap {
+            continue;
+        }
+        last_label_pos = a;
         let label = format_tick(geo_d);
         chart
             .draw_series(std::iter::once(Text::new(
