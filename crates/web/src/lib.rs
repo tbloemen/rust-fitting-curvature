@@ -133,6 +133,48 @@ impl EmbeddingRunner {
         })
     }
 
+    /// Create a runner from external data with labels (e.g., MNIST).
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_data_with_labels(
+        canvas_id: &str,
+        data: &[f64],
+        labels: &[u32],
+        n_points: usize,
+        n_features: usize,
+        curvature: f64,
+        n_iterations: usize,
+        perplexity: f64,
+        learning_rate: f64,
+        early_exaggeration_factor: f64,
+        early_exaggeration_iterations: usize,
+        centering_weight: f64,
+        scaling_loss: &str,
+        projection: &str,
+    ) -> Result<EmbeddingRunner, JsValue> {
+        let config = TrainingConfig {
+            n_points,
+            curvature,
+            n_iterations,
+            perplexity,
+            learning_rate,
+            early_exaggeration_factor,
+            early_exaggeration_iterations,
+            centering_weight,
+            scaling_loss_type: parse_scaling_loss(scaling_loss),
+            ..Default::default()
+        };
+
+        let state = EmbeddingState::new(data, n_features, &config);
+        let canvas = get_canvas(canvas_id)?;
+
+        Ok(EmbeddingRunner {
+            state,
+            canvas,
+            labels: Some(labels.to_vec()),
+            projection: parse_projection(projection),
+        })
+    }
+
     /// Run N iterations and render the current state.
     /// Returns true if there are more iterations to run.
     pub fn step(&mut self, n_steps: usize) -> bool {

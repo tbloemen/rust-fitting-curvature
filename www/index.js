@@ -9,6 +9,7 @@ import {
 let dataSource = "random";
 let runner = null;
 let animationId = null;
+let mnistCache = null;
 
 // DOM refs
 let canvas, status, lossDisplay, runBtn, stopBtn, stepBtn;
@@ -41,6 +42,9 @@ function setupUI() {
   document
     .getElementById("btn-synthetic")
     .addEventListener("click", () => setDataSource("synthetic"));
+  document
+    .getElementById("btn-mnist")
+    .addEventListener("click", () => setDataSource("mnist"));
   runBtn.addEventListener("click", runEmbedding);
   stopBtn.addEventListener("click", () => {
     if (animationId !== null) {
@@ -78,10 +82,15 @@ function setDataSource(source) {
   document
     .getElementById("btn-synthetic")
     .classList.toggle("active", source === "synthetic");
+  document
+    .getElementById("btn-mnist")
+    .classList.toggle("active", source === "mnist");
   document.getElementById("random-controls").style.display =
     source === "random" ? "block" : "none";
   document.getElementById("synthetic-controls").style.display =
     source === "synthetic" ? "block" : "none";
+  document.getElementById("mnist-controls").style.display =
+    source === "mnist" ? "block" : "none";
 }
 
 function getParams() {
@@ -100,7 +109,65 @@ function getParams() {
   };
 }
 
-function createRunner() {
+// --- MNIST loading ---
+
+async function fetchMnistRaw() {
+  const [imagesResp, labelsResp] = await Promise.all([
+    fetch("data/t10k-images-idx3-ubyte"),
+    fetch("data/t10k-labels-idx1-ubyte"),
+  ]);
+
+  if (!imagesResp.ok || !labelsResp.ok) {
+    throw new Error(
+      "MNIST data files not found. Run: scripts/download_mnist.sh",
+    );
+  }
+
+  const [imagesBuf, labelsBuf] = await Promise.all([
+    imagesResp.arrayBuffer(),
+    labelsResp.arrayBuffer(),
+  ]);
+
+  const imagesView = new DataView(imagesBuf);
+  const nImages = imagesView.getUint32(4);
+  const rows = imagesView.getUint32(8);
+  const cols = imagesView.getUint32(12);
+  const nFeatures = rows * cols; // 784
+  const imageBytes = new Uint8Array(imagesBuf, 16);
+  const labelBytes = new Uint8Array(labelsBuf, 8);
+
+  return { imageBytes, labelBytes, nImages, nFeatures };
+}
+
+async function loadMnist(nPoints) {
+  if (!mnistCache) {
+    mnistCache = await fetchMnistRaw();
+  }
+
+  const { imageBytes, labelBytes, nImages, nFeatures } = mnistCache;
+  const nSamples = Math.min(nPoints, nImages);
+
+  // Subsample evenly across the dataset
+  const step = Math.floor(nImages / nSamples);
+  const data = new Float64Array(nSamples * nFeatures);
+  const labels = new Uint32Array(nSamples);
+
+  for (let i = 0; i < nSamples; i++) {
+    const srcIdx = i * step;
+    const srcOffset = srcIdx * nFeatures;
+    const dstOffset = i * nFeatures;
+    for (let j = 0; j < nFeatures; j++) {
+      data[dstOffset + j] = imageBytes[srcOffset + j] / 255.0;
+    }
+    labels[i] = labelBytes[srcIdx];
+  }
+
+  return { data, labels, nPoints: nSamples, nFeatures };
+}
+
+// --- Runner creation ---
+
+async function createRunner() {
   if (runner !== null) {
     runner.free();
     runner = null;
@@ -108,7 +175,29 @@ function createRunner() {
 
   const p = getParams();
 
-  if (dataSource === "synthetic") {
+  if (dataSource === "mnist") {
+    const nPoints = parseInt(
+      document.getElementById("mnist_n_points").value,
+    );
+    status.textContent = "Loading MNIST data...";
+    const mnist = await loadMnist(nPoints);
+    runner = EmbeddingRunner.from_data_with_labels(
+      "canvas",
+      mnist.data,
+      mnist.labels,
+      mnist.nPoints,
+      mnist.nFeatures,
+      p.curvature,
+      p.iterations,
+      p.perplexity,
+      p.lr,
+      p.eeFactor,
+      p.eeIterations,
+      p.centeringWeight,
+      p.scalingLoss,
+      p.projection,
+    );
+  } else if (dataSource === "synthetic") {
     const dataset = document.getElementById("dataset").value;
     const nPoints = parseInt(
       document.getElementById("synth_n_points").value,
@@ -183,7 +272,7 @@ function resetEmbedding() {
   status.textContent = "Reset. Click Run or Step to start.";
 }
 
-function stepEmbedding() {
+async function stepEmbedding() {
   // Stop any running animation first
   if (animationId !== null) {
     cancelAnimationFrame(animationId);
@@ -193,7 +282,7 @@ function stepEmbedding() {
   try {
     // Create runner if not yet initialized — show initial state (step 0)
     if (runner === null || runner.is_done()) {
-      createRunner();
+      await createRunner();
       runner.render();
       updateDisplay();
       stopBtn.textContent = "Reset";
@@ -226,7 +315,7 @@ function stepEmbedding() {
   }
 }
 
-function runEmbedding() {
+async function runEmbedding() {
   // Cancel any running animation
   if (animationId !== null) {
     cancelAnimationFrame(animationId);
@@ -237,7 +326,7 @@ function runEmbedding() {
   const resuming = runner !== null && !runner.is_done();
   if (!resuming) {
     try {
-      createRunner();
+      await createRunner();
     } catch (e) {
       status.textContent = "Error: " + e;
       console.error(e);
