@@ -26,7 +26,20 @@ pub fn draw_embedding(
 
     // Fixed bounds centered at origin
     let half = if curvature < 0.0 {
-        1.15 // Poincaré disk fits in [-1,1], add margin
+        // Zoom to fit data: find max Poincaré disk radius of projected points
+        let max_r = (0..n_points)
+            .map(|i| {
+                let x = projected[i * 2];
+                let y = projected[i * 2 + 1];
+                if x.is_finite() && y.is_finite() {
+                    (x * x + y * y).sqrt()
+                } else {
+                    0.0
+                }
+            })
+            .fold(0.0f64, f64::max);
+        // Always show at least the data with margin, capped at full disk view
+        (max_r * 1.3).max(0.05).min(1.15)
     } else if curvature > 0.0 {
         match projection {
             SphericalProjection::Stereographic => 1.15,
@@ -62,8 +75,8 @@ pub fn draw_embedding(
     };
 
     let title = match curvature {
-        k if k < 0.0 => format!("Hyperbolic (k={k:.2}) \u{2014} Poincar\u{e9} disk"),
-        k if k > 0.0 => format!("Spherical (k={k:.2}) \u{2014} {proj_name}"),
+        k if k < 0.0 => format!("Hyperbolic (k={}) \u{2014} Poincar\u{e9} disk", format_curvature(k)),
+        k if k > 0.0 => format!("Spherical (k={}) \u{2014} {proj_name}", format_curvature(k)),
         _ => "Euclidean".to_string(),
     };
 
@@ -85,7 +98,8 @@ pub fn draw_embedding(
 
     // Draw custom grid
     if curvature < 0.0 {
-        draw_hyperbolic_grid(&mut chart)?;
+        let radius = 1.0 / (-curvature).sqrt();
+        draw_hyperbolic_grid(&mut chart, radius, half)?;
     } else if curvature > 0.0 {
         draw_spherical_grid(&mut chart, projection)?;
     } else {
@@ -153,56 +167,72 @@ type Chart<'a> = ChartContext<
     Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>,
 >;
 
-/// Draw Poincaré disk grid: geodesic arcs at tanh(n/2) and boundary circle.
-fn draw_hyperbolic_grid(chart: &mut Chart) -> Result<(), JsValue> {
+/// Draw Poincaré disk grid, adapting ticks to the current zoom level.
+///
+/// `radius` is the hyperbolic radius r = 1/sqrt(-K).
+/// `half` is the current chart half-extent in Poincaré disk coordinates.
+fn draw_hyperbolic_grid(chart: &mut Chart, radius: f64, half: f64) -> Result<(), JsValue> {
     let map_err = |e: DrawingAreaErrorKind<_>| JsValue::from_str(&e.to_string());
 
-    // Boundary circle (unit disk)
-    let boundary = circle_points(0.0, 0.0, 1.0, 128);
-    chart
-        .draw_series(LineSeries::new(boundary, BOUNDARY_COLOR.stroke_width(2)))
-        .map_err(map_err)?;
+    // Boundary circle (only if visible in the current view)
+    if half >= 0.95 {
+        let boundary = circle_points(0.0, 0.0, 1.0, 128);
+        chart
+            .draw_series(LineSeries::new(boundary, BOUNDARY_COLOR.stroke_width(2)))
+            .map_err(map_err)?;
+    }
 
-    // Geodesic grid lines at hyperbolic distances n*r from origin
-    // In the Poincaré disk, hyperbolic distance d maps to Euclidean radius tanh(d/(2r)).
-    // For unit curvature r=1, tick at hyperbolic distance n => Euclidean a = tanh(n/2).
-    let ticks: Vec<f64> = (1..=4).map(|n| (n as f64 / 2.0).tanh()).collect();
+    // Compute the max geodesic distance visible at the edge of the current view.
+    // In the Poincaré disk: disk_radius = tanh(d / (2r)), so d = 2r * atanh(disk_radius).
+    let edge_disk_r = (half * 0.9).min(0.9999);
+    let max_geo_dist = 2.0 * radius * edge_disk_r.atanh();
 
-    for &a in &ticks {
-        // Vertical geodesic at x = a (and x = -a)
+    // Choose nice geodesic-distance tick spacing
+    let geo_spacing = nice_spacing(max_geo_dist);
+
+    // Generate tick positions: geodesic distances → Poincaré disk radii
+    let mut ticks: Vec<(f64, f64)> = Vec::new(); // (disk_radius, geo_distance)
+    let mut geo_d = geo_spacing;
+    while geo_d < max_geo_dist * 1.2 {
+        let disk_r = (geo_d / (2.0 * radius)).tanh();
+        if disk_r < half * 0.95 {
+            ticks.push((disk_r, geo_d));
+        }
+        geo_d += geo_spacing;
+    }
+
+    // Draw geodesic grid arcs at each tick position
+    for &(a, _) in &ticks {
         for &sign in &[1.0, -1.0] {
             let sa = sign * a;
-            let arc = poincare_geodesic_arc(sa, true);
+            let arc = poincare_geodesic_arc(sa, true, half);
             chart
                 .draw_series(LineSeries::new(arc, GRID_COLOR))
                 .map_err(map_err)?;
-        }
-        // Horizontal geodesic at y = a (and y = -a)
-        for &sign in &[1.0, -1.0] {
-            let sa = sign * a;
-            let arc = poincare_geodesic_arc(sa, false);
+            let arc = poincare_geodesic_arc(sa, false, half);
             chart
                 .draw_series(LineSeries::new(arc, GRID_COLOR))
                 .map_err(map_err)?;
         }
     }
 
-    // Axes (straight lines through origin, which are geodesics in the Poincaré disk)
+    // Axes
     chart
-        .draw_series(LineSeries::new(vec![(-1.0, 0.0), (1.0, 0.0)], AXIS_COLOR))
+        .draw_series(LineSeries::new(vec![(-half, 0.0), (half, 0.0)], AXIS_COLOR))
         .map_err(map_err)?;
     chart
-        .draw_series(LineSeries::new(vec![(0.0, -1.0), (0.0, 1.0)], AXIS_COLOR))
+        .draw_series(LineSeries::new(vec![(0.0, -half), (0.0, half)], AXIS_COLOR))
         .map_err(map_err)?;
 
     // Tick labels along x-axis
-    let tick_labels = ["r", "2r", "3r", "4r"];
-    for (i, &a) in ticks.iter().enumerate() {
+    let font = ("sans-serif", 10).into_font().color(&AXIS_COLOR);
+    for &(a, geo_d) in &ticks {
+        let label = format_tick(geo_d);
         chart
             .draw_series(std::iter::once(Text::new(
-                tick_labels[i].to_string(),
-                (a + 0.02, -0.06),
-                ("sans-serif", 11).into_font().color(&AXIS_COLOR),
+                label,
+                (a + half * 0.02, -half * 0.06),
+                font.clone(),
             )))
             .map_err(map_err)?;
     }
@@ -220,12 +250,12 @@ fn draw_hyperbolic_grid(chart: &mut Chart) -> Result<(), JsValue> {
 ///   center = (1+a²)/(2a)  on the relevant axis
 ///   radius = |1-a²|/(2|a|)
 /// which is orthogonal to the unit boundary circle.
-fn poincare_geodesic_arc(a: f64, vertical: bool) -> Vec<(f64, f64)> {
+fn poincare_geodesic_arc(a: f64, vertical: bool, half: f64) -> Vec<(f64, f64)> {
     if a.abs() < 1e-10 {
         return if vertical {
-            vec![(0.0, -1.0), (0.0, 1.0)]
+            vec![(0.0, -half), (0.0, half)]
         } else {
-            vec![(-1.0, 0.0), (1.0, 0.0)]
+            vec![(-half, 0.0), (half, 0.0)]
         };
     }
 
@@ -267,7 +297,7 @@ fn poincare_geodesic_arc(a: f64, vertical: bool) -> Vec<(f64, f64)> {
             }
         };
 
-        if px * px + py * py <= 1.01 {
+        if px * px + py * py <= half * half * 1.01 {
             pts.push((px, py));
         }
     }
@@ -438,6 +468,15 @@ fn format_tick(v: f64) -> String {
         format!("{}", rounded as i64)
     } else {
         format!("{:.1}", v)
+    }
+}
+
+/// Format curvature for display, using scientific notation for very small values.
+fn format_curvature(k: f64) -> String {
+    if k.abs() >= 0.01 {
+        format!("{k:.2}")
+    } else {
+        format!("{k:.1e}")
     }
 }
 
