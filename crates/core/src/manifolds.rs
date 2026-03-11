@@ -366,7 +366,73 @@ impl Manifold for Hyperboloid {
                 loss /= n_points as f64;
                 (loss, grad)
             }
-            _ => (0.0, grad),
+            ScalingLossType::MeanDistance => {
+                let n = n_points as f64;
+                let mut loss = 0.0;
+                for i in 0..n_points {
+                    let x0 = points[i * ambient_dim];
+                    let arg = (x0 / r).max(1.0 + 1e-7);
+                    let geo_dist = r * arg.acosh();
+                    loss += geo_dist;
+
+                    // d(geo_dist)/d(x0) = 1 / sqrt(x0^2/r^2 - 1)
+                    let dg_dx0 = 1.0 / (arg * arg - 1.0).max(1e-12).sqrt();
+                    grad[i * ambient_dim] = dg_dx0 / n;
+                }
+                loss /= n;
+                (loss, grad)
+            }
+            ScalingLossType::Rms => {
+                let n = n_points as f64;
+                let mut sum_sq = 0.0;
+                let mut geo_dists = Vec::with_capacity(n_points);
+                let mut dg_dx0s = Vec::with_capacity(n_points);
+                for i in 0..n_points {
+                    let x0 = points[i * ambient_dim];
+                    let arg = (x0 / r).max(1.0 + 1e-7);
+                    let geo_dist = r * arg.acosh();
+                    sum_sq += geo_dist * geo_dist;
+                    geo_dists.push(geo_dist);
+                    dg_dx0s.push(1.0 / (arg * arg - 1.0).max(1e-12).sqrt());
+                }
+                let rms = (sum_sq / n).sqrt();
+                let loss = (rms - 1.0) * (rms - 1.0);
+                if rms > 1e-12 {
+                    // d/dx0_i of (rms - 1)^2 = 2*(rms-1) * d(rms)/dx0_i
+                    // d(rms)/dx0_i = geo_dist_i * dg_dx0_i / (n * rms)
+                    let coeff = 2.0 * (rms - 1.0) / (n * rms);
+                    for i in 0..n_points {
+                        grad[i * ambient_dim] = coeff * geo_dists[i] * dg_dx0s[i];
+                    }
+                }
+                (loss, grad)
+            }
+            ScalingLossType::SoftplusBarrier => {
+                let n = n_points as f64;
+                let d_max = 3.0 * r;
+                let mut loss = 0.0;
+                for i in 0..n_points {
+                    let x0 = points[i * ambient_dim];
+                    let arg = (x0 / r).max(1.0 + 1e-7);
+                    let geo_dist = r * arg.acosh();
+                    let z = geo_dist - d_max;
+                    // softplus(z) = ln(1 + exp(z))
+                    let sp = if z > 20.0 {
+                        z // avoid overflow
+                    } else {
+                        (1.0 + z.exp()).ln()
+                    };
+                    loss += sp;
+
+                    // d(softplus(z))/dz = sigmoid(z) = 1/(1+exp(-z))
+                    let sig = 1.0 / (1.0 + (-z).exp());
+                    let dg_dx0 = 1.0 / (arg * arg - 1.0).max(1e-12).sqrt();
+                    grad[i * ambient_dim] = sig * dg_dx0 / n;
+                }
+                loss /= n;
+                (loss, grad)
+            }
+            ScalingLossType::None => (0.0, grad),
         }
     }
 }
