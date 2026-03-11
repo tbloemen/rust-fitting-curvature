@@ -10,9 +10,7 @@ fn create_mnist_like_data(n_points: usize, n_features: usize, seed: u64) -> (Vec
     let mut rng = Rng::new(seed);
 
     // Simulate pixel data: values in [0, 1]
-    let data: Vec<f64> = (0..n_points * n_features)
-        .map(|_| rng.uniform())
-        .collect();
+    let data: Vec<f64> = (0..n_points * n_features).map(|_| rng.uniform()).collect();
 
     // Labels 0-9
     let labels: Vec<u32> = (0..n_points).map(|i| (i % 10) as u32).collect();

@@ -21,6 +21,9 @@ pub struct EmbeddingState {
     manifold: Box<dyn Manifold>,
     optimizer: RiemannianSGDMomentum,
     p_base: Vec<f64>,
+    /// Original input data, kept for metric computation.
+    input_data: Vec<f64>,
+    n_features: usize,
 }
 
 impl EmbeddingState {
@@ -50,6 +53,8 @@ impl EmbeddingState {
             manifold,
             optimizer,
             p_base,
+            input_data: data.to_vec(),
+            n_features,
         }
     }
 
@@ -159,5 +164,20 @@ impl EmbeddingState {
     /// Access the training config.
     pub fn config(&self) -> &TrainingConfig {
         &self.config
+    }
+
+    /// Compute the high-dimensional Euclidean distance matrix from stored input data.
+    pub fn high_dim_distances(&self) -> Vec<f64> {
+        crate::matrices::compute_euclidean_distance_matrix(
+            &self.input_data,
+            self.n_points,
+            self.n_features,
+        )
+    }
+
+    /// Compute the embedded pairwise distance matrix using the manifold metric.
+    pub fn embedded_distances(&self) -> Vec<f64> {
+        self.manifold
+            .pairwise_distances(&self.points, self.n_points, self.ambient_dim)
     }
 }

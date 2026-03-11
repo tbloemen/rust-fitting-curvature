@@ -121,3 +121,51 @@ canvas {
     background: #2980b9;
     border-color: #3498db;
 }
+
+/* Progress bar */
+.progress-container {
+    width: 100%;
+    max-width: 600px;
+    height: 6px;
+    background: #333;
+    border-radius: 3px;
+    margin-top: 8px;
+    overflow: hidden;
+}
+.progress-bar {
+    height: 100%;
+    width: 0%;
+    background: #2980b9;
+    border-radius: 3px;
+    transition: width 0.1s linear;
+}
+
+/* Metrics panel */
+.metrics-panel {
+    margin-top: 12px;
+    padding: 12px 16px;
+    background: #16213e;
+    border-radius: 6px;
+    width: 100%;
+    max-width: 600px;
+    font-size: 0.8rem;
+}
+.metrics-panel .section-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #888;
+    margin-bottom: 8px;
+}
+.metrics-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 16px;
+}
+.metric-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+}
+.metric-name { color: #aaa; }
+.metric-value { color: #5dade2; font-family: monospace; }
