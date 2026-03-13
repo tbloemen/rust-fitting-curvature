@@ -263,6 +263,42 @@ impl EmbeddingRunner {
     }
 }
 
+/// Return default TrainingConfig values as a JS object, so the frontend
+/// can populate its inputs from a single source of truth.
+#[wasm_bindgen]
+pub fn get_default_config() -> Result<JsValue, JsValue> {
+    let cfg = TrainingConfig::default();
+    let obj = js_sys::Object::new();
+    set_prop(&obj, "curvature", cfg.curvature)?;
+    set_prop(&obj, "perplexity", cfg.perplexity)?;
+    set_prop(&obj, "n_iterations", cfg.n_iterations as f64)?;
+    set_prop(&obj, "learning_rate", cfg.learning_rate)?;
+    set_prop(
+        &obj,
+        "early_exaggeration_factor",
+        cfg.early_exaggeration_factor,
+    )?;
+    set_prop(
+        &obj,
+        "early_exaggeration_iterations",
+        cfg.early_exaggeration_iterations as f64,
+    )?;
+    set_prop(&obj, "centering_weight", cfg.centering_weight)?;
+    let scaling_loss_str = match cfg.scaling_loss_type {
+        ScalingLossType::Rms => "rms",
+        ScalingLossType::HardBarrier => "hard_barrier",
+        ScalingLossType::SoftplusBarrier => "softplus_barrier",
+        ScalingLossType::MeanDistance => "mean_distance",
+        ScalingLossType::None => "none",
+    };
+    js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("scaling_loss"),
+        &JsValue::from_str(scaling_loss_str),
+    )?;
+    Ok(obj.into())
+}
+
 /// Generate sample data (Gaussian blob) for testing.
 #[wasm_bindgen]
 pub fn generate_sample_data(n_points: usize, n_features: usize, seed: u32) -> Vec<f64> {
