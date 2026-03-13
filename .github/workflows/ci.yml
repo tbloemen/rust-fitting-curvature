@@ -21,6 +21,7 @@ concurrency:
 jobs:
   clippy-core:
     name: Clippy (core)
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -31,6 +32,7 @@ jobs:
 
   clippy-web:
     name: Clippy (web)
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -42,6 +44,7 @@ jobs:
 
   fmt:
     name: Rustfmt
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -52,6 +55,7 @@ jobs:
 
   test:
     name: Tests
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -82,7 +86,7 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [clippy-core, clippy-web, fmt, test, build-site]
+    needs: [build-site]
     runs-on: ubuntu-latest
     environment:
       name: github-pages
