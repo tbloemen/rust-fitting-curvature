@@ -107,7 +107,6 @@ function setupCanvas() {
     canvasWrapper.style.width = size + "px";
     canvasWrapper.style.height = size + "px";
   }
-  resetView();
 }
 
 function setupZoomPan() {

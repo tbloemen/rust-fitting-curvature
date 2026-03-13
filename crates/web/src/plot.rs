@@ -33,7 +33,11 @@ pub fn draw_embedding(
             .map(|i| {
                 let x = projected[i * 2];
                 let y = projected[i * 2 + 1];
-                if x.is_finite() && y.is_finite() { (x * x + y * y).sqrt() } else { 0.0 }
+                if x.is_finite() && y.is_finite() {
+                    (x * x + y * y).sqrt()
+                } else {
+                    0.0
+                }
             })
             .fold(0.0f64, f64::max);
         (max_r * 1.3).clamp(0.05, 1.15)
@@ -44,7 +48,11 @@ pub fn draw_embedding(
             .map(|i| {
                 let x = projected[i * 2];
                 let y = projected[i * 2 + 1];
-                if x.is_finite() && y.is_finite() { (x * x + y * y).sqrt() } else { 0.0 }
+                if x.is_finite() && y.is_finite() {
+                    (x * x + y * y).sqrt()
+                } else {
+                    0.0
+                }
             })
             .fold(0.0f64, f64::max);
         (max_r * 1.2).max(0.5)
@@ -217,10 +225,16 @@ fn draw_hyperbolic_grid(
     let (x_min, x_max) = (cx - half, cx + half);
     let (y_min, y_max) = (cy - half, cy + half);
     chart
-        .draw_series(LineSeries::new(vec![(x_min, 0.0), (x_max, 0.0)], AXIS_COLOR))
+        .draw_series(LineSeries::new(
+            vec![(x_min, 0.0), (x_max, 0.0)],
+            AXIS_COLOR,
+        ))
         .map_err(map_err)?;
     chart
-        .draw_series(LineSeries::new(vec![(0.0, y_min), (0.0, y_max)], AXIS_COLOR))
+        .draw_series(LineSeries::new(
+            vec![(0.0, y_min), (0.0, y_max)],
+            AXIS_COLOR,
+        ))
         .map_err(map_err)?;
 
     // Tick labels, skipping when too dense
@@ -376,10 +390,16 @@ fn draw_spherical_grid(
     let (x_min, x_max) = (cx - half, cx + half);
     let (y_min, y_max) = (cy - half, cy + half);
     chart
-        .draw_series(LineSeries::new(vec![(x_min, 0.0), (x_max, 0.0)], AXIS_COLOR))
+        .draw_series(LineSeries::new(
+            vec![(x_min, 0.0), (x_max, 0.0)],
+            AXIS_COLOR,
+        ))
         .map_err(map_err)?;
     chart
-        .draw_series(LineSeries::new(vec![(0.0, y_min), (0.0, y_max)], AXIS_COLOR))
+        .draw_series(LineSeries::new(
+            vec![(0.0, y_min), (0.0, y_max)],
+            AXIS_COLOR,
+        ))
         .map_err(map_err)?;
 
     Ok(())
@@ -447,10 +467,16 @@ fn draw_euclidean_grid(
 
     // Axes
     chart
-        .draw_series(LineSeries::new(vec![(x_min, 0.0), (x_max, 0.0)], AXIS_COLOR))
+        .draw_series(LineSeries::new(
+            vec![(x_min, 0.0), (x_max, 0.0)],
+            AXIS_COLOR,
+        ))
         .map_err(map_err)?;
     chart
-        .draw_series(LineSeries::new(vec![(0.0, y_min), (0.0, y_max)], AXIS_COLOR))
+        .draw_series(LineSeries::new(
+            vec![(0.0, y_min), (0.0, y_max)],
+            AXIS_COLOR,
+        ))
         .map_err(map_err)?;
 
     Ok(())
