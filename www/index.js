@@ -12,8 +12,14 @@ let runner = null;
 let animationId = null;
 let mnistCache = null;
 
+// Pan state (in canvas pixel space)
+let isPanning = false;
+let panLastX = 0;
+let panLastY = 0;
+
 // DOM refs
-let canvas, status, lossDisplay, fpsDisplay, runBtn, stopBtn, stepBtn;
+let canvas, canvasWrapper, zoomIndicator;
+let status, lossDisplay, fpsDisplay, runBtn, stopBtn, stepBtn;
 let progressContainer, progressBar, metricsPanel, metricsContent;
 let lastFrameTime = 0;
 let fpsSmoothed = 0;
@@ -41,6 +47,8 @@ function applyDefaultConfig() {
 
 function main() {
   canvas = document.getElementById("canvas");
+  canvasWrapper = document.getElementById("canvas-wrapper");
+  zoomIndicator = document.getElementById("zoom-indicator");
   status = document.getElementById("status");
   lossDisplay = document.getElementById("loss-display");
   fpsDisplay = document.getElementById("fps-display");
@@ -54,6 +62,7 @@ function main() {
 
   setupCanvas();
   setupUI();
+  setupZoomPan();
 
   status.textContent = "WebAssembly loaded! Click Run to start.";
 }
@@ -86,8 +95,7 @@ function setupUI() {
 }
 
 function setupCanvas() {
-  const container = canvas.parentNode;
-  // Use the smaller of available width/height to keep it square and fitting
+  const container = canvasWrapper ? canvasWrapper.parentNode : canvas.parentNode;
   const maxW = container.clientWidth - 32;
   const maxH = window.innerHeight - 100;
   const size = Math.min(maxW, maxH, 600);
@@ -95,6 +103,54 @@ function setupCanvas() {
   canvas.height = size;
   canvas.style.width = size + "px";
   canvas.style.height = size + "px";
+  if (canvasWrapper) {
+    canvasWrapper.style.width = size + "px";
+    canvasWrapper.style.height = size + "px";
+  }
+  resetView();
+}
+
+function setupZoomPan() {
+  canvasWrapper.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    if (runner === null) return;
+    const rect = canvas.getBoundingClientRect();
+    const norm_x = (e.clientX - rect.left) / canvas.width;
+    const norm_y = (e.clientY - rect.top) / canvas.height;
+    const factor = e.deltaY < 0 ? 1.25 : 1 / 1.25;
+    runner.zoom_at(norm_x, norm_y, factor);
+    runner.render();
+  }, { passive: false });
+
+  canvasWrapper.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    isPanning = true;
+    panLastX = e.clientX;
+    panLastY = e.clientY;
+    canvasWrapper.style.cursor = "grabbing";
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (!isPanning || runner === null) return;
+    const dx = (e.clientX - panLastX) / canvas.width;
+    const dy = (e.clientY - panLastY) / canvas.height;
+    panLastX = e.clientX;
+    panLastY = e.clientY;
+    runner.pan_by(dx, dy);
+    runner.render();
+  });
+
+  window.addEventListener("mouseup", () => {
+    if (!isPanning) return;
+    isPanning = false;
+    canvasWrapper.style.cursor = "";
+  });
+
+  canvasWrapper.addEventListener("dblclick", () => {
+    if (runner === null) return;
+    runner.reset_view();
+    runner.render();
+  });
 }
 
 function setDataSource(source) {

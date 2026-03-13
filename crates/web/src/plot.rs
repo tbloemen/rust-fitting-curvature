@@ -10,6 +10,9 @@ const AXIS_COLOR: RGBColor = RGBColor(140, 140, 140);
 const BOUNDARY_COLOR: RGBColor = RGBColor(80, 80, 80);
 
 /// Draw embedding points on a canvas using plotters.
+///
+/// `view` overrides the auto-fit viewport as `(center_x, center_y, half_extent)`.
+/// Returns the auto-fit half-extent so callers can anchor zoom/pan interactions.
 pub fn draw_embedding(
     canvas: &HtmlCanvasElement,
     points: &[f64],
@@ -18,49 +21,40 @@ pub fn draw_embedding(
     curvature: f64,
     labels: Option<&[u32]>,
     projection: SphericalProjection,
-) -> Result<(), JsValue> {
+    view: Option<(f64, f64, f64)>,
+) -> Result<f64, JsValue> {
     let Projection2D {
         coords: projected,
         scale,
     } = project_to_2d(points, n_points, ambient_dim, curvature, projection);
 
-    // Fixed bounds centered at origin
-    let half = if curvature < 0.0 {
-        // Zoom to fit data: find max Poincaré disk radius of projected points
+    let auto_half = if curvature < 0.0 {
         let max_r = (0..n_points)
             .map(|i| {
                 let x = projected[i * 2];
                 let y = projected[i * 2 + 1];
-                if x.is_finite() && y.is_finite() {
-                    (x * x + y * y).sqrt()
-                } else {
-                    0.0
-                }
+                if x.is_finite() && y.is_finite() { (x * x + y * y).sqrt() } else { 0.0 }
             })
             .fold(0.0f64, f64::max);
-        // Always show at least the data with margin, capped at full disk view
         (max_r * 1.3).clamp(0.05, 1.15)
     } else if curvature > 0.0 {
-        match projection {
-            SphericalProjection::Stereographic => 1.15,
-            SphericalProjection::AzimuthalEquidistant => 1.15,
-            SphericalProjection::Orthographic => 1.15,
-        }
+        1.15
     } else {
-        // Euclidean: use data extent but keep centered at origin
         let max_r = (0..n_points)
             .map(|i| {
                 let x = projected[i * 2];
                 let y = projected[i * 2 + 1];
-                if x.is_finite() && y.is_finite() {
-                    (x * x + y * y).sqrt()
-                } else {
-                    0.0
-                }
+                if x.is_finite() && y.is_finite() { (x * x + y * y).sqrt() } else { 0.0 }
             })
             .fold(0.0f64, f64::max);
         (max_r * 1.2).max(0.5)
     };
+
+    let (cx, cy, half) = view.unwrap_or((0.0, 0.0, auto_half));
+    let x_min = cx - half;
+    let x_max = cx + half;
+    let y_min = cy - half;
+    let y_max = cy + half;
 
     let backend = CanvasBackend::with_canvas_object(canvas.clone())
         .ok_or("failed to create canvas backend")?;
@@ -88,7 +82,7 @@ pub fn draw_embedding(
         .margin(5)
         .x_label_area_size(20)
         .y_label_area_size(20)
-        .build_cartesian_2d(-half..half, -half..half)
+        .build_cartesian_2d(x_min..x_max, y_min..y_max)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     // Disable default mesh — we draw our own grid
@@ -102,11 +96,11 @@ pub fn draw_embedding(
     // Draw custom grid
     if curvature < 0.0 {
         let radius = 1.0 / (-curvature).sqrt();
-        draw_hyperbolic_grid(&mut chart, radius, half)?;
+        draw_hyperbolic_grid(&mut chart, radius, cx, cy, half)?;
     } else if curvature > 0.0 {
-        draw_spherical_grid(&mut chart, projection)?;
+        draw_spherical_grid(&mut chart, projection, cx, cy, half)?;
     } else {
-        draw_euclidean_grid(&mut chart, half, scale)?;
+        draw_euclidean_grid(&mut chart, cx, cy, half, scale)?;
     }
 
     // Draw data points
@@ -161,7 +155,7 @@ pub fn draw_embedding(
     root.present()
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-    Ok(())
+    Ok(auto_half)
 }
 
 type Chart<'a> = ChartContext<
@@ -174,62 +168,64 @@ type Chart<'a> = ChartContext<
 ///
 /// `radius` is the hyperbolic radius r = 1/sqrt(-K).
 /// `half` is the current chart half-extent in Poincaré disk coordinates.
-fn draw_hyperbolic_grid(chart: &mut Chart, radius: f64, half: f64) -> Result<(), JsValue> {
+fn draw_hyperbolic_grid(
+    chart: &mut Chart,
+    radius: f64,
+    cx: f64,
+    cy: f64,
+    half: f64,
+) -> Result<(), JsValue> {
     let map_err = |e: DrawingAreaErrorKind<_>| JsValue::from_str(&e.to_string());
 
-    // Boundary circle (only if visible in the current view)
-    if half >= 0.95 {
-        let boundary = circle_points(0.0, 0.0, 1.0, 128);
-        chart
-            .draw_series(LineSeries::new(boundary, BOUNDARY_COLOR.stroke_width(2)))
-            .map_err(map_err)?;
-    }
+    // Boundary circle — plotters clips to viewport automatically
+    let boundary = circle_points(0.0, 0.0, 1.0, 128);
+    chart
+        .draw_series(LineSeries::new(boundary, BOUNDARY_COLOR.stroke_width(2)))
+        .map_err(map_err)?;
 
-    // Compute the max geodesic distance visible at the edge of the current view.
-    // In the Poincaré disk: disk_radius = tanh(d / (2r)), so d = 2r * atanh(disk_radius).
+    // Tick spacing based on zoom level (half-extent of the view)
     let edge_disk_r = (half * 0.9).min(0.9999);
     let max_geo_dist = 2.0 * radius * edge_disk_r.atanh();
-
-    // Choose nice geodesic-distance tick spacing
     let geo_spacing = nice_spacing(max_geo_dist);
 
-    // Generate tick positions: geodesic distances → Poincaré disk radii
     let mut ticks: Vec<(f64, f64)> = Vec::new(); // (disk_radius, geo_distance)
     let mut geo_d = geo_spacing;
     while geo_d < max_geo_dist * 1.2 {
         let disk_r = (geo_d / (2.0 * radius)).tanh();
-        if disk_r < half * 0.95 {
+        if disk_r < 0.999 {
             ticks.push((disk_r, geo_d));
         }
         geo_d += geo_spacing;
     }
 
-    // Draw geodesic grid arcs at each tick position
+    // Draw geodesic arcs — plotters clips to viewport
     for &(a, _) in &ticks {
         for &sign in &[1.0, -1.0] {
             let sa = sign * a;
-            let arc = poincare_geodesic_arc(sa, true, half);
+            let arc = poincare_geodesic_arc(sa, true);
             chart
                 .draw_series(LineSeries::new(arc, GRID_COLOR))
                 .map_err(map_err)?;
-            let arc = poincare_geodesic_arc(sa, false, half);
+            let arc = poincare_geodesic_arc(sa, false);
             chart
                 .draw_series(LineSeries::new(arc, GRID_COLOR))
                 .map_err(map_err)?;
         }
     }
 
-    // Axes
+    // Axes spanning full viewport
+    let (x_min, x_max) = (cx - half, cx + half);
+    let (y_min, y_max) = (cy - half, cy + half);
     chart
-        .draw_series(LineSeries::new(vec![(-half, 0.0), (half, 0.0)], AXIS_COLOR))
+        .draw_series(LineSeries::new(vec![(x_min, 0.0), (x_max, 0.0)], AXIS_COLOR))
         .map_err(map_err)?;
     chart
-        .draw_series(LineSeries::new(vec![(0.0, -half), (0.0, half)], AXIS_COLOR))
+        .draw_series(LineSeries::new(vec![(0.0, y_min), (0.0, y_max)], AXIS_COLOR))
         .map_err(map_err)?;
 
-    // Tick labels along x-axis, skipping when too close together
+    // Tick labels, skipping when too dense
     let font = ("sans-serif", 10).into_font().color(&AXIS_COLOR);
-    let min_gap = half * 0.08; // minimum spacing between labels in disk coords
+    let min_gap = half * 0.08;
     let mut last_label_pos = f64::NEG_INFINITY;
     for &(a, geo_d) in &ticks {
         if a - last_label_pos < min_gap {
@@ -259,12 +255,12 @@ fn draw_hyperbolic_grid(chart: &mut Chart, radius: f64, half: f64) -> Result<(),
 ///   center = (1+a²)/(2a)  on the relevant axis
 ///   radius = |1-a²|/(2|a|)
 /// which is orthogonal to the unit boundary circle.
-fn poincare_geodesic_arc(a: f64, vertical: bool, half: f64) -> Vec<(f64, f64)> {
+fn poincare_geodesic_arc(a: f64, vertical: bool) -> Vec<(f64, f64)> {
     if a.abs() < 1e-10 {
         return if vertical {
-            vec![(0.0, -half), (0.0, half)]
+            vec![(0.0, -1.0), (0.0, 1.0)]
         } else {
-            vec![(-half, 0.0), (half, 0.0)]
+            vec![(-1.0, 0.0), (1.0, 0.0)]
         };
     }
 
@@ -306,7 +302,7 @@ fn poincare_geodesic_arc(a: f64, vertical: bool, half: f64) -> Vec<(f64, f64)> {
             }
         };
 
-        if px * px + py * py <= half * half * 1.01 {
+        if px * px + py * py <= 1.01 {
             pts.push((px, py));
         }
     }
@@ -315,10 +311,16 @@ fn poincare_geodesic_arc(a: f64, vertical: bool, half: f64) -> Vec<(f64, f64)> {
 }
 
 /// Draw spherical grid: concentric circles for parallels, radial meridians.
-fn draw_spherical_grid(chart: &mut Chart, projection: SphericalProjection) -> Result<(), JsValue> {
+fn draw_spherical_grid(
+    chart: &mut Chart,
+    projection: SphericalProjection,
+    cx: f64,
+    cy: f64,
+    half: f64,
+) -> Result<(), JsValue> {
     let map_err = |e: DrawingAreaErrorKind<_>| JsValue::from_str(&e.to_string());
 
-    // Boundary circle
+    // Boundary circle — plotters clips to viewport
     let boundary = circle_points(0.0, 0.0, 1.0, 128);
     chart
         .draw_series(LineSeries::new(boundary, BOUNDARY_COLOR.stroke_width(2)))
@@ -339,8 +341,6 @@ fn draw_spherical_grid(chart: &mut Chart, projection: SphericalProjection) -> Re
             SphericalProjection::Orthographic => theta.sin(),
         };
 
-        // Normalize: boundary at θ=π should map to r=1
-        // For stereographic the boundary is at infinity, so we clip
         if r > 1.0 {
             theta_deg += step_deg;
             continue;
@@ -351,12 +351,11 @@ fn draw_spherical_grid(chart: &mut Chart, projection: SphericalProjection) -> Re
             .draw_series(LineSeries::new(circ, GRID_COLOR))
             .map_err(map_err)?;
 
-        // Label
         let label = format!("{}\u{b0}", theta_deg as i32);
         chart
             .draw_series(std::iter::once(Text::new(
                 label,
-                (r * 0.72 + 0.02, r * 0.72 + 0.02), // ~45° direction
+                (r * 0.72 + 0.02, r * 0.72 + 0.02),
                 ("sans-serif", 10).into_font().color(&AXIS_COLOR),
             )))
             .map_err(map_err)?;
@@ -364,7 +363,7 @@ fn draw_spherical_grid(chart: &mut Chart, projection: SphericalProjection) -> Re
         theta_deg += step_deg;
     }
 
-    // Radial meridians (12 lines, every 30°)
+    // Radial meridians — plotters clips to viewport
     for i in 0..12 {
         let ang = (i as f64) * std::f64::consts::PI / 6.0;
         let (dx, dy) = (ang.cos(), ang.sin());
@@ -373,88 +372,85 @@ fn draw_spherical_grid(chart: &mut Chart, projection: SphericalProjection) -> Re
             .map_err(map_err)?;
     }
 
-    // Axes (thicker)
+    // Axes spanning full viewport
+    let (x_min, x_max) = (cx - half, cx + half);
+    let (y_min, y_max) = (cy - half, cy + half);
     chart
-        .draw_series(LineSeries::new(vec![(-1.0, 0.0), (1.0, 0.0)], AXIS_COLOR))
+        .draw_series(LineSeries::new(vec![(x_min, 0.0), (x_max, 0.0)], AXIS_COLOR))
         .map_err(map_err)?;
     chart
-        .draw_series(LineSeries::new(vec![(0.0, -1.0), (0.0, 1.0)], AXIS_COLOR))
+        .draw_series(LineSeries::new(vec![(0.0, y_min), (0.0, y_max)], AXIS_COLOR))
         .map_err(map_err)?;
 
     Ok(())
 }
 
 /// Draw Euclidean grid: straight lines with tick labels in original coordinates.
-fn draw_euclidean_grid(chart: &mut Chart, half: f64, scale: f64) -> Result<(), JsValue> {
+fn draw_euclidean_grid(
+    chart: &mut Chart,
+    cx: f64,
+    cy: f64,
+    half: f64,
+    scale: f64,
+) -> Result<(), JsValue> {
     let map_err = |e: DrawingAreaErrorKind<_>| JsValue::from_str(&e.to_string());
+
+    let (x_min, x_max) = (cx - half, cx + half);
+    let (y_min, y_max) = (cy - half, cy + half);
 
     // Choose nice tick spacing based on original (unscaled) data range
     let half_original = half * scale;
     let spacing_original = nice_spacing(half_original);
     let spacing = spacing_original / scale;
 
-    let mut v = spacing;
-    while v < half {
-        // Vertical grid lines
-        chart
-            .draw_series(LineSeries::new(vec![(v, -half), (v, half)], GRID_COLOR))
-            .map_err(map_err)?;
-        chart
-            .draw_series(LineSeries::new(vec![(-v, -half), (-v, half)], GRID_COLOR))
-            .map_err(map_err)?;
-        // Horizontal grid lines
-        chart
-            .draw_series(LineSeries::new(vec![(-half, v), (half, v)], GRID_COLOR))
-            .map_err(map_err)?;
-        chart
-            .draw_series(LineSeries::new(vec![(-half, -v), (half, -v)], GRID_COLOR))
-            .map_err(map_err)?;
+    let font = ("sans-serif", 10).into_font().color(&AXIS_COLOR);
 
-        // Tick labels in original coordinate space
-        let orig_v = v * scale;
-        let label = format_tick(orig_v);
-        let neg_label = format_tick(-orig_v);
-        let font = ("sans-serif", 10).into_font().color(&AXIS_COLOR);
-        // x-axis labels (below axis)
-        chart
-            .draw_series(std::iter::once(Text::new(
-                label.clone(),
-                (v, -spacing * 0.3),
-                font.clone(),
-            )))
-            .map_err(map_err)?;
-        chart
-            .draw_series(std::iter::once(Text::new(
-                neg_label.clone(),
-                (-v, -spacing * 0.3),
-                font.clone(),
-            )))
-            .map_err(map_err)?;
-        // y-axis labels (left of axis)
-        chart
-            .draw_series(std::iter::once(Text::new(
-                label,
-                (spacing * 0.15, v),
-                font.clone(),
-            )))
-            .map_err(map_err)?;
-        chart
-            .draw_series(std::iter::once(Text::new(
-                neg_label,
-                (spacing * 0.15, -v),
-                font,
-            )))
-            .map_err(map_err)?;
+    // Vertical grid lines — iterate over all tick positions within the viewport
+    let first_x = (x_min / spacing).ceil() * spacing;
+    let mut x = first_x;
+    while x <= x_max + spacing * 0.01 {
+        if x.abs() > spacing * 0.01 {
+            chart
+                .draw_series(LineSeries::new(vec![(x, y_min), (x, y_max)], GRID_COLOR))
+                .map_err(map_err)?;
+            let label = format_tick(x * scale);
+            chart
+                .draw_series(std::iter::once(Text::new(
+                    label,
+                    (x, y_min + spacing * 0.3),
+                    font.clone(),
+                )))
+                .map_err(map_err)?;
+        }
+        x += spacing;
+    }
 
-        v += spacing;
+    // Horizontal grid lines
+    let first_y = (y_min / spacing).ceil() * spacing;
+    let mut y = first_y;
+    while y <= y_max + spacing * 0.01 {
+        if y.abs() > spacing * 0.01 {
+            chart
+                .draw_series(LineSeries::new(vec![(x_min, y), (x_max, y)], GRID_COLOR))
+                .map_err(map_err)?;
+            let label = format_tick(y * scale);
+            chart
+                .draw_series(std::iter::once(Text::new(
+                    label,
+                    (x_min + spacing * 0.1, y),
+                    font.clone(),
+                )))
+                .map_err(map_err)?;
+        }
+        y += spacing;
     }
 
     // Axes
     chart
-        .draw_series(LineSeries::new(vec![(-half, 0.0), (half, 0.0)], AXIS_COLOR))
+        .draw_series(LineSeries::new(vec![(x_min, 0.0), (x_max, 0.0)], AXIS_COLOR))
         .map_err(map_err)?;
     chart
-        .draw_series(LineSeries::new(vec![(0.0, -half), (0.0, half)], AXIS_COLOR))
+        .draw_series(LineSeries::new(vec![(0.0, y_min), (0.0, y_max)], AXIS_COLOR))
         .map_err(map_err)?;
 
     Ok(())
