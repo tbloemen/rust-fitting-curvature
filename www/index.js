@@ -120,46 +120,19 @@ function getParams() {
 // --- MNIST loading ---
 
 async function fetchMnistRaw() {
-  // Try local files first (dev), fall back to remote mirror (GitHub Pages)
-  let imagesResp, labelsResp;
-  let fromRemote = false;
-  try {
-    [imagesResp, labelsResp] = await Promise.all([
-      fetch("data/t10k-images-idx3-ubyte"),
-      fetch("data/t10k-labels-idx1-ubyte"),
-    ]);
-  } catch (_) {
-    // fetch may throw on network error
-  }
-
-  if (!imagesResp?.ok || !labelsResp?.ok) {
-    const mirror = "https://ossci-datasets.s3.amazonaws.com/mnist";
-    [imagesResp, labelsResp] = await Promise.all([
-      fetch(`${mirror}/t10k-images-idx3-ubyte.gz`),
-      fetch(`${mirror}/t10k-labels-idx1-ubyte.gz`),
-    ]);
-    fromRemote = true;
-  }
+  const [imagesResp, labelsResp] = await Promise.all([
+    fetch("data/t10k-images-idx3-ubyte"),
+    fetch("data/t10k-labels-idx1-ubyte"),
+  ]);
 
   if (!imagesResp.ok || !labelsResp.ok) {
-    throw new Error("Failed to load MNIST data from local files or remote mirror.");
+    throw new Error("MNIST data files not found.");
   }
 
-  let imagesBuf, labelsBuf;
-  if (fromRemote) {
-    // Remote files are gzip-compressed; decompress in the browser
-    const decompress = (resp) =>
-      new Response(resp.body.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
-    [imagesBuf, labelsBuf] = await Promise.all([
-      decompress(imagesResp),
-      decompress(labelsResp),
-    ]);
-  } else {
-    [imagesBuf, labelsBuf] = await Promise.all([
-      imagesResp.arrayBuffer(),
-      labelsResp.arrayBuffer(),
-    ]);
-  }
+  const [imagesBuf, labelsBuf] = await Promise.all([
+    imagesResp.arrayBuffer(),
+    labelsResp.arrayBuffer(),
+  ]);
 
   const imagesView = new DataView(imagesBuf);
   const nImages = imagesView.getUint32(4);
