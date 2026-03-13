@@ -1,7 +1,6 @@
 //! Tests for manifold implementations.
 //! Ported from Python test/test_grad.py and test/test_rsgd.py (manifold-related parts).
 
-use fitting_core::config::ScalingLossType;
 use fitting_core::manifolds::{Euclidean, Hyperboloid, Manifold, Sphere};
 use fitting_core::synthetic_data::Rng;
 
@@ -11,7 +10,7 @@ use fitting_core::synthetic_data::Rng;
 
 #[test]
 fn test_hyperboloid_constraint() {
-    let h = Hyperboloid::new(-1.0, ScalingLossType::HardBarrier);
+    let h = Hyperboloid::new(-1.0);
     let pts = h.init_points(10, 2, 0.01, 42);
     let ambient = 3;
     for i in 0..10 {
@@ -25,7 +24,7 @@ fn test_hyperboloid_constraint() {
 
 #[test]
 fn test_hyperboloid_distances_non_negative() {
-    let h = Hyperboloid::new(-1.0, ScalingLossType::HardBarrier);
+    let h = Hyperboloid::new(-1.0);
     let pts = h.init_points(20, 2, 0.01, 42);
     let dist = h.pairwise_distances(&pts, 20, 3);
     for i in 0..20 {
@@ -41,7 +40,7 @@ fn test_hyperboloid_distances_non_negative() {
 
 #[test]
 fn test_hyperboloid_distances_symmetric() {
-    let h = Hyperboloid::new(-1.0, ScalingLossType::HardBarrier);
+    let h = Hyperboloid::new(-1.0);
     let pts = h.init_points(20, 2, 0.01, 42);
     let dist = h.pairwise_distances(&pts, 20, 3);
     for i in 0..20 {
@@ -54,7 +53,7 @@ fn test_hyperboloid_distances_symmetric() {
 
 #[test]
 fn test_hyperboloid_diagonal_zero() {
-    let h = Hyperboloid::new(-1.0, ScalingLossType::HardBarrier);
+    let h = Hyperboloid::new(-1.0);
     let pts = h.init_points(20, 2, 0.01, 42);
     let dist = h.pairwise_distances(&pts, 20, 3);
     for i in 0..20 {
@@ -68,7 +67,7 @@ fn test_hyperboloid_diagonal_zero() {
 
 #[test]
 fn test_hyperboloid_exp_map_preserves_constraint() {
-    let h = Hyperboloid::new(-1.0, ScalingLossType::HardBarrier);
+    let h = Hyperboloid::new(-1.0);
     let n = 10;
     let ambient = 3;
     let mut pts = h.init_points(n, 2, 0.01, 42);
@@ -97,7 +96,7 @@ fn test_hyperboloid_exp_map_preserves_constraint() {
 #[test]
 fn test_hyperboloid_different_curvatures() {
     for &k in &[-0.5, -1.0, -2.0] {
-        let h = Hyperboloid::new(k, ScalingLossType::HardBarrier);
+        let h = Hyperboloid::new(k);
         let r_sq = 1.0 / (-k);
         let pts = h.init_points(10, 2, 0.01, 42);
         let ambient = 3;
@@ -229,7 +228,7 @@ fn test_euclidean_center() {
 
 #[test]
 fn test_hyperboloid_tangent_is_tangent() {
-    let h = Hyperboloid::new(-1.0, ScalingLossType::HardBarrier);
+    let h = Hyperboloid::new(-1.0);
     let n = 5;
     let ambient = 3;
     let pts = h.init_points(n, 2, 0.1, 42);

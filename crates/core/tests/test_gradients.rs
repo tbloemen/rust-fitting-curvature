@@ -1,4 +1,3 @@
-use fitting_core::config::ScalingLossType;
 use fitting_core::kernels::compute_q_matrix_with_distances;
 use fitting_core::kl_divergence::kl_gradient;
 use fitting_core::manifolds::{self, Manifold};
@@ -17,7 +16,7 @@ struct GradientTestSetup {
 
 impl GradientTestSetup {
     fn new(curvature: f64, n_points: usize, embed_dim: usize) -> Self {
-        let manifold = manifolds::create_manifold(curvature, ScalingLossType::None);
+        let manifold = manifolds::create_manifold(curvature);
         let ambient_dim = manifold.ambient_dim(embed_dim);
         let points = manifold.init_points(n_points, embed_dim, 0.1, 42);
 

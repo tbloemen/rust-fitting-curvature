@@ -1,11 +1,12 @@
 use crate::affinities::compute_perplexity_affinities;
 use crate::config::TrainingConfig;
 use crate::kernels::compute_q_matrix_with_distances;
-use crate::kl_divergence::kl_gradient;
-use crate::kl_divergence::kl_loss;
+use crate::kl_divergence::{compute_global_similarities, kl_gradient, kl_loss};
 use crate::manifolds;
 use crate::manifolds::Manifold;
+use crate::matrices::compute_euclidean_distance_matrix;
 use crate::optimizer::RiemannianSGDMomentum;
+use crate::scaling_loss;
 
 /// Embedding state for step-by-step iteration.
 ///
@@ -21,6 +22,9 @@ pub struct EmbeddingState {
     manifold: Box<dyn Manifold>,
     optimizer: RiemannianSGDMomentum,
     p_base: Vec<f64>,
+    /// Globally-normalized input similarities p̂_ij for the Zhou & Sharpee global loss.
+    /// Only populated when `config.global_loss_weight > 0`.
+    p_hat: Vec<f64>,
     /// Original input data, kept for metric computation.
     input_data: Vec<f64>,
     n_features: usize,
@@ -30,7 +34,7 @@ impl EmbeddingState {
     /// Initialize embedding state from input data and config.
     pub fn new(data: &[f64], n_features: usize, config: &TrainingConfig) -> Self {
         let n_points = config.n_points;
-        let manifold = manifolds::create_manifold(config.curvature, config.scaling_loss_type);
+        let manifold = manifolds::create_manifold(config.curvature);
         let ambient_dim = manifold.ambient_dim(config.embed_dim);
 
         let p_base = compute_perplexity_affinities(data, n_points, n_features, config.perplexity);
@@ -43,6 +47,14 @@ impl EmbeddingState {
             ambient_dim,
         );
 
+        // Precompute p̂ from input Euclidean distances (fixed throughout training).
+        let p_hat = if config.global_loss_weight > 0.0 {
+            let input_dists = compute_euclidean_distance_matrix(data, n_points, n_features);
+            compute_global_similarities(&input_dists, n_points)
+        } else {
+            Vec::new()
+        };
+
         Self {
             points,
             n_points,
@@ -53,6 +65,7 @@ impl EmbeddingState {
             manifold,
             optimizer,
             p_base,
+            p_hat,
             input_data: data.to_vec(),
             n_features,
         }
@@ -101,15 +114,40 @@ impl EmbeddingState {
             ambient_dim,
         );
 
-        // Add scaling loss gradient (Euclidean, needs projection to tangent space)
+        // Radial scaling loss (hyperbolic only): penalizes spread of points from origin.
+        // Gradient is in ambient coordinates; project to tangent space before adding.
         if self.config.centering_weight > 0.0 {
-            let (_, mut scale_grad) =
-                self.manifold
-                    .scaling_loss(&self.points, n_points, ambient_dim);
+            let (_, mut scale_grad) = scaling_loss::compute(
+                self.config.scaling_loss_type,
+                &self.points,
+                n_points,
+                ambient_dim,
+                self.manifold.radius(),
+                self.config.curvature,
+            );
             self.manifold
                 .project_to_tangent(&self.points, &mut scale_grad, n_points, ambient_dim);
             for k in 0..grad.len() {
                 grad[k] += self.config.centering_weight * scale_grad[k];
+            }
+        }
+
+        // Global t-SNE loss (Zhou & Sharpee): adds a KL term with globally-normalized
+        // similarities, improving preservation of large-scale structure. Applies to all
+        // geometries. The gradient has the same Riemannian structure as the KL gradient.
+        if self.config.global_loss_weight > 0.0 {
+            let q_hat = compute_global_similarities(&distances, n_points);
+            let global_grad = kl_gradient(
+                self.manifold.as_ref(),
+                &self.points,
+                &q_hat,
+                &self.p_hat,
+                &distances,
+                n_points,
+                ambient_dim,
+            );
+            for k in 0..grad.len() {
+                grad[k] += self.config.global_loss_weight * global_grad[k];
             }
         }
 

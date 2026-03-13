@@ -32,7 +32,8 @@ fn parse_projection(s: &str) -> SphericalProjection {
     match s {
         "azimuthal_equidistant" => SphericalProjection::AzimuthalEquidistant,
         "orthographic" => SphericalProjection::Orthographic,
-        _ => SphericalProjection::Stereographic,
+        "stereographic" => SphericalProjection::Stereographic,
+        _ => SphericalProjection::AzimuthalEquidistant,
     }
 }
 
@@ -63,6 +64,7 @@ impl EmbeddingRunner {
         early_exaggeration_iterations: usize,
         centering_weight: f64,
         scaling_loss: &str,
+        global_loss_weight: f64,
         projection: &str,
     ) -> Result<EmbeddingRunner, JsValue> {
         let config = TrainingConfig {
@@ -75,6 +77,7 @@ impl EmbeddingRunner {
             early_exaggeration_iterations,
             centering_weight,
             scaling_loss_type: parse_scaling_loss(scaling_loss),
+            global_loss_weight,
             ..Default::default()
         };
 
@@ -103,6 +106,7 @@ impl EmbeddingRunner {
         early_exaggeration_iterations: usize,
         centering_weight: f64,
         scaling_loss: &str,
+        global_loss_weight: f64,
         projection: &str,
     ) -> Result<EmbeddingRunner, JsValue> {
         let synth = synthetic_data::load_synthetic(dataset_name, n_points, 42)
@@ -120,6 +124,7 @@ impl EmbeddingRunner {
             early_exaggeration_iterations,
             centering_weight,
             scaling_loss_type: parse_scaling_loss(scaling_loss),
+            global_loss_weight,
             ..Default::default()
         };
 
@@ -150,6 +155,7 @@ impl EmbeddingRunner {
         early_exaggeration_iterations: usize,
         centering_weight: f64,
         scaling_loss: &str,
+        global_loss_weight: f64,
         projection: &str,
     ) -> Result<EmbeddingRunner, JsValue> {
         let config = TrainingConfig {
@@ -162,6 +168,7 @@ impl EmbeddingRunner {
             early_exaggeration_iterations,
             centering_weight,
             scaling_loss_type: parse_scaling_loss(scaling_loss),
+            global_loss_weight,
             ..Default::default()
         };
 
@@ -284,6 +291,7 @@ pub fn get_default_config() -> Result<JsValue, JsValue> {
         cfg.early_exaggeration_iterations as f64,
     )?;
     set_prop(&obj, "centering_weight", cfg.centering_weight)?;
+    set_prop(&obj, "global_loss_weight", cfg.global_loss_weight)?;
     let scaling_loss_str = match cfg.scaling_loss_type {
         ScalingLossType::Rms => "rms",
         ScalingLossType::HardBarrier => "hard_barrier",

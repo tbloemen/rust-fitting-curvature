@@ -32,6 +32,10 @@ pub struct TrainingConfig {
     pub init_scale: f64,
     pub centering_weight: f64,
     pub scaling_loss_type: ScalingLossType,
+    /// Weight λ for the Zhou & Sharpee global t-SNE loss (0 = disabled).
+    /// Adds a second KL term with globally-normalized similarities, improving
+    /// preservation of large-scale structure. Applies to all geometries.
+    pub global_loss_weight: f64,
     pub seed: u64,
 }
 
@@ -52,6 +56,7 @@ impl Default for TrainingConfig {
             init_scale: 1.0,
             centering_weight: 0.5,
             scaling_loss_type: ScalingLossType::MeanDistance,
+            global_loss_weight: 0.0,
             seed: 42,
         }
     }

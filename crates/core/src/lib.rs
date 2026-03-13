@@ -7,5 +7,6 @@ pub mod manifolds;
 pub mod matrices;
 pub mod metrics;
 pub mod optimizer;
+pub mod scaling_loss;
 pub mod synthetic_data;
 pub mod visualisation;
