@@ -2,6 +2,7 @@ import {
   EmbeddingRunner,
   generate_sample_data,
   get_dataset_names,
+  get_default_config,
   default as init,
 } from "fitting-web";
 
@@ -21,7 +22,20 @@ initialize();
 
 async function initialize() {
   await init();
+  applyDefaultConfig();
   main();
+}
+
+function applyDefaultConfig() {
+  const d = get_default_config();
+  document.getElementById("curvature").value = d.curvature;
+  document.getElementById("perplexity").value = d.perplexity;
+  document.getElementById("iterations").value = d.n_iterations;
+  document.getElementById("lr").value = d.learning_rate;
+  document.getElementById("ee_factor").value = d.early_exaggeration_factor;
+  document.getElementById("ee_iterations").value = d.early_exaggeration_iterations;
+  document.getElementById("centering_weight").value = d.centering_weight;
+  document.getElementById("scaling_loss").value = d.scaling_loss;
 }
 
 function main() {

@@ -45,13 +45,13 @@ impl Default for TrainingConfig {
             n_iterations: 1000,
             early_exaggeration_iterations: 250,
             early_exaggeration_factor: 4.0,
-            learning_rate: 200.0,
+            learning_rate: 20.0,
             momentum_early: 0.5,
             momentum_main: 0.8,
             init_method: InitMethod::Pca,
             init_scale: 1.0,
             centering_weight: 0.5,
-            scaling_loss_type: ScalingLossType::HardBarrier,
+            scaling_loss_type: ScalingLossType::MeanDistance,
             seed: 42,
         }
     }
