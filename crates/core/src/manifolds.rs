@@ -106,7 +106,6 @@ impl Manifold for Euclidean {
             }
         }
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +325,6 @@ impl Manifold for Hyperboloid {
             }
         }
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -495,7 +493,6 @@ impl Manifold for Sphere {
     fn center(&self, _points: &mut [f64], _n_points: usize, _ambient_dim: usize) {
         // No-op for sphere (centering is a rotation, doesn't affect KL loss).
     }
-
 }
 
 // ---------------------------------------------------------------------------
