@@ -254,3 +254,35 @@ fn test_integration_loss_callback() {
         "Loss did not decrease: early={early_avg:.4}, late={late_avg:.4}"
     );
 }
+
+#[test]
+fn test_global_loss_no_nan() {
+    // Verify global t-SNE loss (Zhou & Sharpee) runs without NaN/Inf for all geometries.
+    let data = create_test_data(60, 5, 42);
+
+    for &curvature in &[-1.0, 0.0, 1.0] {
+        let config = TrainingConfig {
+            n_points: 60,
+            embed_dim: 2,
+            curvature,
+            perplexity: 10.0,
+            n_iterations: 30,
+            early_exaggeration_iterations: 10,
+            learning_rate: 20.0,
+            init_method: InitMethod::Random,
+            init_scale: 0.001,
+            global_loss_weight: 5.0,
+            ..Default::default()
+        };
+
+        let state = run_embedding(&data, 5, &config);
+        assert!(
+            !state.points.iter().any(|v| v.is_nan()),
+            "NaN with global loss at curvature={curvature}"
+        );
+        assert!(
+            !state.points.iter().any(|v| v.is_infinite()),
+            "Inf with global loss at curvature={curvature}"
+        );
+    }
+}

@@ -1,4 +1,3 @@
-use crate::config::ScalingLossType;
 use crate::synthetic_data::Rng;
 
 /// A point stored as a flat Vec<f64> of length n_points * ambient_dim (row-major).
@@ -31,9 +30,6 @@ pub trait Manifold {
 
     /// Center points so Fréchet mean is at origin (in-place).
     fn center(&self, points: &mut [f64], n_points: usize, ambient_dim: usize);
-
-    /// Differentiable scaling loss. Returns (loss_value, gradient wrt points).
-    fn scaling_loss(&self, points: &[f64], n_points: usize, ambient_dim: usize) -> (f64, Vec<f64>);
 }
 
 // ---------------------------------------------------------------------------
@@ -111,15 +107,6 @@ impl Manifold for Euclidean {
         }
     }
 
-    fn scaling_loss(
-        &self,
-        _points: &[f64],
-        n_points: usize,
-        ambient_dim: usize,
-    ) -> (f64, Vec<f64>) {
-        // No-op for Euclidean — scaling loss only applies to hyperbolic.
-        (0.0, vec![0.0; n_points * ambient_dim])
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -130,18 +117,16 @@ pub struct Hyperboloid {
     curvature: f64,
     radius: f64,
     radius_sq: f64,
-    scaling_loss_type: ScalingLossType,
 }
 
 impl Hyperboloid {
-    pub fn new(curvature: f64, scaling_loss_type: ScalingLossType) -> Self {
+    pub fn new(curvature: f64) -> Self {
         assert!(curvature < 0.0, "Hyperboloid requires negative curvature");
         let radius = 1.0 / (-curvature).sqrt();
         Self {
             curvature,
             radius,
             radius_sq: radius * radius,
-            scaling_loss_type,
         }
     }
 
@@ -342,99 +327,6 @@ impl Manifold for Hyperboloid {
         }
     }
 
-    fn scaling_loss(&self, points: &[f64], n_points: usize, ambient_dim: usize) -> (f64, Vec<f64>) {
-        let r = self.radius;
-        let mut grad = vec![0.0; n_points * ambient_dim];
-
-        match self.scaling_loss_type {
-            ScalingLossType::HardBarrier => {
-                let d_max = 3.0 * r;
-                let mut loss = 0.0;
-                for i in 0..n_points {
-                    let x0 = points[i * ambient_dim];
-                    let arg = (x0 / r).max(1.0 + 1e-7);
-                    let geo_dist = r * arg.acosh();
-                    let excess = (geo_dist - d_max).max(0.0);
-                    loss += excess * excess;
-
-                    if excess > 0.0 {
-                        // d(geo_dist)/d(x0) = 1 / sqrt(x0^2/r^2 - 1)
-                        let dg_dx0 = 1.0 / (arg * arg - 1.0).max(1e-12).sqrt();
-                        grad[i * ambient_dim] = 2.0 * excess * dg_dx0 / n_points as f64;
-                    }
-                }
-                loss /= n_points as f64;
-                (loss, grad)
-            }
-            ScalingLossType::MeanDistance => {
-                let n = n_points as f64;
-                let mut loss = 0.0;
-                for i in 0..n_points {
-                    let x0 = points[i * ambient_dim];
-                    let arg = (x0 / r).max(1.0 + 1e-7);
-                    let geo_dist = r * arg.acosh();
-                    loss += geo_dist;
-
-                    // d(geo_dist)/d(x0) = 1 / sqrt(x0^2/r^2 - 1)
-                    let dg_dx0 = 1.0 / (arg * arg - 1.0).max(1e-12).sqrt();
-                    grad[i * ambient_dim] = dg_dx0 / n;
-                }
-                loss /= n;
-                (loss, grad)
-            }
-            ScalingLossType::Rms => {
-                let n = n_points as f64;
-                let mut sum_sq = 0.0;
-                let mut geo_dists = Vec::with_capacity(n_points);
-                let mut dg_dx0s = Vec::with_capacity(n_points);
-                for i in 0..n_points {
-                    let x0 = points[i * ambient_dim];
-                    let arg = (x0 / r).max(1.0 + 1e-7);
-                    let geo_dist = r * arg.acosh();
-                    sum_sq += geo_dist * geo_dist;
-                    geo_dists.push(geo_dist);
-                    dg_dx0s.push(1.0 / (arg * arg - 1.0).max(1e-12).sqrt());
-                }
-                let rms = (sum_sq / n).sqrt();
-                let loss = (rms - 1.0) * (rms - 1.0);
-                if rms > 1e-12 {
-                    // d/dx0_i of (rms - 1)^2 = 2*(rms-1) * d(rms)/dx0_i
-                    // d(rms)/dx0_i = geo_dist_i * dg_dx0_i / (n * rms)
-                    let coeff = 2.0 * (rms - 1.0) / (n * rms);
-                    for i in 0..n_points {
-                        grad[i * ambient_dim] = coeff * geo_dists[i] * dg_dx0s[i];
-                    }
-                }
-                (loss, grad)
-            }
-            ScalingLossType::SoftplusBarrier => {
-                let n = n_points as f64;
-                let d_max = 3.0 * r;
-                let mut loss = 0.0;
-                for i in 0..n_points {
-                    let x0 = points[i * ambient_dim];
-                    let arg = (x0 / r).max(1.0 + 1e-7);
-                    let geo_dist = r * arg.acosh();
-                    let z = geo_dist - d_max;
-                    // softplus(z) = ln(1 + exp(z))
-                    let sp = if z > 20.0 {
-                        z // avoid overflow
-                    } else {
-                        (1.0 + z.exp()).ln()
-                    };
-                    loss += sp;
-
-                    // d(softplus(z))/dz = sigmoid(z) = 1/(1+exp(-z))
-                    let sig = 1.0 / (1.0 + (-z).exp());
-                    let dg_dx0 = 1.0 / (arg * arg - 1.0).max(1e-12).sqrt();
-                    grad[i * ambient_dim] = sig * dg_dx0 / n;
-                }
-                loss /= n;
-                (loss, grad)
-            }
-            ScalingLossType::None => (0.0, grad),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -604,27 +496,19 @@ impl Manifold for Sphere {
         // No-op for sphere (centering is a rotation, doesn't affect KL loss).
     }
 
-    fn scaling_loss(
-        &self,
-        _points: &[f64],
-        n_points: usize,
-        ambient_dim: usize,
-    ) -> (f64, Vec<f64>) {
-        (0.0, vec![0.0; n_points * ambient_dim])
-    }
 }
 
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
-pub fn create_manifold(curvature: f64, scaling_loss_type: ScalingLossType) -> Box<dyn Manifold> {
+pub fn create_manifold(curvature: f64) -> Box<dyn Manifold> {
     if curvature > 0.0 {
         Box::new(Sphere::new(curvature))
     } else if curvature == 0.0 {
         Box::new(Euclidean)
     } else {
-        Box::new(Hyperboloid::new(curvature, scaling_loss_type))
+        Box::new(Hyperboloid::new(curvature))
     }
 }
 
@@ -634,7 +518,7 @@ mod tests {
 
     #[test]
     fn test_hyperboloid_constraint() {
-        let h = Hyperboloid::new(-1.0, ScalingLossType::HardBarrier);
+        let h = Hyperboloid::new(-1.0);
         let pts = h.init_points(10, 2, 0.01, 42);
         let ambient = 3;
         for i in 0..10 {

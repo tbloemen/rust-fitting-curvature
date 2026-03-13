@@ -36,6 +36,7 @@ function applyDefaultConfig() {
   document.getElementById("ee_iterations").value = d.early_exaggeration_iterations;
   document.getElementById("centering_weight").value = d.centering_weight;
   document.getElementById("scaling_loss").value = d.scaling_loss;
+  document.getElementById("global_loss_weight").value = d.global_loss_weight;
 }
 
 function main() {
@@ -127,6 +128,7 @@ function getParams() {
       document.getElementById("centering_weight").value,
     ),
     scalingLoss: document.getElementById("scaling_loss").value,
+    globalLossWeight: parseFloat(document.getElementById("global_loss_weight").value),
     projection: document.getElementById("projection").value,
   };
 }
@@ -215,6 +217,7 @@ async function createRunner() {
       p.eeIterations,
       p.centeringWeight,
       p.scalingLoss,
+      p.globalLossWeight,
       p.projection,
     );
   } else if (dataSource === "synthetic") {
@@ -234,6 +237,7 @@ async function createRunner() {
       p.eeIterations,
       p.centeringWeight,
       p.scalingLoss,
+      p.globalLossWeight,
       p.projection,
     );
   } else {
@@ -255,6 +259,7 @@ async function createRunner() {
       p.eeIterations,
       p.centeringWeight,
       p.scalingLoss,
+      p.globalLossWeight,
       p.projection,
     );
   }

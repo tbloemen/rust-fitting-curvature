@@ -1,5 +1,32 @@
 use crate::manifolds::Manifold;
 
+/// Compute globally-normalized similarity matrix from pairwise distances.
+///
+/// Used for the Zhou & Sharpee global t-SNE loss. Unlike the standard Q matrix
+/// which uses `(1 + d²)^{-1}` (emphasizing small distances), this uses `(1 + d²)`
+/// (emphasizing large distances), making it sensitive to global structure.
+///
+/// `result_ij = (1 + d²_ij) / Σ_{m≠n}(1 + d²_mn)`
+pub fn compute_global_similarities(distances: &[f64], n_points: usize) -> Vec<f64> {
+    let mut kernel = vec![0.0; n_points * n_points];
+    let mut total = 0.0;
+    for i in 0..n_points {
+        for j in 0..n_points {
+            if i != j {
+                let d = distances[i * n_points + j];
+                let v = 1.0 + d * d;
+                kernel[i * n_points + j] = v;
+                total += v;
+            }
+        }
+    }
+    let total = if total == 0.0 { 1e-10 } else { total };
+    for v in &mut kernel {
+        *v /= total;
+    }
+    kernel
+}
+
 /// KL divergence loss: -sum(P * log(Q + eps)), excluding diagonal.
 pub fn kl_loss(q: &[f64], p: &[f64], n_points: usize) -> f64 {
     let eps = 1e-12;

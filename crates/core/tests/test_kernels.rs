@@ -1,7 +1,6 @@
 //! Tests for t-distribution kernel functions.
 //! Ported from Python test/test_tsne.py::TestKernels
 
-use fitting_core::config::ScalingLossType;
 use fitting_core::kernels::{compute_q_matrix, t_distribution_kernel};
 use fitting_core::manifolds::{Euclidean, Hyperboloid, Sphere};
 
@@ -77,7 +76,7 @@ fn test_q_matrix_diagonal_zero() {
 #[test]
 fn test_q_matrix_hyperbolic() {
     let n = 30;
-    let h = Hyperboloid::new(-1.0, ScalingLossType::HardBarrier);
+    let h = Hyperboloid::new(-1.0);
     let ambient = 3;
 
     // Initialize points on hyperboloid
