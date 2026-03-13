@@ -44,6 +44,10 @@ pub struct EmbeddingRunner {
     canvas: HtmlCanvasElement,
     labels: Option<Vec<u32>>,
     projection: SphericalProjection,
+    /// Current viewport: (center_x, center_y, half_extent). None = auto-fit.
+    view: Option<(f64, f64, f64)>,
+    /// Auto-fit half-extent from the last render, used to anchor zoom interactions.
+    auto_half: f64,
 }
 
 #[wasm_bindgen]
@@ -89,6 +93,8 @@ impl EmbeddingRunner {
             canvas,
             labels: None,
             projection: parse_projection(projection),
+            view: None,
+            auto_half: 1.0,
         })
     }
 
@@ -136,6 +142,8 @@ impl EmbeddingRunner {
             canvas,
             labels: Some(synth.labels),
             projection: parse_projection(projection),
+            view: None,
+            auto_half: 1.0,
         })
     }
 
@@ -180,6 +188,8 @@ impl EmbeddingRunner {
             canvas,
             labels: Some(labels.to_vec()),
             projection: parse_projection(projection),
+            view: None,
+            auto_half: 1.0,
         })
     }
 
@@ -196,8 +206,9 @@ impl EmbeddingRunner {
     }
 
     /// Render the current state to canvas.
-    pub fn render(&self) -> Result<(), JsValue> {
-        plot::draw_embedding(
+    /// Stores the auto-fit half-extent so zoom/pan can use it as a reference.
+    pub fn render(&mut self) -> Result<(), JsValue> {
+        let auto_half = plot::draw_embedding(
             &self.canvas,
             &self.state.points,
             self.state.n_points,
@@ -205,7 +216,37 @@ impl EmbeddingRunner {
             self.state.config().curvature,
             self.labels.as_deref(),
             self.projection,
-        )
+            self.view,
+        )?;
+        self.auto_half = auto_half;
+        Ok(())
+    }
+
+    /// Zoom the viewport around a normalized canvas position (0..1, 0..1).
+    /// `factor > 1` zooms in, `factor < 1` zooms out.
+    pub fn zoom_at(&mut self, norm_x: f64, norm_y: f64, factor: f64) {
+        let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
+        // Canvas coordinate → plot coordinate
+        let plot_x = cx + (norm_x - 0.5) * 2.0 * half;
+        let plot_y = cy - (norm_y - 0.5) * 2.0 * half; // y axis is flipped
+        let new_half = (half / factor).clamp(1e-6, self.auto_half * 20.0);
+        // Keep plot_x/plot_y under the cursor fixed
+        let new_cx = plot_x - (norm_x - 0.5) * 2.0 * new_half;
+        let new_cy = plot_y + (norm_y - 0.5) * 2.0 * new_half;
+        self.view = Some((new_cx, new_cy, new_half));
+    }
+
+    /// Pan the viewport by a normalized canvas delta.
+    pub fn pan_by(&mut self, norm_dx: f64, norm_dy: f64) {
+        let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
+        let dx = -norm_dx * 2.0 * half;
+        let dy = norm_dy * 2.0 * half; // y axis is flipped
+        self.view = Some((cx + dx, cy + dy, half));
+    }
+
+    /// Reset the viewport to auto-fit.
+    pub fn reset_view(&mut self) {
+        self.view = None;
     }
 
     /// Get current iteration number.
