@@ -12,8 +12,14 @@ let runner = null;
 let animationId = null;
 let mnistCache = null;
 
+// Pan state (in canvas pixel space)
+let isPanning = false;
+let panLastX = 0;
+let panLastY = 0;
+
 // DOM refs
-let canvas, status, lossDisplay, fpsDisplay, runBtn, stopBtn, stepBtn;
+let canvas, canvasWrapper, zoomIndicator;
+let status, lossDisplay, fpsDisplay, runBtn, stopBtn, stepBtn;
 let progressContainer, progressBar, metricsPanel, metricsContent;
 let lastFrameTime = 0;
 let fpsSmoothed = 0;
@@ -33,7 +39,8 @@ function applyDefaultConfig() {
   document.getElementById("iterations").value = d.n_iterations;
   document.getElementById("lr").value = d.learning_rate;
   document.getElementById("ee_factor").value = d.early_exaggeration_factor;
-  document.getElementById("ee_iterations").value = d.early_exaggeration_iterations;
+  document.getElementById("ee_iterations").value =
+    d.early_exaggeration_iterations;
   document.getElementById("centering_weight").value = d.centering_weight;
   document.getElementById("scaling_loss").value = d.scaling_loss;
   document.getElementById("global_loss_weight").value = d.global_loss_weight;
@@ -41,6 +48,8 @@ function applyDefaultConfig() {
 
 function main() {
   canvas = document.getElementById("canvas");
+  canvasWrapper = document.getElementById("canvas-wrapper");
+  zoomIndicator = document.getElementById("zoom-indicator");
   status = document.getElementById("status");
   lossDisplay = document.getElementById("loss-display");
   fpsDisplay = document.getElementById("fps-display");
@@ -54,6 +63,7 @@ function main() {
 
   setupCanvas();
   setupUI();
+  setupZoomPan();
 
   status.textContent = "WebAssembly loaded! Click Run to start.";
 }
@@ -86,8 +96,9 @@ function setupUI() {
 }
 
 function setupCanvas() {
-  const container = canvas.parentNode;
-  // Use the smaller of available width/height to keep it square and fitting
+  const container = canvasWrapper
+    ? canvasWrapper.parentNode
+    : canvas.parentNode;
   const maxW = container.clientWidth - 32;
   const maxH = window.innerHeight - 100;
   const size = Math.min(maxW, maxH, 600);
@@ -95,6 +106,57 @@ function setupCanvas() {
   canvas.height = size;
   canvas.style.width = size + "px";
   canvas.style.height = size + "px";
+  if (canvasWrapper) {
+    canvasWrapper.style.width = size + "px";
+    canvasWrapper.style.height = size + "px";
+  }
+}
+
+function setupZoomPan() {
+  canvasWrapper.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      if (runner === null) return;
+      const rect = canvas.getBoundingClientRect();
+      const norm_x = (e.clientX - rect.left) / canvas.width;
+      const norm_y = (e.clientY - rect.top) / canvas.height;
+      const factor = e.deltaY < 0 ? 1.05 : 1 / 1.05;
+      runner.zoom_at(norm_x, norm_y, factor);
+      runner.render();
+    },
+    { passive: false },
+  );
+
+  canvasWrapper.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    isPanning = true;
+    panLastX = e.clientX;
+    panLastY = e.clientY;
+    canvasWrapper.style.cursor = "grabbing";
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (!isPanning || runner === null) return;
+    const dx = (e.clientX - panLastX) / canvas.width;
+    const dy = (e.clientY - panLastY) / canvas.height;
+    panLastX = e.clientX;
+    panLastY = e.clientY;
+    runner.pan_by(dx, dy);
+    runner.render();
+  });
+
+  window.addEventListener("mouseup", () => {
+    if (!isPanning) return;
+    isPanning = false;
+    canvasWrapper.style.cursor = "";
+  });
+
+  canvasWrapper.addEventListener("dblclick", () => {
+    if (runner === null) return;
+    runner.reset_view();
+    runner.render();
+  });
 }
 
 function setDataSource(source) {
@@ -128,7 +190,9 @@ function getParams() {
       document.getElementById("centering_weight").value,
     ),
     scalingLoss: document.getElementById("scaling_loss").value,
-    globalLossWeight: parseFloat(document.getElementById("global_loss_weight").value),
+    globalLossWeight: parseFloat(
+      document.getElementById("global_loss_weight").value,
+    ),
     projection: document.getElementById("projection").value,
   };
 }
@@ -198,9 +262,7 @@ async function createRunner() {
   const p = getParams();
 
   if (dataSource === "mnist") {
-    const nPoints = parseInt(
-      document.getElementById("mnist_n_points").value,
-    );
+    const nPoints = parseInt(document.getElementById("mnist_n_points").value);
     status.textContent = "Loading MNIST data...";
     const mnist = await loadMnist(nPoints);
     runner = EmbeddingRunner.from_data_with_labels(
@@ -222,9 +284,7 @@ async function createRunner() {
     );
   } else if (dataSource === "synthetic") {
     const dataset = document.getElementById("dataset").value;
-    const nPoints = parseInt(
-      document.getElementById("synth_n_points").value,
-    );
+    const nPoints = parseInt(document.getElementById("synth_n_points").value);
     runner = EmbeddingRunner.from_synthetic(
       "canvas",
       dataset,
@@ -242,9 +302,7 @@ async function createRunner() {
     );
   } else {
     const nPoints = parseInt(document.getElementById("n_points").value);
-    const nFeatures = parseInt(
-      document.getElementById("n_features").value,
-    );
+    const nFeatures = parseInt(document.getElementById("n_features").value);
     const data = generate_sample_data(nPoints, nFeatures, 42);
     runner = new EmbeddingRunner(
       "canvas",
@@ -419,7 +477,8 @@ async function runEmbedding() {
     lastFrameTime = now;
     if (dt > 0) {
       const instantFps = 1000 / dt;
-      fpsSmoothed = fpsSmoothed === 0 ? instantFps : fpsSmoothed * 0.9 + instantFps * 0.1;
+      fpsSmoothed =
+        fpsSmoothed === 0 ? instantFps : fpsSmoothed * 0.9 + instantFps * 0.1;
       fpsDisplay.textContent = `${Math.round(fpsSmoothed)} FPS`;
     }
 

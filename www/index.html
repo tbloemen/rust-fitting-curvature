@@ -131,7 +131,11 @@
     </div>
 
     <div class="main">
-        <canvas id="canvas" width="500" height="500"></canvas>
+        <div class="canvas-wrapper" id="canvas-wrapper">
+            <canvas id="canvas" width="500" height="500"></canvas>
+            <div class="zoom-indicator" id="zoom-indicator"></div>
+        </div>
+        <p class="canvas-hint">scroll to zoom · drag to pan · double-click to reset</p>
         <div class="progress-container" id="progress-container" style="display:none">
             <div class="progress-bar" id="progress-bar"></div>
         </div>
