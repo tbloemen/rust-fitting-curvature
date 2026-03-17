@@ -377,18 +377,21 @@ fn draw_spherical_grid(
         theta_deg += step_deg;
     }
 
-    // Radial meridians — plotters clips to viewport
-    for i in 0..12 {
+    // Radial meridians as full diameters, properly clipped to the viewport so that
+    // plotters' coordinate clamping doesn't distort their angles.
+    let (x_min, x_max) = (cx - half, cx + half);
+    let (y_min, y_max) = (cy - half, cy + half);
+    for i in 0..6 {
         let ang = (i as f64) * std::f64::consts::PI / 6.0;
         let (dx, dy) = (ang.cos(), ang.sin());
-        chart
-            .draw_series(LineSeries::new(vec![(0.0, 0.0), (dx, dy)], GRID_COLOR))
-            .map_err(map_err)?;
+        if let Some((a, b)) = clip_line((-dx, -dy), (dx, dy), x_min, y_min, x_max, y_max) {
+            chart
+                .draw_series(LineSeries::new(vec![a, b], GRID_COLOR))
+                .map_err(map_err)?;
+        }
     }
 
     // Axes spanning full viewport
-    let (x_min, x_max) = (cx - half, cx + half);
-    let (y_min, y_max) = (cy - half, cy + half);
     chart
         .draw_series(LineSeries::new(
             vec![(x_min, 0.0), (x_max, 0.0)],
@@ -526,4 +529,51 @@ fn nice_spacing(half: f64) -> f64 {
         10.0
     };
     nice * magnitude
+}
+
+/// Clip a line segment to a rectangle using Liang-Barsky. Returns the clipped endpoints,
+/// or `None` if the segment is entirely outside.
+fn clip_line(
+    a: (f64, f64),
+    b: (f64, f64),
+    x_min: f64,
+    y_min: f64,
+    x_max: f64,
+    y_max: f64,
+) -> Option<((f64, f64), (f64, f64))> {
+    let dx = b.0 - a.0;
+    let dy = b.1 - a.1;
+    let mut t0 = 0.0f64;
+    let mut t1 = 1.0f64;
+
+    let edges = [
+        (-dx, a.0 - x_min), // left
+        (dx, x_max - a.0),  // right
+        (-dy, a.1 - y_min), // bottom
+        (dy, y_max - a.1),  // top
+    ];
+
+    for &(p, q) in &edges {
+        if p.abs() < 1e-12 {
+            if q < 0.0 {
+                return None;
+            }
+        } else {
+            let t = q / p;
+            if p < 0.0 {
+                t0 = t0.max(t);
+            } else {
+                t1 = t1.min(t);
+            }
+        }
+    }
+
+    if t0 > t1 {
+        return None;
+    }
+
+    Some((
+        (a.0 + t0 * dx, a.1 + t0 * dy),
+        (a.0 + t1 * dx, a.1 + t1 * dy),
+    ))
 }
