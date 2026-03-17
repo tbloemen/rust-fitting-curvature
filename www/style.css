@@ -283,13 +283,13 @@ canvas {
 .metrics-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px 24px;
+  gap: 12px 24px;
 }
 .metric-row {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  padding: 2px 0;
+  padding: 4px 0;
 }
 .metric-name {
   color: #aaa;
