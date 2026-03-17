@@ -6,7 +6,9 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="sidebar">
+    <button class="sidebar-toggle shifted" id="sidebar-toggle">&#9776;</button>
+
+    <div class="sidebar" id="sidebar">
         <h1>Constant Curvature Embedding</h1>
 
         <div class="section">
@@ -122,7 +124,6 @@
             </div>
         </div>
 
-
         <div class="button-group">
             <button id="run-btn" class="primary">Run</button>
             <button id="stop-btn" class="primary" disabled>Stop</button>
@@ -132,19 +133,22 @@
 
     <div class="main">
         <div class="canvas-wrapper" id="canvas-wrapper">
+            <div class="plot-title" id="plot-title"></div>
             <canvas id="canvas" width="500" height="500"></canvas>
             <div class="zoom-indicator" id="zoom-indicator"></div>
+            <div class="metrics-panel" id="metrics-panel" style="display:none">
+                <div class="section-title">Quality Metrics</div>
+                <div id="metrics-content"></div>
+            </div>
         </div>
-        <p class="canvas-hint">scroll to zoom · drag to pan · double-click to reset</p>
-        <div class="progress-container" id="progress-container" style="display:none">
-            <div class="progress-bar" id="progress-bar"></div>
-        </div>
-        <p id="status">Loading WASM module...</p>
-        <p class="loss-display" id="loss-display"></p>
-        <p class="loss-display" id="fps-display"></p>
-        <div class="metrics-panel" id="metrics-panel" style="display:none">
-            <div class="section-title">Quality Metrics</div>
-            <div id="metrics-content"></div>
+        <div class="status-bar">
+            <p id="status">Loading WASM module...</p>
+            <div class="progress-container" id="progress-container" style="display:none">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+            <p class="loss-display" id="loss-display"></p>
+            <p class="loss-display" id="fps-display"></p>
+            <p class="canvas-hint">scroll to zoom · drag to pan · double-click to reset</p>
         </div>
     </div>
 
