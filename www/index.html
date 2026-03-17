@@ -6,132 +6,133 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <button class="sidebar-toggle shifted" id="sidebar-toggle">&#9776;</button>
-
     <div class="sidebar" id="sidebar">
-        <h1>Constant Curvature Embedding</h1>
+        <div class="sidebar-content">
+            <h1>Constant Curvature Embedding</h1>
 
-        <div class="section">
-            <div class="section-title">Data Source</div>
-            <div class="toggle-group">
-                <button id="btn-random" class="active">Random</button>
-                <button id="btn-synthetic">Synthetic</button>
-                <button id="btn-mnist">MNIST</button>
+            <div class="section">
+                <div class="section-title">Data Source</div>
+                <div class="toggle-group">
+                    <button id="btn-random" class="active">Random</button>
+                    <button id="btn-synthetic">Synthetic</button>
+                    <button id="btn-mnist">MNIST</button>
+                </div>
+
+                <div id="random-controls">
+                    <div class="control-group">
+                        <label for="n_points">Points</label>
+                        <input type="number" id="n_points" value="200" min="10" max="5000">
+                    </div>
+                    <div class="control-group">
+                        <label for="n_features">Features</label>
+                        <input type="number" id="n_features" value="50" min="2" max="1000">
+                    </div>
+                </div>
+
+                <div id="synthetic-controls" style="display:none">
+                    <div class="control-group">
+                        <label for="dataset">Dataset</label>
+                        <select id="dataset">
+                            <option value="uniform_grid">Uniform Grid (Eucl.)</option>
+                            <option value="gaussian_blob">Gaussian Blob (Eucl.)</option>
+                            <option value="concentric_circles">Concentric Circles (Eucl.)</option>
+                            <option value="uniform_sphere">Uniform Sphere</option>
+                            <option value="von_mises_fisher">Von Mises-Fisher</option>
+                            <option value="antipodal_clusters">Antipodal Clusters</option>
+                            <option value="uniform_hyperbolic" selected>Uniform Hyperbolic</option>
+                            <option value="tree_structured">Tree Structured</option>
+                            <option value="hyperbolic_shells">Hyperbolic Shells</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label for="synth_n_points">Points</label>
+                        <input type="number" id="synth_n_points" value="300" min="10" max="5000">
+                    </div>
+                </div>
+
+                <div id="mnist-controls" style="display:none">
+                    <div class="control-group">
+                        <label for="mnist_n_points">Points (max 10000)</label>
+                        <input type="number" id="mnist_n_points" value="1000" min="100" max="10000">
+                    </div>
+                    <p style="font-size:0.65rem; color:#666; margin-top:4px;">
+                        Downloads from remote if local data is unavailable
+                    </p>
+                </div>
             </div>
 
-            <div id="random-controls">
+            <div class="section">
+                <div class="section-title">Embedding Parameters</div>
                 <div class="control-group">
-                    <label for="n_points">Points</label>
-                    <input type="number" id="n_points" value="200" min="10" max="5000">
+                    <label for="curvature">Curvature</label>
+                    <input type="text" id="curvature" inputmode="numeric">
                 </div>
                 <div class="control-group">
-                    <label for="n_features">Features</label>
-                    <input type="number" id="n_features" value="50" min="2" max="1000">
+                    <label for="perplexity">Perplexity</label>
+                    <input type="number" id="perplexity" min="5" max="100">
+                </div>
+                <div class="control-group">
+                    <label for="iterations">Iterations</label>
+                    <input type="number" id="iterations" min="10" max="5000">
+                </div>
+                <div class="control-group">
+                    <label for="lr">Learning Rate</label>
+                    <input type="number" id="lr" step="10">
                 </div>
             </div>
 
-            <div id="synthetic-controls" style="display:none">
+            <div class="section">
+                <div class="section-title">Early Exaggeration</div>
                 <div class="control-group">
-                    <label for="dataset">Dataset</label>
-                    <select id="dataset">
-                        <option value="uniform_grid">Uniform Grid (Eucl.)</option>
-                        <option value="gaussian_blob">Gaussian Blob (Eucl.)</option>
-                        <option value="concentric_circles">Concentric Circles (Eucl.)</option>
-                        <option value="uniform_sphere">Uniform Sphere</option>
-                        <option value="von_mises_fisher">Von Mises-Fisher</option>
-                        <option value="antipodal_clusters">Antipodal Clusters</option>
-                        <option value="uniform_hyperbolic" selected>Uniform Hyperbolic</option>
-                        <option value="tree_structured">Tree Structured</option>
-                        <option value="hyperbolic_shells">Hyperbolic Shells</option>
+                    <label for="ee_factor">Exaggeration Factor</label>
+                    <input type="number" id="ee_factor" step="0.5" min="1">
+                </div>
+                <div class="control-group">
+                    <label for="ee_iterations">Exaggeration Iterations</label>
+                    <input type="number" id="ee_iterations" min="0" max="5000">
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">Advanced</div>
+                <div class="control-group">
+                    <label for="centering_weight">Centering Weight</label>
+                    <input type="number" id="centering_weight" step="0.1" min="0">
+                </div>
+                <div class="control-group">
+                    <label for="scaling_loss">Scaling Loss</label>
+                    <select id="scaling_loss">
+                        <option value="none">None</option>
+                        <option value="hard_barrier">Hard Barrier</option>
+                        <option value="softplus_barrier">Softplus Barrier</option>
+                        <option value="rms">RMS</option>
+                        <option value="mean_distance">Mean Distance</option>
                     </select>
                 </div>
                 <div class="control-group">
-                    <label for="synth_n_points">Points</label>
-                    <input type="number" id="synth_n_points" value="300" min="10" max="5000">
+                    <label for="global_loss_weight">Global Loss λ</label>
+                    <input type="number" id="global_loss_weight" step="1" min="0">
                 </div>
-            </div>
-
-            <div id="mnist-controls" style="display:none">
                 <div class="control-group">
-                    <label for="mnist_n_points">Points (max 10000)</label>
-                    <input type="number" id="mnist_n_points" value="1000" min="100" max="10000">
+                    <label for="projection">Projection (spherical)</label>
+                    <select id="projection">
+                        <option value="stereographic" selected>Stereographic</option>
+                        <option value="azimuthal_equidistant">Azimuthal Equidistant</option>
+                        <option value="orthographic">Orthographic</option>
+                    </select>
                 </div>
-                <p style="font-size:0.65rem; color:#666; margin-top:4px;">
-                    Downloads from remote if local data is unavailable
-                </p>
             </div>
-        </div>
 
-        <div class="section">
-            <div class="section-title">Embedding Parameters</div>
-            <div class="control-group">
-                <label for="curvature">Curvature</label>
-                <input type="text" id="curvature" inputmode="numeric">
+            <div class="button-group">
+                <button id="run-btn" class="primary">Run</button>
+                <button id="stop-btn" class="primary" disabled>Stop</button>
+                <button id="step-btn" class="primary">Step</button>
             </div>
-            <div class="control-group">
-                <label for="perplexity">Perplexity</label>
-                <input type="number" id="perplexity" min="5" max="100">
-            </div>
-            <div class="control-group">
-                <label for="iterations">Iterations</label>
-                <input type="number" id="iterations" min="10" max="5000">
-            </div>
-            <div class="control-group">
-                <label for="lr">Learning Rate</label>
-                <input type="number" id="lr" step="10">
-            </div>
-        </div>
-
-        <div class="section">
-            <div class="section-title">Early Exaggeration</div>
-            <div class="control-group">
-                <label for="ee_factor">Exaggeration Factor</label>
-                <input type="number" id="ee_factor" step="0.5" min="1">
-            </div>
-            <div class="control-group">
-                <label for="ee_iterations">Exaggeration Iterations</label>
-                <input type="number" id="ee_iterations" min="0" max="5000">
-            </div>
-        </div>
-
-        <div class="section">
-            <div class="section-title">Advanced</div>
-            <div class="control-group">
-                <label for="centering_weight">Centering Weight</label>
-                <input type="number" id="centering_weight" step="0.1" min="0">
-            </div>
-            <div class="control-group">
-                <label for="scaling_loss">Scaling Loss</label>
-                <select id="scaling_loss">
-                    <option value="none">None</option>
-                    <option value="hard_barrier">Hard Barrier</option>
-                    <option value="softplus_barrier">Softplus Barrier</option>
-                    <option value="rms">RMS</option>
-                    <option value="mean_distance">Mean Distance</option>
-                </select>
-            </div>
-            <div class="control-group">
-                <label for="global_loss_weight">Global Loss λ</label>
-                <input type="number" id="global_loss_weight" step="1" min="0">
-            </div>
-            <div class="control-group">
-                <label for="projection">Projection (spherical)</label>
-                <select id="projection">
-                    <option value="stereographic" selected>Stereographic</option>
-                    <option value="azimuthal_equidistant">Azimuthal Equidistant</option>
-                    <option value="orthographic">Orthographic</option>
-                </select>
-            </div>
-        </div>
-
-        <div class="button-group">
-            <button id="run-btn" class="primary">Run</button>
-            <button id="stop-btn" class="primary" disabled>Stop</button>
-            <button id="step-btn" class="primary">Step</button>
         </div>
     </div>
 
     <div class="main">
+        <button class="sidebar-toggle shifted" id="sidebar-toggle">&#9776;</button>
         <div class="canvas-wrapper" id="canvas-wrapper">
             <div class="plot-title" id="plot-title"></div>
             <canvas id="canvas" width="500" height="500"></canvas>

@@ -110,7 +110,13 @@ function setupCanvas() {
 function setupSidebarToggle() {
   sidebarToggle.addEventListener("click", () => {
     sidebar.classList.toggle("collapsed");
-    sidebarToggle.classList.toggle("shifted");
+  });
+  // Resize canvas after sidebar transition ends
+  sidebar.addEventListener("transitionend", () => {
+    setupCanvas();
+    if (runner !== null && animationId === null) {
+      runner.render();
+    }
   });
 }
 

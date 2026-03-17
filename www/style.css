@@ -12,34 +12,36 @@ body {
   color: #e0e0e0;
   height: 100vh;
   overflow: hidden;
+  display: flex;
 }
 
-/* Sidebar — overlays on the left */
+/* Sidebar — flex child, collapsible */
 .sidebar {
-  position: absolute;
-  top: 0;
-  left: 0;
   width: 280px;
-  height: calc(100vh - 33px);
+  flex-shrink: 0;
+  height: 100vh;
   padding: 16px;
   padding-top: 12px;
-  background: #16213eee;
-  backdrop-filter: blur(8px);
+  background: #16213e;
   border-right: 1px solid #333;
   overflow-y: auto;
-  z-index: 10;
-  transform: translateX(0);
-  transition: transform 0.25s ease;
+  overflow-x: hidden;
+  transition: width 0.25s ease;
+  display: flex;
+  flex-direction: column;
 }
 .sidebar.collapsed {
-  transform: translateX(-100%);
+  width: 0;
+  padding: 0;
+  border-right: none;
 }
 .sidebar h1 {
   font-size: 1.1rem;
   margin-bottom: 16px;
+  white-space: nowrap;
 }
 
-/* Toggle button */
+/* Toggle button — top-left of main area */
 .sidebar-toggle {
   position: absolute;
   top: 12px;
@@ -59,15 +61,15 @@ body {
   justify-content: center;
   padding: 0;
   margin: 0;
-  transition:
-    left 0.25s ease,
-    background 0.15s;
+  transition: background 0.15s;
 }
 .sidebar-toggle:hover {
   background: #1a4a7a;
 }
-.sidebar-toggle.shifted {
-  left: 292px;
+
+.sidebar-content {
+  flex: 1;
+  white-space: nowrap;
 }
 
 .section {
@@ -141,9 +143,10 @@ button.primary:hover {
   flex: 1;
 }
 
-/* Main area — fills viewport, flex column so status bar doesn't overlap canvas */
+/* Main area — fills remaining space */
 .main {
-  width: 100vw;
+  flex: 1;
+  min-width: 0;
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -192,7 +195,7 @@ canvas {
   transition: opacity 0.2s;
 }
 
-/* Status bar at bottom — flex child, not absolute */
+/* Status bar at bottom */
 .status-bar {
   flex-shrink: 0;
   display: flex;
@@ -202,8 +205,6 @@ canvas {
   background: #16213e;
   border-top: 1px solid #333;
   font-size: 0.8rem;
-  z-index: 12;
-  position: relative;
 }
 .status-bar #status {
   color: #888;
