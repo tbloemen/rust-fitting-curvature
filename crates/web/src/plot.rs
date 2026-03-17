@@ -9,27 +9,35 @@ const GRID_COLOR: RGBColor = RGBColor(200, 200, 200);
 const AXIS_COLOR: RGBColor = RGBColor(140, 140, 140);
 const BOUNDARY_COLOR: RGBColor = RGBColor(80, 80, 80);
 
+/// Parameters for drawing an embedding plot.
+pub struct PlotParams<'a> {
+    pub points: &'a [f64],
+    pub n_points: usize,
+    pub ambient_dim: usize,
+    pub curvature: f64,
+    pub labels: Option<&'a [u32]>,
+    pub projection: SphericalProjection,
+    /// Override the auto-fit viewport as `(center_x, center_y, half_extent)`.
+    pub view: Option<(f64, f64, f64)>,
+}
+
 /// Draw embedding points on a canvas using plotters.
 ///
-/// `view` overrides the auto-fit viewport as `(center_x, center_y, half_extent)`.
 /// Returns the auto-fit half-extent so callers can anchor zoom/pan interactions.
-pub fn draw_embedding(
-    canvas: &HtmlCanvasElement,
-    points: &[f64],
-    n_points: usize,
-    ambient_dim: usize,
-    curvature: f64,
-    labels: Option<&[u32]>,
-    projection: SphericalProjection,
-    view: Option<(f64, f64, f64)>,
-) -> Result<f64, JsValue> {
+pub fn draw_embedding(canvas: &HtmlCanvasElement, params: &PlotParams) -> Result<f64, JsValue> {
     let Projection2D {
         coords: projected,
         scale,
-    } = project_to_2d(points, n_points, ambient_dim, curvature, projection);
-    let auto_half = calculate_auto_half(curvature, n_points, &projected);
+    } = project_to_2d(
+        params.points,
+        params.n_points,
+        params.ambient_dim,
+        params.curvature,
+        params.projection,
+    );
+    let auto_half = calculate_auto_half(params.curvature, params.n_points, &projected);
 
-    let (cx, cy, half) = view.unwrap_or((0.0, 0.0, auto_half));
+    let (cx, cy, half) = params.view.unwrap_or((0.0, 0.0, auto_half));
     let x_min = cx - half;
     let x_max = cx + half;
     let y_min = cy - half;
@@ -41,20 +49,7 @@ pub fn draw_embedding(
     root.fill(&WHITE)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-    let proj_name = match projection {
-        SphericalProjection::Stereographic => "Stereographic",
-        SphericalProjection::AzimuthalEquidistant => "Azimuthal equidistant",
-        SphericalProjection::Orthographic => "Orthographic",
-    };
-
-    let title = match curvature {
-        k if k < 0.0 => format!(
-            "Hyperbolic (k={}) \u{2014} Poincar\u{e9} disk",
-            format_curvature(k)
-        ),
-        k if k > 0.0 => format!("Spherical (k={}) \u{2014} {proj_name}", format_curvature(k)),
-        _ => "Euclidean".to_string(),
-    };
+    let title = make_title(params.curvature, params.projection);
 
     let mut chart = ChartBuilder::on(&root)
         .caption(&title, ("sans-serif", 16).into_font())
@@ -73,16 +68,49 @@ pub fn draw_embedding(
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     // Draw custom grid
-    if curvature < 0.0 {
-        let radius = 1.0 / (-curvature).sqrt();
+    if params.curvature < 0.0 {
+        let radius = 1.0 / (-params.curvature).sqrt();
         draw_hyperbolic_grid(&mut chart, radius, cx, cy, half)?;
-    } else if curvature > 0.0 {
-        draw_spherical_grid(&mut chart, projection, cx, cy, half)?;
+    } else if params.curvature > 0.0 {
+        draw_spherical_grid(&mut chart, params.projection, cx, cy, half)?;
     } else {
         draw_euclidean_grid(&mut chart, cx, cy, half, scale)?;
     }
 
-    // Draw data points
+    draw_points(&mut chart, &projected, params.n_points, params.labels)?;
+
+    root.present()
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    Ok(auto_half)
+}
+
+fn make_title(curvature: f64, projection: SphericalProjection) -> String {
+    match curvature {
+        k if k < 0.0 => format!(
+            "Hyperbolic (k={}) \u{2014} Poincar\u{e9} disk",
+            format_curvature(k)
+        ),
+        k if k > 0.0 => {
+            let proj_name = match projection {
+                SphericalProjection::Stereographic => "Stereographic",
+                SphericalProjection::AzimuthalEquidistant => "Azimuthal equidistant",
+                SphericalProjection::Orthographic => "Orthographic",
+            };
+            format!("Spherical (k={}) \u{2014} {proj_name}", format_curvature(k))
+        }
+        _ => "Euclidean".to_string(),
+    }
+}
+
+fn draw_points(
+    chart: &mut Chart,
+    projected: &[f64],
+    n_points: usize,
+    labels: Option<&[u32]>,
+) -> Result<(), JsValue> {
+    let map_err = |e: DrawingAreaErrorKind<_>| JsValue::from_str(&e.to_string());
+
     if let Some(labels) = labels {
         let mut label_set: Vec<u32> = labels.to_vec();
         label_set.sort();
@@ -104,7 +132,7 @@ pub fn draw_embedding(
                         .iter()
                         .map(|&(x, y)| Circle::new((x, y), 3, color.filled())),
                 )
-                .map_err(|e| JsValue::from_str(&e.to_string()))?
+                .map_err(map_err)?
                 .label(format!("Label {label}"))
                 .legend(move |(x, y)| Circle::new((x + 10, y), 3, RGBColor(r, g, b).filled()));
         }
@@ -115,7 +143,7 @@ pub fn draw_embedding(
             .background_style(WHITE.mix(0.8))
             .border_style(BLACK.mix(0.3))
             .draw()
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(map_err)?;
     } else {
         let point_data: Vec<(f64, f64)> = (0..n_points)
             .map(|i| (projected[i * 2], projected[i * 2 + 1]))
@@ -128,13 +156,10 @@ pub fn draw_embedding(
                     .iter()
                     .map(|&(x, y)| Circle::new((x, y), 3, BLUE.mix(0.7).filled())),
             )
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(map_err)?;
     }
 
-    root.present()
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    Ok(auto_half)
+    Ok(())
 }
 
 fn calculate_auto_half(curvature: f64, n_points: usize, projected: &[f64]) -> f64 {

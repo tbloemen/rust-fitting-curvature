@@ -210,13 +210,15 @@ impl EmbeddingRunner {
     pub fn render(&mut self) -> Result<(), JsValue> {
         let auto_half = plot::draw_embedding(
             &self.canvas,
-            &self.state.points,
-            self.state.n_points,
-            self.state.ambient_dim,
-            self.state.config().curvature,
-            self.labels.as_deref(),
-            self.projection,
-            self.view,
+            &plot::PlotParams {
+                points: &self.state.points,
+                n_points: self.state.n_points,
+                ambient_dim: self.state.ambient_dim,
+                curvature: self.state.config().curvature,
+                labels: self.labels.as_deref(),
+                projection: self.projection,
+                view: self.view,
+            },
         )?;
         self.auto_half = auto_half;
         Ok(())
