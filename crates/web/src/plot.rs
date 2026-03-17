@@ -27,36 +27,7 @@ pub fn draw_embedding(
         coords: projected,
         scale,
     } = project_to_2d(points, n_points, ambient_dim, curvature, projection);
-
-    let auto_half = if curvature < 0.0 {
-        let max_r = (0..n_points)
-            .map(|i| {
-                let x = projected[i * 2];
-                let y = projected[i * 2 + 1];
-                if x.is_finite() && y.is_finite() {
-                    (x * x + y * y).sqrt()
-                } else {
-                    0.0
-                }
-            })
-            .fold(0.0f64, f64::max);
-        (max_r * 1.3).clamp(0.05, 1.15)
-    } else if curvature > 0.0 {
-        1.15
-    } else {
-        let max_r = (0..n_points)
-            .map(|i| {
-                let x = projected[i * 2];
-                let y = projected[i * 2 + 1];
-                if x.is_finite() && y.is_finite() {
-                    (x * x + y * y).sqrt()
-                } else {
-                    0.0
-                }
-            })
-            .fold(0.0f64, f64::max);
-        (max_r * 1.2).max(0.5)
-    };
+    let auto_half = calculate_auto_half(curvature, n_points, &projected);
 
     let (cx, cy, half) = view.unwrap_or((0.0, 0.0, auto_half));
     let x_min = cx - half;
@@ -164,6 +135,38 @@ pub fn draw_embedding(
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     Ok(auto_half)
+}
+
+fn calculate_auto_half(curvature: f64, n_points: usize, projected: &[f64]) -> f64 {
+    if curvature < 0.0 {
+        let max_r = (0..n_points)
+            .map(|i| {
+                let x = projected[i * 2];
+                let y = projected[i * 2 + 1];
+                if x.is_finite() && y.is_finite() {
+                    (x * x + y * y).sqrt()
+                } else {
+                    0.0
+                }
+            })
+            .fold(0.0f64, f64::max);
+        (max_r * 1.3).clamp(0.05, 1.15)
+    } else if curvature > 0.0 {
+        1.15
+    } else {
+        let max_r = (0..n_points)
+            .map(|i| {
+                let x = projected[i * 2];
+                let y = projected[i * 2 + 1];
+                if x.is_finite() && y.is_finite() {
+                    (x * x + y * y).sqrt()
+                } else {
+                    0.0
+                }
+            })
+            .fold(0.0f64, f64::max);
+        (max_r * 1.2).max(0.5)
+    }
 }
 
 type Chart<'a> = ChartContext<
