@@ -37,11 +37,21 @@ pub fn draw_embedding(canvas: &HtmlCanvasElement, params: &PlotParams) -> Result
     );
     let auto_half = calculate_auto_half(params.curvature, params.n_points, &projected);
 
+    let canvas_w = canvas.width() as f64;
+    let canvas_h = canvas.height() as f64;
+    let aspect = if canvas_h > 0.0 {
+        canvas_w / canvas_h
+    } else {
+        1.0
+    };
+
     let (cx, cy, half) = params.view.unwrap_or((0.0, 0.0, auto_half));
-    let x_min = cx - half;
-    let x_max = cx + half;
-    let y_min = cy - half;
-    let y_max = cy + half;
+    let half_x = half * aspect;
+    let half_y = half;
+    let x_min = cx - half_x;
+    let x_max = cx + half_x;
+    let y_min = cy - half_y;
+    let y_max = cy + half_y;
 
     let backend = CanvasBackend::with_canvas_object(canvas.clone())
         .ok_or("failed to create canvas backend")?;
@@ -49,10 +59,7 @@ pub fn draw_embedding(canvas: &HtmlCanvasElement, params: &PlotParams) -> Result
     root.fill(&WHITE)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-    let title = make_title(params.curvature, params.projection);
-
     let mut chart = ChartBuilder::on(&root)
-        .caption(&title, ("sans-serif", 16).into_font())
         .margin(5)
         .x_label_area_size(20)
         .y_label_area_size(20)
@@ -70,11 +77,11 @@ pub fn draw_embedding(canvas: &HtmlCanvasElement, params: &PlotParams) -> Result
     // Draw custom grid
     if params.curvature < 0.0 {
         let radius = 1.0 / (-params.curvature).sqrt();
-        draw_hyperbolic_grid(&mut chart, radius, cx, cy, half)?;
+        draw_hyperbolic_grid(&mut chart, radius, cx, cy, half_x, half_y)?;
     } else if params.curvature > 0.0 {
-        draw_spherical_grid(&mut chart, params.projection, cx, cy, half)?;
+        draw_spherical_grid(&mut chart, params.projection, cx, cy, half_x, half_y)?;
     } else {
-        draw_euclidean_grid(&mut chart, cx, cy, half, scale)?;
+        draw_euclidean_grid(&mut chart, cx, cy, half_x, half_y, scale)?;
     }
 
     draw_points(&mut chart, &projected, params.n_points, params.labels)?;
@@ -83,24 +90,6 @@ pub fn draw_embedding(canvas: &HtmlCanvasElement, params: &PlotParams) -> Result
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     Ok(auto_half)
-}
-
-fn make_title(curvature: f64, projection: SphericalProjection) -> String {
-    match curvature {
-        k if k < 0.0 => format!(
-            "Hyperbolic (k={}) \u{2014} Poincar\u{e9} disk",
-            format_curvature(k)
-        ),
-        k if k > 0.0 => {
-            let proj_name = match projection {
-                SphericalProjection::Stereographic => "Stereographic",
-                SphericalProjection::AzimuthalEquidistant => "Azimuthal equidistant",
-                SphericalProjection::Orthographic => "Orthographic",
-            };
-            format!("Spherical (k={}) \u{2014} {proj_name}", format_curvature(k))
-        }
-        _ => "Euclidean".to_string(),
-    }
 }
 
 fn draw_points(
@@ -209,9 +198,11 @@ fn draw_hyperbolic_grid(
     radius: f64,
     cx: f64,
     cy: f64,
-    half: f64,
+    half_x: f64,
+    half_y: f64,
 ) -> Result<(), JsValue> {
     let map_err = |e: DrawingAreaErrorKind<_>| JsValue::from_str(&e.to_string());
+    let half_max = half_x.max(half_y);
 
     // Boundary circle — plotters clips to viewport automatically
     let boundary = circle_points(0.0, 0.0, 1.0, 128);
@@ -220,7 +211,7 @@ fn draw_hyperbolic_grid(
         .map_err(map_err)?;
 
     // Tick spacing based on zoom level (half-extent of the view)
-    let edge_disk_r = (half * 0.9).min(0.9999);
+    let edge_disk_r = (half_max * 0.9).min(0.9999);
     let max_geo_dist = 2.0 * radius * edge_disk_r.atanh();
     let geo_spacing = nice_spacing(max_geo_dist);
 
@@ -250,8 +241,8 @@ fn draw_hyperbolic_grid(
     }
 
     // Axes spanning full viewport
-    let (x_min, x_max) = (cx - half, cx + half);
-    let (y_min, y_max) = (cy - half, cy + half);
+    let (x_min, x_max) = (cx - half_x, cx + half_x);
+    let (y_min, y_max) = (cy - half_y, cy + half_y);
     chart
         .draw_series(LineSeries::new(
             vec![(x_min, 0.0), (x_max, 0.0)],
@@ -267,7 +258,7 @@ fn draw_hyperbolic_grid(
 
     // Tick labels, skipping when too dense
     let font = ("sans-serif", 10).into_font().color(&AXIS_COLOR);
-    let min_gap = half * 0.08;
+    let min_gap = half_max * 0.08;
     let mut last_label_pos = f64::NEG_INFINITY;
     for &(a, geo_d) in &ticks {
         if a - last_label_pos < min_gap {
@@ -278,7 +269,7 @@ fn draw_hyperbolic_grid(
         chart
             .draw_series(std::iter::once(Text::new(
                 label,
-                (a + half * 0.02, -half * 0.06),
+                (a + half_x * 0.02, -half_y * 0.06),
                 font.clone(),
             )))
             .map_err(map_err)?;
@@ -358,7 +349,8 @@ fn draw_spherical_grid(
     projection: SphericalProjection,
     cx: f64,
     cy: f64,
-    half: f64,
+    half_x: f64,
+    half_y: f64,
 ) -> Result<(), JsValue> {
     let map_err = |e: DrawingAreaErrorKind<_>| JsValue::from_str(&e.to_string());
 
@@ -407,8 +399,8 @@ fn draw_spherical_grid(
 
     // Radial meridians as full diameters, properly clipped to the viewport so that
     // plotters' coordinate clamping doesn't distort their angles.
-    let (x_min, x_max) = (cx - half, cx + half);
-    let (y_min, y_max) = (cy - half, cy + half);
+    let (x_min, x_max) = (cx - half_x, cx + half_x);
+    let (y_min, y_max) = (cy - half_y, cy + half_y);
     for i in 0..6 {
         let ang = (i as f64) * std::f64::consts::PI / 6.0;
         let (dx, dy) = (ang.cos(), ang.sin());
@@ -441,16 +433,18 @@ fn draw_euclidean_grid(
     chart: &mut Chart,
     cx: f64,
     cy: f64,
-    half: f64,
+    half_x: f64,
+    half_y: f64,
     scale: f64,
 ) -> Result<(), JsValue> {
     let map_err = |e: DrawingAreaErrorKind<_>| JsValue::from_str(&e.to_string());
 
-    let (x_min, x_max) = (cx - half, cx + half);
-    let (y_min, y_max) = (cy - half, cy + half);
+    let (x_min, x_max) = (cx - half_x, cx + half_x);
+    let (y_min, y_max) = (cy - half_y, cy + half_y);
 
     // Choose nice tick spacing based on original (unscaled) data range
-    let half_original = half * scale;
+    let half_min = half_x.min(half_y);
+    let half_original = half_min * scale;
     let spacing_original = nice_spacing(half_original);
     let spacing = spacing_original / scale;
 
@@ -530,15 +524,6 @@ fn format_tick(v: f64) -> String {
         format!("{}", rounded as i64)
     } else {
         format!("{:.1}", v)
-    }
-}
-
-/// Format curvature for display, using scientific notation for very small values.
-fn format_curvature(k: f64) -> String {
-    if k.abs() >= 0.01 {
-        format!("{k:.2}")
-    } else {
-        format!("{k:.1e}")
     }
 }
 

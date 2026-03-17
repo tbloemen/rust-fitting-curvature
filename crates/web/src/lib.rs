@@ -228,12 +228,15 @@ impl EmbeddingRunner {
     /// `factor > 1` zooms in, `factor < 1` zooms out.
     pub fn zoom_at(&mut self, norm_x: f64, norm_y: f64, factor: f64) {
         let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
+        let aspect = self.canvas.width() as f64 / self.canvas.height().max(1) as f64;
+        let half_x = half * aspect;
         // Canvas coordinate → plot coordinate
-        let plot_x = cx + (norm_x - 0.5) * 2.0 * half;
+        let plot_x = cx + (norm_x - 0.5) * 2.0 * half_x;
         let plot_y = cy - (norm_y - 0.5) * 2.0 * half; // y axis is flipped
         let new_half = (half / factor).clamp(1e-6, self.auto_half * 20.0);
+        let new_half_x = new_half * aspect;
         // Keep plot_x/plot_y under the cursor fixed
-        let new_cx = plot_x - (norm_x - 0.5) * 2.0 * new_half;
+        let new_cx = plot_x - (norm_x - 0.5) * 2.0 * new_half_x;
         let new_cy = plot_y + (norm_y - 0.5) * 2.0 * new_half;
         self.view = Some((new_cx, new_cy, new_half));
     }
@@ -241,7 +244,9 @@ impl EmbeddingRunner {
     /// Pan the viewport by a normalized canvas delta.
     pub fn pan_by(&mut self, norm_dx: f64, norm_dy: f64) {
         let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
-        let dx = -norm_dx * 2.0 * half;
+        let aspect = self.canvas.width() as f64 / self.canvas.height().max(1) as f64;
+        let half_x = half * aspect;
+        let dx = -norm_dx * 2.0 * half_x;
         let dy = norm_dy * 2.0 * half; // y axis is flipped
         self.view = Some((cx + dx, cy + dy, half));
     }

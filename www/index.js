@@ -21,6 +21,7 @@ let panLastY = 0;
 let canvas, canvasWrapper, zoomIndicator;
 let status, lossDisplay, fpsDisplay, runBtn, stopBtn, stepBtn;
 let progressContainer, progressBar, metricsPanel, metricsContent;
+let sidebar, sidebarToggle;
 let lastFrameTime = 0;
 let fpsSmoothed = 0;
 
@@ -61,9 +62,13 @@ function main() {
   metricsPanel = document.getElementById("metrics-panel");
   metricsContent = document.getElementById("metrics-content");
 
+  sidebar = document.getElementById("sidebar");
+  sidebarToggle = document.getElementById("sidebar-toggle");
+
   setupCanvas();
   setupUI();
   setupZoomPan();
+  setupSidebarToggle();
 
   status.textContent = "WebAssembly loaded! Click Run to start.";
 }
@@ -96,20 +101,23 @@ function setupUI() {
 }
 
 function setupCanvas() {
-  const container = canvasWrapper
-    ? canvasWrapper.parentNode
-    : canvas.parentNode;
-  const maxW = container.clientWidth - 32;
-  const maxH = window.innerHeight - 100;
-  const size = Math.min(maxW, maxH, 600);
-  canvas.width = size;
-  canvas.height = size;
-  canvas.style.width = size + "px";
-  canvas.style.height = size + "px";
-  if (canvasWrapper) {
-    canvasWrapper.style.width = size + "px";
-    canvasWrapper.style.height = size + "px";
-  }
+  const rect = canvasWrapper.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(rect.width * dpr);
+  canvas.height = Math.round(rect.height * dpr);
+}
+
+function setupSidebarToggle() {
+  sidebarToggle.addEventListener("click", () => {
+    sidebar.classList.toggle("collapsed");
+  });
+  // Resize canvas after sidebar transition ends
+  sidebar.addEventListener("transitionend", () => {
+    setupCanvas();
+    if (runner !== null && animationId === null) {
+      runner.render();
+    }
+  });
 }
 
 function setupZoomPan() {
@@ -119,8 +127,8 @@ function setupZoomPan() {
       e.preventDefault();
       if (runner === null) return;
       const rect = canvas.getBoundingClientRect();
-      const norm_x = (e.clientX - rect.left) / canvas.width;
-      const norm_y = (e.clientY - rect.top) / canvas.height;
+      const norm_x = (e.clientX - rect.left) / rect.width;
+      const norm_y = (e.clientY - rect.top) / rect.height;
       const factor = e.deltaY < 0 ? 1.05 : 1 / 1.05;
       runner.zoom_at(norm_x, norm_y, factor);
       runner.render();
@@ -138,8 +146,9 @@ function setupZoomPan() {
 
   window.addEventListener("mousemove", (e) => {
     if (!isPanning || runner === null) return;
-    const dx = (e.clientX - panLastX) / canvas.width;
-    const dy = (e.clientY - panLastY) / canvas.height;
+    const rect = canvas.getBoundingClientRect();
+    const dx = (e.clientX - panLastX) / rect.width;
+    const dy = (e.clientY - panLastY) / rect.height;
     panLastX = e.clientX;
     panLastY = e.clientY;
     runner.pan_by(dx, dy);
@@ -253,6 +262,22 @@ async function loadMnist(nPoints) {
 
 // --- Runner creation ---
 
+function updateTitle(curvature, projection) {
+  const el = document.getElementById("plot-title");
+  if (curvature < 0) {
+    el.textContent = `Hyperbolic (k=${curvature}) \u2014 Poincar\u00e9 disk`;
+  } else if (curvature > 0) {
+    const projNames = {
+      stereographic: "Stereographic",
+      azimuthal_equidistant: "Azimuthal equidistant",
+      orthographic: "Orthographic",
+    };
+    el.textContent = `Spherical (k=${curvature}) \u2014 ${projNames[projection] || projection}`;
+  } else {
+    el.textContent = "Euclidean";
+  }
+}
+
 async function createRunner() {
   if (runner !== null) {
     runner.free();
@@ -260,6 +285,7 @@ async function createRunner() {
   }
 
   const p = getParams();
+  updateTitle(p.curvature, p.projection);
 
   if (dataSource === "mnist") {
     const nPoints = parseInt(document.getElementById("mnist_n_points").value);
