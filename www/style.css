@@ -38,7 +38,6 @@ body {
 .sidebar h1 {
   font-size: 1.1rem;
   margin-bottom: 16px;
-  white-space: nowrap;
 }
 
 /* Toggle button — top-left of main area */
@@ -69,7 +68,7 @@ body {
 
 .sidebar-content {
   flex: 1;
-  white-space: nowrap;
+  min-width: 248px;
 }
 
 .section {
