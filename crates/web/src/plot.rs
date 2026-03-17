@@ -39,7 +39,11 @@ pub fn draw_embedding(canvas: &HtmlCanvasElement, params: &PlotParams) -> Result
 
     let canvas_w = canvas.width() as f64;
     let canvas_h = canvas.height() as f64;
-    let aspect = if canvas_h > 0.0 { canvas_w / canvas_h } else { 1.0 };
+    let aspect = if canvas_h > 0.0 {
+        canvas_w / canvas_h
+    } else {
+        1.0
+    };
 
     let (cx, cy, half) = params.view.unwrap_or((0.0, 0.0, auto_half));
     let half_x = half * aspect;
