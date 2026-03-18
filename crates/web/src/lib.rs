@@ -355,22 +355,6 @@ pub fn get_default_config() -> Result<JsValue, JsValue> {
     Ok(obj.into())
 }
 
-/// Generate sample data (Gaussian blob) for testing.
-#[wasm_bindgen]
-pub fn generate_sample_data(n_points: usize, n_features: usize, seed: u32) -> Vec<f64> {
-    let mut rng = synthetic_data::Rng::new(seed as u64);
-    (0..n_points * n_features).map(|_| rng.normal()).collect()
-}
-
-/// Get available synthetic dataset names.
-#[wasm_bindgen]
-pub fn get_dataset_names() -> Vec<String> {
-    synthetic_data::DATASET_NAMES
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
-}
-
 fn set_prop(obj: &js_sys::Object, key: &str, val: f64) -> Result<(), JsValue> {
     js_sys::Reflect::set(obj, &JsValue::from_str(key), &JsValue::from_f64(val))?;
     Ok(())

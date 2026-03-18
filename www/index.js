@@ -1,13 +1,11 @@
 import {
   EmbeddingRunner,
-  generate_sample_data,
-  get_dataset_names,
   get_default_config,
   default as init,
 } from "fitting-web";
 
 // State
-let dataSource = "random";
+let dataSource = "mnist";
 let runner = null;
 let animationId = null;
 let mnistCache = null;
@@ -74,9 +72,6 @@ function main() {
 }
 
 function setupUI() {
-  document
-    .getElementById("btn-random")
-    .addEventListener("click", () => setDataSource("random"));
   document
     .getElementById("btn-synthetic")
     .addEventListener("click", () => setDataSource("synthetic"));
@@ -171,16 +166,11 @@ function setupZoomPan() {
 function setDataSource(source) {
   dataSource = source;
   document
-    .getElementById("btn-random")
-    .classList.toggle("active", source === "random");
-  document
     .getElementById("btn-synthetic")
     .classList.toggle("active", source === "synthetic");
   document
     .getElementById("btn-mnist")
     .classList.toggle("active", source === "mnist");
-  document.getElementById("random-controls").style.display =
-    source === "random" ? "block" : "none";
   document.getElementById("synthetic-controls").style.display =
     source === "synthetic" ? "block" : "none";
   document.getElementById("mnist-controls").style.display =
@@ -315,26 +305,6 @@ async function createRunner() {
       "canvas",
       dataset,
       nPoints,
-      p.curvature,
-      p.iterations,
-      p.perplexity,
-      p.lr,
-      p.eeFactor,
-      p.eeIterations,
-      p.centeringWeight,
-      p.scalingLoss,
-      p.globalLossWeight,
-      p.projection,
-    );
-  } else {
-    const nPoints = parseInt(document.getElementById("n_points").value);
-    const nFeatures = parseInt(document.getElementById("n_features").value);
-    const data = generate_sample_data(nPoints, nFeatures, 42);
-    runner = new EmbeddingRunner(
-      "canvas",
-      data,
-      nPoints,
-      nFeatures,
       p.curvature,
       p.iterations,
       p.perplexity,
