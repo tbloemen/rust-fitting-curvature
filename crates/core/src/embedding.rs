@@ -1,7 +1,7 @@
 use crate::affinities::compute_perplexity_affinities;
 use crate::config::TrainingConfig;
 use crate::kernels::compute_q_matrix_with_distances;
-use crate::kl_divergence::{compute_global_similarities, kl_gradient, kl_loss};
+use crate::kl_divergence::{compute_global_similarities, kl_gradient, kl_loss, norm_loss_gradient};
 use crate::manifolds;
 use crate::manifolds::Manifold;
 use crate::matrices::compute_euclidean_distance_matrix;
@@ -117,7 +117,7 @@ impl EmbeddingState {
         // Radial scaling loss (hyperbolic only): penalizes spread of points from origin.
         // Gradient is in ambient coordinates; project to tangent space before adding.
         if self.config.centering_weight > 0.0 {
-            let (_, mut scale_grad) = scaling_loss::compute(
+            let (scaling_loss, mut scale_grad) = scaling_loss::compute(
                 self.config.scaling_loss_type,
                 &self.points,
                 n_points,
@@ -130,6 +130,7 @@ impl EmbeddingState {
             for k in 0..grad.len() {
                 grad[k] += self.config.centering_weight * scale_grad[k];
             }
+            self.loss += self.config.centering_weight * scaling_loss;
         }
 
         // Global t-SNE loss (Zhou & Sharpee): adds a KL term with globally-normalized
@@ -149,6 +150,25 @@ impl EmbeddingState {
             for k in 0..grad.len() {
                 grad[k] += self.config.global_loss_weight * global_grad[k];
             }
+            self.loss += self.config.global_loss_weight * kl_loss(&q_hat, &self.p_hat, n_points);
+        }
+
+        // Norm loss: penalizes mismatch between ||x_i||² and ||y_i||².
+        // Gradient is in ambient coordinates; project to tangent space first.
+        if self.config.norm_loss_weight > 0.0 {
+            let (norm_loss, mut norm_grad) = norm_loss_gradient(
+                &self.input_data,
+                &self.points,
+                n_points,
+                self.n_features,
+                ambient_dim,
+            );
+            self.manifold
+                .project_to_tangent(&self.points, &mut norm_grad, n_points, ambient_dim);
+            for k in 0..grad.len() {
+                grad[k] += self.config.norm_loss_weight * norm_grad[k];
+            }
+            self.loss += self.config.norm_loss_weight * norm_loss;
         }
 
         // Optimizer step

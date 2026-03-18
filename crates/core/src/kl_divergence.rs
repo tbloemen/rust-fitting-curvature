@@ -27,6 +27,54 @@ pub fn compute_global_similarities(distances: &[f64], n_points: usize) -> Vec<f6
     kernel
 }
 
+/// Norm loss: H = (1/m) * Σ_i (||x_i||² - ||y_i||²)²
+///
+/// Tries to match the squared Euclidean norm of each input point to its
+/// embedding. For tree-structured hyperbolic data this preserves the hierarchy
+/// level (root ~= origin, leaves ~= boundary of the Poincaré ball).
+///
+/// Returns `(loss, gradient_in_ambient_space)`. The gradient is in ambient
+/// coordinates; the caller must project it to the tangent space before adding
+/// it to the main gradient.
+pub fn norm_loss_gradient(
+    input_data: &[f64],
+    points: &[f64],
+    n_points: usize,
+    input_dim: usize,
+    ambient_dim: usize,
+) -> (f64, Vec<f64>) {
+    let mut loss = 0.0;
+    let mut grad = vec![0.0; n_points * ambient_dim];
+
+    for i in 0..n_points {
+        let x_norm_sq: f64 = input_data[i * input_dim..(i + 1) * input_dim]
+            .iter()
+            .map(|&v| v * v)
+            .sum();
+        let y_norm_sq: f64 = points[i * ambient_dim..(i + 1) * ambient_dim]
+            .iter()
+            .map(|&v| v * v)
+            .sum();
+
+        let diff = y_norm_sq - x_norm_sq;
+        loss += diff * diff;
+
+        // ∂(diff²)/∂y_i = 2·diff · 2·y_i = 4·diff·y_i
+        let coeff = 4.0 * diff;
+        for d in 0..ambient_dim {
+            grad[i * ambient_dim + d] = coeff * points[i * ambient_dim + d];
+        }
+    }
+
+    let m = n_points as f64;
+    loss /= m;
+    for g in &mut grad {
+        *g /= m;
+    }
+
+    (loss, grad)
+}
+
 /// KL divergence loss: -sum(P * log(Q + eps)), excluding diagonal.
 pub fn kl_loss(q: &[f64], p: &[f64], n_points: usize) -> f64 {
     let eps = 1e-12;
