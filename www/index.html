@@ -98,32 +98,47 @@
         </div>
 
         <div class="section">
-          <div class="section-title">Advanced</div>
-          <div class="control-group">
-            <label for="centering_weight">Centering Weight</label>
-            <input type="number" id="centering_weight" step="0.1" min="0" />
-          </div>
-          <div class="control-group">
-            <label for="scaling_loss">Scaling Loss</label>
+          <div class="section-title">Global Constraints</div>
+          <div class="loss-grid">
+            <span class="loss-col-header"></span>
+            <span class="loss-col-header">Type</span>
+            <span class="loss-col-header">λ</span>
+
+            <span class="loss-col-name">Scale</span>
             <select id="scaling_loss">
               <option value="none">None</option>
               <option value="hard_barrier">Hard Barrier</option>
-              <option value="softplus_barrier">Softplus Barrier</option>
+              <option value="softplus_barrier">Softplus</option>
               <option value="rms">RMS</option>
-              <option value="mean_distance">Mean Distance</option>
+              <option value="mean_distance">Mean Dist.</option>
             </select>
-          </div>
-          <div class="control-group">
-            <label for="global_loss_weight">Global Loss λ</label>
+            <input type="number" id="centering_weight" step="0.1" min="0" />
+
+            <span class="loss-col-name">Global</span>
+            <span></span>
             <input type="number" id="global_loss_weight" step="1" min="0" />
+
+            <span class="loss-col-name">Norm</span>
+            <span></span>
+            <input
+              type="number"
+              id="norm_loss_weight"
+              step="0.001"
+              min="0"
+              value="0"
+            />
           </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Projection</div>
           <div class="control-group">
-            <label for="projection">Projection (spherical)</label>
+            <label for="projection">Spherical projection</label>
             <select id="projection">
-              <option value="stereographic" selected>Stereographic</option>
               <option value="azimuthal_equidistant">
                 Azimuthal Equidistant
               </option>
+              <option value="stereographic" selected>Stereographic</option>
               <option value="orthographic">Orthographic</option>
             </select>
           </div>

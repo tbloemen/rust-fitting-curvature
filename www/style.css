@@ -260,6 +260,29 @@ canvas {
   border-color: #3498db;
 }
 
+/* Global constraints loss grid */
+.loss-grid {
+  display: grid;
+  grid-template-columns: 44px 1fr 76px;
+  gap: 5px 6px;
+  align-items: center;
+}
+.loss-col-header {
+  font-size: 0.65rem;
+  color: #666;
+  text-align: center;
+  padding-bottom: 2px;
+}
+.loss-col-name {
+  font-size: 0.75rem;
+  color: #aaa;
+}
+.loss-grid input,
+.loss-grid select {
+  width: 100%;
+  min-width: 0;
+}
+
 /* Metrics panel — overlay in bottom-right of canvas area */
 .metrics-panel {
   position: absolute;

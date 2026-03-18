@@ -36,6 +36,7 @@ pub struct TrainingConfig {
     /// Adds a second KL term with globally-normalized similarities, improving
     /// preservation of large-scale structure. Applies to all geometries.
     pub global_loss_weight: f64,
+    pub norm_loss_weight: f64,
     pub seed: u64,
 }
 
@@ -48,15 +49,16 @@ impl Default for TrainingConfig {
             perplexity: 30.0,
             n_iterations: 1000,
             early_exaggeration_iterations: 250,
-            early_exaggeration_factor: 4.0,
+            early_exaggeration_factor: 12.0,
             learning_rate: 20.0,
             momentum_early: 0.5,
             momentum_main: 0.8,
             init_method: InitMethod::Pca,
             init_scale: 1.0,
-            centering_weight: 0.5,
-            scaling_loss_type: ScalingLossType::MeanDistance,
+            centering_weight: 0.0,
+            scaling_loss_type: ScalingLossType::None,
             global_loss_weight: 0.0,
+            norm_loss_weight: 0.0,
             seed: 42,
         }
     }

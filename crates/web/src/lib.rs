@@ -52,52 +52,6 @@ pub struct EmbeddingRunner {
 
 #[wasm_bindgen]
 impl EmbeddingRunner {
-    /// Create a runner from raw data (Random mode).
-    #[wasm_bindgen(constructor)]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        canvas_id: &str,
-        data: &[f64],
-        n_points: usize,
-        n_features: usize,
-        curvature: f64,
-        n_iterations: usize,
-        perplexity: f64,
-        learning_rate: f64,
-        early_exaggeration_factor: f64,
-        early_exaggeration_iterations: usize,
-        centering_weight: f64,
-        scaling_loss: &str,
-        global_loss_weight: f64,
-        projection: &str,
-    ) -> Result<EmbeddingRunner, JsValue> {
-        let config = TrainingConfig {
-            n_points,
-            curvature,
-            n_iterations,
-            perplexity,
-            learning_rate,
-            early_exaggeration_factor,
-            early_exaggeration_iterations,
-            centering_weight,
-            scaling_loss_type: parse_scaling_loss(scaling_loss),
-            global_loss_weight,
-            ..Default::default()
-        };
-
-        let state = EmbeddingState::new(data, n_features, &config);
-        let canvas = get_canvas(canvas_id)?;
-
-        Ok(EmbeddingRunner {
-            state,
-            canvas,
-            labels: None,
-            projection: parse_projection(projection),
-            view: None,
-            auto_half: 1.0,
-        })
-    }
-
     /// Create a runner from a named synthetic dataset.
     #[allow(clippy::too_many_arguments)]
     pub fn from_synthetic(
@@ -113,6 +67,7 @@ impl EmbeddingRunner {
         centering_weight: f64,
         scaling_loss: &str,
         global_loss_weight: f64,
+        norm_loss_weight: f64,
         projection: &str,
     ) -> Result<EmbeddingRunner, JsValue> {
         let synth = synthetic_data::load_synthetic(dataset_name, n_points, 42)
@@ -131,6 +86,7 @@ impl EmbeddingRunner {
             centering_weight,
             scaling_loss_type: parse_scaling_loss(scaling_loss),
             global_loss_weight,
+            norm_loss_weight,
             ..Default::default()
         };
 
@@ -164,6 +120,7 @@ impl EmbeddingRunner {
         centering_weight: f64,
         scaling_loss: &str,
         global_loss_weight: f64,
+        norm_loss_weight: f64,
         projection: &str,
     ) -> Result<EmbeddingRunner, JsValue> {
         let config = TrainingConfig {
@@ -177,6 +134,7 @@ impl EmbeddingRunner {
             centering_weight,
             scaling_loss_type: parse_scaling_loss(scaling_loss),
             global_loss_weight,
+            norm_loss_weight,
             ..Default::default()
         };
 
@@ -340,6 +298,7 @@ pub fn get_default_config() -> Result<JsValue, JsValue> {
     )?;
     set_prop(&obj, "centering_weight", cfg.centering_weight)?;
     set_prop(&obj, "global_loss_weight", cfg.global_loss_weight)?;
+    set_prop(&obj, "norm_loss_weight", cfg.norm_loss_weight)?;
     let scaling_loss_str = match cfg.scaling_loss_type {
         ScalingLossType::Rms => "rms",
         ScalingLossType::HardBarrier => "hard_barrier",

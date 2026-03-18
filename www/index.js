@@ -43,6 +43,7 @@ function applyDefaultConfig() {
   document.getElementById("centering_weight").value = d.centering_weight;
   document.getElementById("scaling_loss").value = d.scaling_loss;
   document.getElementById("global_loss_weight").value = d.global_loss_weight;
+  document.getElementById("norm_loss_weight").value = d.norm_loss_weight;
 }
 
 function main() {
@@ -192,6 +193,9 @@ function getParams() {
     globalLossWeight: parseFloat(
       document.getElementById("global_loss_weight").value,
     ),
+    normLossWeight: parseFloat(
+      document.getElementById("norm_loss_weight").value,
+    ),
     projection: document.getElementById("projection").value,
   };
 }
@@ -296,6 +300,7 @@ async function createRunner() {
       p.centeringWeight,
       p.scalingLoss,
       p.globalLossWeight,
+      p.normLossWeight,
       p.projection,
     );
   } else if (dataSource === "synthetic") {
@@ -314,6 +319,7 @@ async function createRunner() {
       p.centeringWeight,
       p.scalingLoss,
       p.globalLossWeight,
+      p.normLossWeight,
       p.projection,
     );
   }
