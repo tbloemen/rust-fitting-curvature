@@ -63,11 +63,9 @@ struct TrialResult {
     learning_rate: f64,
     perplexity: f64,
     momentum_main: f64,
-    init_scale: f64,
     n_iterations: i64,
     early_exaggeration_iterations: i64,
     curvature: f64,
-    init_method: String,
     metric_mean: f64,
     metric_std: f64,
     time_ms: u64,
@@ -165,11 +163,9 @@ fn main() {
             learning_rate: config.learning_rate,
             perplexity: config.perplexity,
             momentum_main: config.momentum_main,
-            init_scale: config.init_scale,
             n_iterations: config.n_iterations,
             early_exaggeration_iterations: config.early_exaggeration_iterations,
             curvature: config.curvature,
-            init_method: format!("{:?}", config.init_method),
             metric_mean: mean,
             metric_std: std,
             time_ms: elapsed,
@@ -186,20 +182,9 @@ fn main() {
         let best = optimizer.best_trial();
         pb_trials.set_message(format!("{:.4}", best));
         pb_trials.println(format!(
-            "Trial {:3} | {} = {:.4} ± {:.4} | best = {:.4} | {}ms | lr={:.2}, perp={:.1}, k={:.1}, {}",
-            trial_idx,
-            args.metric,
-            mean,
-            std,
-            best,
-            elapsed,
-            config.learning_rate,
-            config.perplexity,
-            config.curvature,
-            match config.init_method {
-                fitting_core::config::InitMethod::Random => "Random",
-                fitting_core::config::InitMethod::Pca => "Pca",
-            }
+            "Trial {:3} | {} = {:.4} ± {:.4} | best = {:.4} | {}ms | lr={:.2}, perp={:.1}, k={:.1}",
+            trial_idx, args.metric, mean, std, best, elapsed,
+            config.learning_rate, config.perplexity, config.curvature,
         ));
         pb_trials.inc(1);
     }
@@ -213,14 +198,14 @@ fn main() {
         println!("learning_rate: {:.4}", best_config.learning_rate);
         println!("perplexity: {:.4}", best_config.perplexity);
         println!("momentum_main: {:.4}", best_config.momentum_main);
-        println!("init_scale: {:.6}", best_config.init_scale);
+        println!("init_scale: {:.6} (auto)", fitting_core::matrices::get_default_init_scale(2));
         println!("n_iterations: {}", best_config.n_iterations);
         println!(
             "early_exaggeration_iterations: {}",
             best_config.early_exaggeration_iterations
         );
         println!("curvature: {:.2}", best_config.curvature);
-        println!("init_method: {:?}", best_config.init_method);
+        println!("init_method: Pca (fixed)");
         println!("Best {}: {:.4}", args.metric, optimizer.best_trial());
     }
 

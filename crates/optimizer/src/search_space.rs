@@ -1,4 +1,5 @@
 use fitting_core::config::{InitMethod, ScalingLossType, TrainingConfig};
+use fitting_core::matrices::get_default_init_scale;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,11 +35,9 @@ pub struct TrialConfig {
     pub learning_rate: f64,
     pub perplexity: f64,
     pub momentum_main: f64,
-    pub init_scale: f64,
     pub n_iterations: i64,
     pub early_exaggeration_iterations: i64,
     pub curvature: f64,
-    pub init_method: InitMethod,
 }
 
 impl TrialConfig {
@@ -54,8 +53,8 @@ impl TrialConfig {
             learning_rate: self.learning_rate,
             momentum_early: 0.5,
             momentum_main: self.momentum_main,
-            init_method: self.init_method,
-            init_scale: self.init_scale,
+            init_method: InitMethod::Pca,
+            init_scale: get_default_init_scale(2),
             centering_weight: 0.0,
             scaling_loss_type: if self.curvature < 0.0 {
                 ScalingLossType::HardBarrier
@@ -80,31 +79,18 @@ impl TrialConfig {
 
         let momentum = rng.uniform() * 0.45 + 0.5;
 
-        let init_scale = (rng.uniform() * (1.0_f64.ln() - 1e-5_f64.ln()) + 1e-5_f64.ln())
-            .exp()
-            .clamp(1e-5, 1.0);
-
         let n_iterations = (rng.uniform() * 600.0 + 200.0) as i64;
         let early_exag = (rng.uniform() * 350.0 + 50.0) as i64;
 
-        let curvatures = [-1.0, -0.5, 0.0, 0.5, 1.0];
-        let curvature = curvatures[(rng.uniform() * 5.0) as usize % 5];
-
-        let init_method = if rng.uniform() < 0.5 {
-            InitMethod::Random
-        } else {
-            InitMethod::Pca
-        };
+        let curvature = rng.uniform() * 2.0 - 1.0;
 
         Self {
             learning_rate: lr,
             perplexity: perp,
             momentum_main: momentum,
-            init_scale,
             n_iterations,
             early_exaggeration_iterations: early_exag,
             curvature,
-            init_method,
         }
     }
 
@@ -122,10 +108,6 @@ impl TrialConfig {
             cfg.momentum_main = (cfg.momentum_main + (rng.uniform() - 0.5) * 0.2).clamp(0.5, 0.95);
         }
         if rng.uniform() < 0.3 {
-            cfg.init_scale =
-                (cfg.init_scale * 2.0_f64.powf((rng.uniform() - 0.5) * 1.5)).clamp(1e-5, 1.0);
-        }
-        if rng.uniform() < 0.3 {
             cfg.n_iterations =
                 ((cfg.n_iterations as f64 + (rng.uniform() - 0.5) * 300.0) as i64).clamp(200, 800);
         }
@@ -135,14 +117,7 @@ impl TrialConfig {
                     .clamp(50, 400);
         }
         if rng.uniform() < 0.3 {
-            let curvatures = [-1.0, -0.5, 0.0, 0.5, 1.0];
-            cfg.curvature = curvatures[(rng.uniform() * 5.0) as usize % 5];
-        }
-        if rng.uniform() < 0.3 {
-            cfg.init_method = match cfg.init_method {
-                InitMethod::Random => InitMethod::Pca,
-                InitMethod::Pca => InitMethod::Random,
-            };
+            cfg.curvature = (cfg.curvature + (rng.uniform() - 0.5) * 0.5).clamp(-1.0, 1.0);
         }
         cfg
     }
@@ -152,14 +127,9 @@ impl TrialConfig {
             self.learning_rate,
             self.perplexity,
             self.momentum_main,
-            self.init_scale,
             self.n_iterations as f64,
             self.early_exaggeration_iterations as f64,
             self.curvature,
-            match self.init_method {
-                InitMethod::Random => 0.0,
-                InitMethod::Pca => 1.0,
-            },
         ]
     }
 }

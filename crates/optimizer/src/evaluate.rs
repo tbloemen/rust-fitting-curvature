@@ -4,6 +4,7 @@ use fitting_core::metrics::{
     class_density_measure, cluster_density_measure, continuity, davies_bouldin_ratio, dunn_index,
     geodesic_distortion_gu2019, geodesic_distortion_mse, knn_overlap, trustworthiness,
 };
+use fitting_core::visualisation::{project_to_2d, SphericalProjection};
 use indicatif::ProgressBar;
 
 use crate::data::Dataset;
@@ -36,7 +37,17 @@ impl Evaluator {
             pb_iters.inc(1);
         }
 
-        let embedded_dist = state.embedded_distances();
+        // Project to 2D for evaluation, matching what the visualisation shows.
+        // Spherical uses azimuthal equidistant; hyperbolic uses Poincaré disk;
+        // Euclidean uses the first two coordinates directly.
+        let projected = project_to_2d(
+            &state.points,
+            n,
+            state.ambient_dim,
+            training_config.curvature,
+            SphericalProjection::AzimuthalEquidistant,
+        );
+        let embedded_dist = compute_euclidean_distance_matrix(&projected.coords, n, 2);
 
         let k = (30_f64.min(n as f64 * 0.1)).round() as usize;
 
@@ -45,10 +56,10 @@ impl Evaluator {
         let knn = knn_overlap(&self.high_dim_dist, &embedded_dist, n, k);
         let geo_gu = geodesic_distortion_gu2019(&self.high_dim_dist, &embedded_dist, n);
         let geo_mse = geodesic_distortion_mse(&self.high_dim_dist, &embedded_dist, n);
-        let db_ratio = davies_bouldin_ratio(&self.high_dim_dist, &state.points, &self.dataset.labels, n);
+        let db_ratio = davies_bouldin_ratio(&self.high_dim_dist, &projected.coords, &self.dataset.labels, n);
         let dunn = dunn_index(&embedded_dist, &self.dataset.labels, n);
-        let cdm = class_density_measure(&state.points, &self.dataset.labels, n);
-        let cldm = cluster_density_measure(&state.points, &self.dataset.labels, n);
+        let cdm = class_density_measure(&projected.coords, &self.dataset.labels, n);
+        let cldm = cluster_density_measure(&projected.coords, &self.dataset.labels, n);
 
         EvaluationResult {
             trustworthiness: trust,
