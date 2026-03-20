@@ -1,0 +1,198 @@
+use clap::Parser;
+use serde::Serialize;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::Path;
+
+use crate::data::Dataset;
+use crate::evaluate::Evaluator;
+use crate::search_space::{OptimizeDirection, SearchSpace};
+use crate::tpe::TpeOptimizer;
+
+mod data;
+mod evaluate;
+mod search_space;
+mod tpe;
+
+#[derive(Parser, Debug)]
+#[command(name = "fitting-optimizer")]
+#[command(about = "Bayesian hyperparameter optimizer for fitting-curvature")]
+struct Args {
+    #[arg(long, default_value = "./www/public/data")]
+    data_path: String,
+
+    #[arg(long)]
+    metric: String,
+
+    #[arg(long, default_value = "100")]
+    n_trials: usize,
+
+    #[arg(long, default_value = "3")]
+    n_seeds: usize,
+
+    #[arg(long, default_value = "5000")]
+    n_samples: usize,
+
+    #[arg(long, default_value = "results.jsonl")]
+    output: String,
+
+    #[arg(long)]
+    dataset: Option<String>,
+}
+
+fn metric_direction(name: &str) -> OptimizeDirection {
+    match name {
+        "davies_bouldin" | "geodesic_distortion_gu2019" | "geodesic_distortion_mse" => {
+            OptimizeDirection::Minimize
+        }
+        "trustworthiness"
+        | "continuity"
+        | "knn_overlap"
+        | "davies_bouldin_ratio"
+        | "dunn_index"
+        | "class_density_measure"
+        | "cluster_density_measure" => OptimizeDirection::Maximize,
+        _ => panic!("Unknown metric: {}. See --help for options.", name),
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct TrialResult {
+    trial: usize,
+    learning_rate: f64,
+    perplexity: f64,
+    momentum_main: f64,
+    init_scale: f64,
+    n_iterations: i64,
+    early_exaggeration_iterations: i64,
+    curvature: f64,
+    init_method: String,
+    metric_mean: f64,
+    metric_std: f64,
+    time_ms: u64,
+}
+
+fn main() {
+    let args = Args::parse();
+
+    let direction = metric_direction(&args.metric);
+    let mut space = SearchSpace::default_tsne();
+    space.direction = direction;
+
+    println!("Loading dataset...");
+    let dataset = if let Some(name) = &args.dataset {
+        Dataset::load_synthetic(name, args.n_samples, 42)
+    } else {
+        match Dataset::load_mnist(&args.data_path, args.n_samples) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Error loading MNIST: {}", e);
+                eprintln!("Make sure you have MNIST files in: {}", args.data_path);
+                eprintln!("Expected files: train-images-idx3-ubyte, train-labels-idx1-ubyte");
+                std::process::exit(1);
+            }
+        }
+    };
+    println!(
+        "Loaded {} samples with {} features",
+        dataset.n_points, dataset.n_features
+    );
+
+    let evaluator = Evaluator::new(dataset.clone());
+    let mut optimizer = TpeOptimizer::new(space);
+    let mut rng = fitting_core::synthetic_data::Rng::new(42);
+
+    if Path::new(&args.output).exists() {
+        std::fs::remove_file(&args.output).ok();
+    }
+
+    println!(
+        "Starting optimization: {} {} trials, {} seeds",
+        args.n_trials, args.metric, args.n_seeds
+    );
+    println!("Direction: {}", direction);
+
+    for trial_idx in 1..=args.n_trials {
+        let start = std::time::Instant::now();
+
+        let config = optimizer.suggest(&mut rng);
+
+        let mut metrics = Vec::with_capacity(args.n_seeds);
+        for seed_idx in 0..args.n_seeds {
+            let seed = 42 + trial_idx as u64 * 100 + seed_idx as u64;
+            let m = evaluator.evaluate_with_metric(&config, &args.metric, seed);
+            metrics.push(m);
+        }
+
+        let mean = metrics.iter().sum::<f64>() / args.n_seeds as f64;
+        let variance =
+            metrics.iter().map(|&m| (m - mean).powi(2)).sum::<f64>() / args.n_seeds as f64;
+        let std = variance.sqrt();
+
+        optimizer.observe(config.clone(), mean);
+
+        let elapsed = start.elapsed().as_millis() as u64;
+
+        let result = TrialResult {
+            trial: trial_idx,
+            learning_rate: config.learning_rate,
+            perplexity: config.perplexity,
+            momentum_main: config.momentum_main,
+            init_scale: config.init_scale,
+            n_iterations: config.n_iterations,
+            early_exaggeration_iterations: config.early_exaggeration_iterations,
+            curvature: config.curvature,
+            init_method: format!("{:?}", config.init_method),
+            metric_mean: mean,
+            metric_std: std,
+            time_ms: elapsed,
+        };
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&args.output)
+            .unwrap();
+        let json = serde_json::to_string(&result).unwrap();
+        writeln!(file, "{}", json).ok();
+
+        let best = optimizer.best_trial();
+        println!(
+            "Trial {:3} | {} = {:.4} ± {:.4} | best = {:.4} | time = {}ms | {}",
+            trial_idx,
+            args.metric,
+            mean,
+            std,
+            best,
+            elapsed,
+            format!(
+                "lr={:.2}, perp={:.1}, k={:.1}, {}",
+                config.learning_rate,
+                config.perplexity,
+                config.curvature,
+                match config.init_method {
+                    fitting_core::config::InitMethod::Random => "Random",
+                    fitting_core::config::InitMethod::Pca => "Pca",
+                }
+            )
+        );
+    }
+
+    println!("\n=== Best Configuration ===");
+    if let Some(best_config) = optimizer.best_config() {
+        println!("learning_rate: {:.4}", best_config.learning_rate);
+        println!("perplexity: {:.4}", best_config.perplexity);
+        println!("momentum_main: {:.4}", best_config.momentum_main);
+        println!("init_scale: {:.6}", best_config.init_scale);
+        println!("n_iterations: {}", best_config.n_iterations);
+        println!(
+            "early_exaggeration_iterations: {}",
+            best_config.early_exaggeration_iterations
+        );
+        println!("curvature: {:.2}", best_config.curvature);
+        println!("init_method: {:?}", best_config.init_method);
+        println!("Best {}: {:.4}", args.metric, optimizer.best_trial());
+    }
+
+    println!("\nResults saved to: {}", args.output);
+}
