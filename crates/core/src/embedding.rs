@@ -1,10 +1,10 @@
 use crate::affinities::compute_perplexity_affinities;
-use crate::config::TrainingConfig;
+use crate::config::{InitMethod, TrainingConfig};
 use crate::kernels::compute_q_matrix_with_distances;
 use crate::kl_divergence::{compute_global_similarities, kl_gradient, kl_loss, norm_loss_gradient};
 use crate::manifolds;
 use crate::manifolds::Manifold;
-use crate::matrices::compute_euclidean_distance_matrix;
+use crate::matrices::{compute_euclidean_distance_matrix, pca};
 use crate::optimizer::RiemannianSGDMomentum;
 use crate::scaling_loss;
 
@@ -38,8 +38,23 @@ impl EmbeddingState {
         let ambient_dim = manifold.ambient_dim(config.embed_dim);
 
         let p_base = compute_perplexity_affinities(data, n_points, n_features, config.perplexity);
-        let points =
-            manifold.init_points(n_points, config.embed_dim, config.init_scale, config.seed);
+        let points = match config.init_method {
+            InitMethod::Pca => {
+                let coords = pca(data, n_points, n_features, config.embed_dim, config.seed);
+                lift_pca_to_manifold(
+                    &coords,
+                    n_points,
+                    config.embed_dim,
+                    ambient_dim,
+                    config.init_scale,
+                    config.curvature,
+                    manifold.radius(),
+                )
+            }
+            InitMethod::Random => {
+                manifold.init_points(n_points, config.embed_dim, config.init_scale, config.seed)
+            }
+        };
         let optimizer = RiemannianSGDMomentum::new(
             config.learning_rate,
             config.momentum_early,
@@ -238,4 +253,65 @@ impl EmbeddingState {
         self.manifold
             .pairwise_distances(&self.points, self.n_points, self.ambient_dim)
     }
+}
+
+/// Lift `embed_dim`-dimensional PCA coordinates onto the target manifold.
+///
+/// Scales coords so the max Euclidean norm equals `init_scale`, then:
+/// - **Euclidean** (k=0): use as-is.
+/// - **Hyperboloid** (k<0): spatial components = scaled PCA coords (indices 1..);
+///   time component (index 0) = sqrt(r² + ||spatial||²).
+/// - **Sphere** (k>0): pad with a zero to reach ambient_dim, then normalize
+///   each point to radius r.
+fn lift_pca_to_manifold(
+    coords: &[f64],
+    n_points: usize,
+    embed_dim: usize,
+    ambient_dim: usize,
+    init_scale: f64,
+    curvature: f64,
+    radius: f64,
+) -> Vec<f64> {
+    // Scale so the maximum per-point Euclidean norm equals init_scale.
+    let max_norm = coords
+        .chunks(embed_dim)
+        .map(|p| p.iter().map(|x| x * x).sum::<f64>().sqrt())
+        .fold(0.0f64, f64::max);
+    let scale = if max_norm > 1e-12 {
+        init_scale / max_norm
+    } else {
+        init_scale
+    };
+
+    let mut pts = vec![0.0f64; n_points * ambient_dim];
+    for i in 0..n_points {
+        let src = &coords[i * embed_dim..(i + 1) * embed_dim];
+        let dst = &mut pts[i * ambient_dim..(i + 1) * ambient_dim];
+
+        if curvature < 0.0 {
+            // Hyperboloid layout: [time, x1, ..., x_d]
+            let spatial_norm_sq: f64 = src.iter().map(|&x| (x * scale).powi(2)).sum();
+            dst[0] = (radius * radius + spatial_norm_sq).sqrt();
+            for d in 0..embed_dim {
+                dst[1 + d] = src[d] * scale;
+            }
+        } else if curvature > 0.0 {
+            // Sphere: embed in first embed_dim coords, last = 0, then normalize to r.
+            for d in 0..embed_dim {
+                dst[d] = src[d] * scale;
+            }
+            // dst[embed_dim] is already 0.
+            let norm: f64 = dst.iter().map(|x| x * x).sum::<f64>().sqrt();
+            let r_scale = if norm > 1e-12 { radius / norm } else { radius };
+            for x in dst.iter_mut() {
+                *x *= r_scale;
+            }
+        } else {
+            // Euclidean: straight copy.
+            for d in 0..embed_dim {
+                dst[d] = src[d] * scale;
+            }
+        }
+    }
+    pts
 }
