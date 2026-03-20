@@ -10,18 +10,15 @@ pub struct Trial {
 
 pub struct TpeOptimizer {
     trials: Vec<Trial>,
-    space: SearchSpace,
     direction: OptimizeDirection,
     n_ei_candidates: usize,
 }
 
 impl TpeOptimizer {
     pub fn new(space: SearchSpace) -> Self {
-        let direction = space.direction;
         Self {
             trials: Vec::new(),
-            space,
-            direction,
+            direction: space.direction,
             n_ei_candidates: 1000,
         }
     }
@@ -35,72 +32,56 @@ impl TpeOptimizer {
             return TrialConfig::random(rng);
         }
 
-        let best = self.best_trial();
         let threshold = self.compute_threshold();
 
         let mut best_config = self.trials[0].config.clone();
         let mut best_score = f64::MIN;
 
         for _ in 0..self.n_ei_candidates {
-            let candidate = if rng.uniform() < 0.3 && !self.trials.is_empty() {
+            let candidate = if rng.uniform() < 0.3 {
                 let idx = (rng.uniform() * self.trials.len() as f64) as usize % self.trials.len();
-                self.trials[idx].config.mutate(rng, &self.space)
+                self.trials[idx].config.mutate(rng)
             } else {
                 TrialConfig::random(rng)
             };
 
-            let score = self.expected_improvement(&candidate, best, threshold);
+            let score = self.acquisition(&candidate, threshold);
             if score > best_score {
                 best_score = score;
                 best_config = candidate;
             }
         }
 
-        self.local_search(&best_config, rng, best, threshold)
+        self.local_search(&best_config, rng, threshold)
     }
 
-    fn local_search(
-        &self,
-        initial: &TrialConfig,
-        rng: &mut Rng,
-        best: f64,
-        threshold: f64,
-    ) -> TrialConfig {
+    fn local_search(&self, initial: &TrialConfig, rng: &mut Rng, threshold: f64) -> TrialConfig {
         let mut current = initial.clone();
-        let mut current_ei = self.expected_improvement(&current, best, threshold);
+        let mut current_score = self.acquisition(&current, threshold);
 
         for _ in 0..50 {
-            let mutated = current.mutate(rng, &self.space);
-            let ei = self.expected_improvement(&mutated, best, threshold);
+            let mutated = current.mutate(rng);
+            let score = self.acquisition(&mutated, threshold);
 
-            if ei > current_ei {
+            if score > current_score {
                 current = mutated;
-                current_ei = ei;
+                current_score = score;
             }
         }
 
         current
     }
 
-    fn expected_improvement(&self, config: &TrialConfig, best: f64, threshold: f64) -> f64 {
+    /// TPE acquisition: l(x) / g(x), where l models good trials and g models bad trials.
+    /// We maximize this ratio to find candidates likely in the good region.
+    fn acquisition(&self, config: &TrialConfig, threshold: f64) -> f64 {
         let (l, g) = self.compute_l_g(config, threshold);
 
-        if l < 1e-12 || g < 1e-12 {
+        if g < 1e-12 {
             return 0.0;
         }
 
-        let ratio = g / (l + g);
-
-        match self.direction {
-            OptimizeDirection::Maximize => {
-                let z = (best - threshold).exp() * ratio;
-                z * (1.0 + (z / (2.0 * ratio)).ln().exp() * (1.0 - ratio))
-            }
-            OptimizeDirection::Minimize => {
-                let z = (threshold - best).exp() * ratio;
-                z * (1.0 + (z / (2.0 * ratio)).ln().exp() * (1.0 - ratio))
-            }
-        }
+        l / g
     }
 
     fn compute_l_g(&self, config: &TrialConfig, threshold: f64) -> (f64, f64) {
@@ -139,44 +120,41 @@ impl TpeOptimizer {
         let dim = point.len();
         let n = samples.len() as f64;
 
-        let mut variances = vec![0.0; dim];
+        // Compute per-dimension mean of the sample distribution
+        let mut means = vec![0.0; dim];
         for s in samples {
             for d in 0..dim {
-                let diff = point[d] - s[d];
-                variances[d] += diff * diff;
+                means[d] += s[d];
             }
         }
-        for v in variances.iter_mut() {
-            *v = (*v / n).max(1e-6);
+        for m in means.iter_mut() {
+            *m /= n;
         }
 
-        let bandwidths: Vec<f64> = variances
-            .iter()
-            .map(|&v| (v * 0.5_f64.sqrt()).max(1e-6))
+        // Silverman's rule: h = sigma * (4 / (3n))^(1/5)
+        let silverman = (4.0 / (3.0 * n)).powf(0.2);
+        let bandwidths: Vec<f64> = (0..dim)
+            .map(|d| {
+                let variance = samples
+                    .iter()
+                    .map(|s| (s[d] - means[d]).powi(2))
+                    .sum::<f64>()
+                    / n;
+                (variance.sqrt() * silverman).max(1e-6)
+            })
             .collect();
+
+        let norm = bandwidths.iter().product::<f64>();
 
         let mut total = 0.0;
         for s in samples {
-            let mut diff_sq = 0.0;
-            for d in 0..dim {
-                let diff = point[d] - s[d];
-                diff_sq += diff * diff / (2.0 * bandwidths[d] * bandwidths[d]);
-            }
-            total += (-diff_sq).exp();
+            let exponent = (0..dim)
+                .map(|d| ((point[d] - s[d]) / bandwidths[d]).powi(2))
+                .sum::<f64>();
+            total += (-0.5 * exponent).exp();
         }
 
-        total / (n * self.geometric_harmonic_mean(&bandwidths, dim))
-    }
-
-    fn geometric_harmonic_mean(&self, vals: &[f64], dim: usize) -> f64 {
-        let n = dim;
-        let log_sum: f64 = vals.iter().map(|v| v.ln()).sum();
-        let mean_log = log_sum / n as f64;
-
-        let inv_sum: f64 = vals.iter().map(|v| 1.0 / v).sum();
-        let harm_mean = n as f64 / inv_sum;
-
-        (mean_log.exp() + harm_mean) / 2.0
+        total / (n * norm)
     }
 
     fn config_to_vec(&self, config: &TrialConfig) -> Vec<f64> {
@@ -241,9 +219,5 @@ impl TpeOptimizer {
                 .min_by(|a, b| a.metric.partial_cmp(&b.metric).unwrap())
                 .map(|t| &t.config),
         }
-    }
-
-    pub fn n_trials(&self) -> usize {
-        self.trials.len()
     }
 }

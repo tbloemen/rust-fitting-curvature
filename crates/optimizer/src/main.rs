@@ -1,4 +1,5 @@
 use clap::Parser;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Serialize;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -107,21 +108,47 @@ fn main() {
     }
 
     println!(
-        "Starting optimization: {} {} trials, {} seeds",
-        args.n_trials, args.metric, args.n_seeds
+        "Starting optimization: {} trials, metric={} ({}), seeds={}",
+        args.n_trials, args.metric, direction, args.n_seeds
     );
-    println!("Direction: {}", direction);
+
+    let mp = MultiProgress::new();
+    let trial_style = ProgressStyle::with_template(
+        "{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} trials | {per_sec} | eta {eta} | best: {msg}",
+    )
+    .unwrap()
+    .progress_chars("=>-");
+    let seed_style = ProgressStyle::with_template(
+        "  {spinner:.yellow} seed {pos}/{len}",
+    )
+    .unwrap();
+    let iter_style = ProgressStyle::with_template(
+        "    {spinner:.blue} iter {pos}/{len} | {per_sec}",
+    )
+    .unwrap();
+
+    let pb_trials = mp.add(ProgressBar::new(args.n_trials as u64));
+    pb_trials.set_style(trial_style);
+    pb_trials.set_message("n/a");
+
+    let pb_seeds = mp.add(ProgressBar::new(args.n_seeds as u64));
+    pb_seeds.set_style(seed_style);
+
+    let pb_iters = mp.add(ProgressBar::new(0));
+    pb_iters.set_style(iter_style);
 
     for trial_idx in 1..=args.n_trials {
         let start = std::time::Instant::now();
 
         let config = optimizer.suggest(&mut rng);
 
+        pb_seeds.reset();
         let mut metrics = Vec::with_capacity(args.n_seeds);
         for seed_idx in 0..args.n_seeds {
             let seed = 42 + trial_idx as u64 * 100 + seed_idx as u64;
-            let m = evaluator.evaluate_with_metric(&config, &args.metric, seed);
+            let m = evaluator.evaluate_with_metric(&config, &args.metric, seed, &pb_iters);
             metrics.push(m);
+            pb_seeds.inc(1);
         }
 
         let mean = metrics.iter().sum::<f64>() / args.n_seeds as f64;
@@ -157,26 +184,29 @@ fn main() {
         writeln!(file, "{}", json).ok();
 
         let best = optimizer.best_trial();
-        println!(
-            "Trial {:3} | {} = {:.4} ± {:.4} | best = {:.4} | time = {}ms | {}",
+        pb_trials.set_message(format!("{:.4}", best));
+        pb_trials.println(format!(
+            "Trial {:3} | {} = {:.4} ± {:.4} | best = {:.4} | {}ms | lr={:.2}, perp={:.1}, k={:.1}, {}",
             trial_idx,
             args.metric,
             mean,
             std,
             best,
             elapsed,
-            format!(
-                "lr={:.2}, perp={:.1}, k={:.1}, {}",
-                config.learning_rate,
-                config.perplexity,
-                config.curvature,
-                match config.init_method {
-                    fitting_core::config::InitMethod::Random => "Random",
-                    fitting_core::config::InitMethod::Pca => "Pca",
-                }
-            )
-        );
+            config.learning_rate,
+            config.perplexity,
+            config.curvature,
+            match config.init_method {
+                fitting_core::config::InitMethod::Random => "Random",
+                fitting_core::config::InitMethod::Pca => "Pca",
+            }
+        ));
+        pb_trials.inc(1);
     }
+
+    pb_iters.finish_and_clear();
+    pb_seeds.finish_and_clear();
+    pb_trials.finish_and_clear();
 
     println!("\n=== Best Configuration ===");
     if let Some(best_config) = optimizer.best_config() {

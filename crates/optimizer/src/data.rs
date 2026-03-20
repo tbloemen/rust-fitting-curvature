@@ -112,7 +112,10 @@ impl Dataset {
             "concentric_circles" => Self::synthetic_concentric_circles(n_samples, seed),
             "tree" => Self::synthetic_tree(n_samples, seed),
             "grid" => Self::synthetic_grid(n_samples, seed),
-            _ => panic!("Unknown synthetic dataset: {}. Options: gaussian_blob, concentric_circles, tree, grid", name),
+            _ => panic!(
+                "Unknown synthetic dataset: {}. Options: gaussian_blob, concentric_circles, tree, grid",
+                name
+            ),
         }
     }
 
@@ -189,6 +192,7 @@ impl Dataset {
         let points_per_leaf =
             ((n_samples as f64) / ((branching as f64).powi(n_levels as i32))) as usize;
 
+        #[allow(clippy::too_many_arguments)]
         fn generate_tree(
             x: &mut Vec<f64>,
             labels: &mut Vec<u32>,
@@ -214,7 +218,11 @@ impl Dataset {
                 return;
             }
 
-            let angle_offset = if branch % 2 == 0 { 0.0 } else { PI / 6.0 };
+            let angle_offset = if branch.is_multiple_of(2) {
+                0.0
+            } else {
+                PI / 6.0
+            };
             let new_dist = 1.5_f64.powi((max_level - level) as i32) * 0.5;
             for b in 0..branching {
                 let angle = angle_offset + (b as f64 - 0.5) * PI / 3.0;
