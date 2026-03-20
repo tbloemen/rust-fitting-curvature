@@ -394,8 +394,8 @@ fn test_pca_init_euclidean_preserves_variance() {
 
     let mut var = [0.0, 0.0];
     for i in 0..100 {
-        for d in 0..2 {
-            var[d] += state.points[i * 2 + d].powi(2);
+        for (d, var_item) in var.iter_mut().enumerate() {
+            *var_item += state.points[i * 2 + d].powi(2);
         }
     }
 

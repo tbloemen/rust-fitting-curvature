@@ -63,8 +63,7 @@ pub fn pca(
     // Center the data column-wise.
     let mut centered = data.to_vec();
     for f in 0..n_features {
-        let mean = (0..n_points).map(|i| data[i * n_features + f]).sum::<f64>()
-            / n_points as f64;
+        let mean = (0..n_points).map(|i| data[i * n_features + f]).sum::<f64>() / n_points as f64;
         for i in 0..n_points {
             centered[i * n_features + f] -= mean;
         }
