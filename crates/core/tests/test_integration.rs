@@ -286,3 +286,146 @@ fn test_global_loss_no_nan() {
         );
     }
 }
+
+#[test]
+fn test_pca_init_no_nan() {
+    let data = create_test_data(100, 10, 42);
+
+    for &curvature in &[-1.0, 0.0, 1.0] {
+        let config = TrainingConfig {
+            n_points: 100,
+            embed_dim: 2,
+            curvature,
+            perplexity: 15.0,
+            n_iterations: 10,
+            early_exaggeration_iterations: 5,
+            learning_rate: 50.0,
+            init_method: InitMethod::Pca,
+            init_scale: 1e-4,
+            ..Default::default()
+        };
+
+        let state = run_embedding(&data, 10, &config);
+        assert!(
+            !state.points.iter().any(|v| v.is_nan()),
+            "NaN in PCA init for curvature={curvature}"
+        );
+        assert!(
+            !state.points.iter().any(|v| v.is_infinite()),
+            "Inf in PCA init for curvature={curvature}"
+        );
+    }
+}
+
+#[test]
+fn test_pca_init_hyperboloid_constraint() {
+    let data = create_test_data(80, 10, 42);
+
+    let config = TrainingConfig {
+        n_points: 80,
+        embed_dim: 2,
+        curvature: -1.0,
+        perplexity: 15.0,
+        n_iterations: 0,
+        init_method: InitMethod::Pca,
+        init_scale: 1e-4,
+        ..Default::default()
+    };
+
+    let state = EmbeddingState::new(&data, 10, &config);
+
+    for i in 0..80 {
+        let x0 = state.points[i * 3];
+        let x1 = state.points[i * 3 + 1];
+        let x2 = state.points[i * 3 + 2];
+        let constraint = -x0 * x0 + x1 * x1 + x2 * x2;
+        assert!(
+            (constraint + 1.0).abs() < 1e-6,
+            "Hyperboloid constraint violated at point {i}: {constraint}"
+        );
+    }
+}
+
+#[test]
+fn test_pca_init_sphere_constraint() {
+    let data = create_test_data(80, 10, 42);
+
+    let config = TrainingConfig {
+        n_points: 80,
+        embed_dim: 2,
+        curvature: 1.0,
+        perplexity: 15.0,
+        n_iterations: 0,
+        init_method: InitMethod::Pca,
+        init_scale: 1e-4,
+        ..Default::default()
+    };
+
+    let state = EmbeddingState::new(&data, 10, &config);
+
+    for i in 0..80 {
+        let mut norm_sq = 0.0;
+        for d in 0..3 {
+            norm_sq += state.points[i * 3 + d].powi(2);
+        }
+        assert!(
+            (norm_sq - 1.0).abs() < 1e-6,
+            "Sphere constraint violated at point {i}: norm_sq={norm_sq}"
+        );
+    }
+}
+
+#[test]
+fn test_pca_init_euclidean_preserves_variance() {
+    let data = create_test_data(100, 5, 42);
+
+    let config = TrainingConfig {
+        n_points: 100,
+        embed_dim: 2,
+        curvature: 0.0,
+        perplexity: 15.0,
+        n_iterations: 0,
+        init_method: InitMethod::Pca,
+        init_scale: 1.0,
+        ..Default::default()
+    };
+
+    let state = EmbeddingState::new(&data, 5, &config);
+
+    let mut var = [0.0, 0.0];
+    for i in 0..100 {
+        for d in 0..2 {
+            var[d] += state.points[i * 2 + d].powi(2);
+        }
+    }
+
+    let total_var: f64 = var.iter().sum();
+    assert!(
+        total_var > 0.0,
+        "PCA init should preserve some variance in Euclidean space"
+    );
+}
+
+#[test]
+fn test_pca_init_deterministic() {
+    let data = create_test_data(50, 8, 123);
+
+    let config = TrainingConfig {
+        n_points: 50,
+        embed_dim: 2,
+        curvature: -1.0,
+        perplexity: 10.0,
+        n_iterations: 0,
+        init_method: InitMethod::Pca,
+        init_scale: 1e-4,
+        seed: 42,
+        ..Default::default()
+    };
+
+    let state1 = EmbeddingState::new(&data, 8, &config);
+    let state2 = EmbeddingState::new(&data, 8, &config);
+
+    for (a, b) in state1.points.iter().zip(state2.points.iter()) {
+        assert!((a - b).abs() < 1e-10, "PCA init should be deterministic");
+    }
+}
