@@ -7,13 +7,13 @@ use std::path::Path;
 
 use crate::data::Dataset;
 use crate::evaluate::Evaluator;
+use crate::gp::GpOptimizer;
 use crate::search_space::{OptimizeDirection, SearchSpace};
-use crate::tpe::TpeOptimizer;
 
 mod data;
 mod evaluate;
+mod gp;
 mod search_space;
-mod tpe;
 
 #[derive(Parser, Debug)]
 #[command(name = "fitting-optimizer")]
@@ -98,7 +98,7 @@ fn main() {
     );
 
     let evaluator = Evaluator::new(dataset.clone());
-    let mut optimizer = TpeOptimizer::new(space);
+    let mut optimizer = GpOptimizer::new(space);
     let mut rng = fitting_core::synthetic_data::Rng::new(42);
 
     if Path::new(&args.output).exists() {
@@ -116,14 +116,9 @@ fn main() {
     )
     .unwrap()
     .progress_chars("=>-");
-    let seed_style = ProgressStyle::with_template(
-        "  {spinner:.yellow} seed {pos}/{len}",
-    )
-    .unwrap();
-    let iter_style = ProgressStyle::with_template(
-        "    {spinner:.blue} iter {pos}/{len} | {per_sec}",
-    )
-    .unwrap();
+    let seed_style = ProgressStyle::with_template("  {spinner:.yellow} seed {pos}/{len}").unwrap();
+    let iter_style =
+        ProgressStyle::with_template("    {spinner:.blue} iter {pos}/{len} | {per_sec}").unwrap();
 
     let pb_trials = mp.add(ProgressBar::new(args.n_trials as u64));
     pb_trials.set_style(trial_style);
@@ -182,9 +177,10 @@ fn main() {
         let best = optimizer.best_trial();
         pb_trials.set_message(format!("{:.4}", best));
         pb_trials.println(format!(
-            "Trial {:3} | {} = {:.4} ± {:.4} | best = {:.4} | {}ms | lr={:.2}, perp={:.1}, k={:.1}",
+            "Trial {:3} | {} = {:.4} ± {:.4} | best = {:.4} | {}ms | lr={:.4}, perp={:.2}, k={:.3}, iter={}, ee={}",
             trial_idx, args.metric, mean, std, best, elapsed,
             config.learning_rate, config.perplexity, config.curvature,
+            config.n_iterations, config.early_exaggeration_iterations,
         ));
         pb_trials.inc(1);
     }
@@ -198,7 +194,10 @@ fn main() {
         println!("learning_rate: {:.4}", best_config.learning_rate);
         println!("perplexity: {:.4}", best_config.perplexity);
         println!("momentum_main: {:.4}", best_config.momentum_main);
-        println!("init_scale: {:.6} (auto)", fitting_core::matrices::get_default_init_scale(2));
+        println!(
+            "init_scale: {:.6} (auto)",
+            fitting_core::matrices::get_default_init_scale(2)
+        );
         println!("n_iterations: {}", best_config.n_iterations);
         println!(
             "early_exaggeration_iterations: {}",

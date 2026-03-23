@@ -121,15 +121,4 @@ impl TrialConfig {
         }
         cfg
     }
-
-    pub fn as_f64_array(&self) -> Vec<f64> {
-        vec![
-            self.learning_rate,
-            self.perplexity,
-            self.momentum_main,
-            self.n_iterations as f64,
-            self.early_exaggeration_iterations as f64,
-            self.curvature,
-        ]
-    }
 }
