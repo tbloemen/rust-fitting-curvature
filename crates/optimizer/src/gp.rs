@@ -218,8 +218,6 @@ fn config_to_gp_input(config: &TrialConfig) -> Vec<f64> {
         config.learning_rate.ln(),
         config.perplexity.ln(),
         config.momentum_main,
-        config.n_iterations as f64,
-        config.early_exaggeration_iterations as f64,
         config.scaling_loss as f64,
         config.centering_weight,
         config.global_loss_weight,
@@ -378,8 +376,6 @@ mod tests {
             learning_rate: lr,
             perplexity: perp,
             momentum_main: 0.8,
-            n_iterations: 300,
-            early_exaggeration_iterations: 100,
             scaling_loss: 0,
             centering_weight: 0.0,
             global_loss_weight: 0.0,
@@ -677,12 +673,10 @@ mod tests {
         let cfg = make_config(1.0, 10.0);
         let v = config_to_gp_input(&cfg);
         assert!(close(v[2], cfg.momentum_main, 1e-15));
-        assert!(close(v[3], cfg.n_iterations as f64, 1e-15));
-        assert!(close(v[4], cfg.early_exaggeration_iterations as f64, 1e-15));
-        assert!(close(v[5], cfg.scaling_loss as f64, 1e-15));
-        assert!(close(v[6], cfg.centering_weight, 1e-15));
-        assert!(close(v[7], cfg.global_loss_weight, 1e-15));
-        assert!(close(v[8], cfg.norm_loss_weight, 1e-15));
+        assert!(close(v[3], cfg.scaling_loss as f64, 1e-15));
+        assert!(close(v[4], cfg.centering_weight, 1e-15));
+        assert!(close(v[5], cfg.global_loss_weight, 1e-15));
+        assert!(close(v[6], cfg.norm_loss_weight, 1e-15));
     }
 
     // ─── GpModel ──────────────────────────────────────────────────────────────
@@ -781,7 +775,7 @@ mod tests {
         let cfg = opt.suggest(&mut rng);
         assert!(cfg.learning_rate > 0.0);
         assert!(cfg.perplexity >= 2.0);
-        assert!(cfg.n_iterations > 0);
+        assert!(cfg.momentum_main >= 0.7);
     }
 
     #[test]
