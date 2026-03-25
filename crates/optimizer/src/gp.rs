@@ -220,7 +220,10 @@ fn config_to_gp_input(config: &TrialConfig) -> Vec<f64> {
         config.momentum_main,
         config.n_iterations as f64,
         config.early_exaggeration_iterations as f64,
-        config.curvature,
+        config.scaling_loss as f64,
+        config.centering_weight,
+        config.global_loss_weight,
+        config.norm_loss_weight,
     ]
 }
 
@@ -360,8 +363,11 @@ fn expected_improvement(mu: f64, sigma: f64, f_best: f64, xi: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search_space::SearchSpace;
     use fitting_core::synthetic_data::Rng;
+
+    fn maximize_space() -> SearchSpace {
+        SearchSpace { direction: OptimizeDirection::Maximize }
+    }
 
     fn close(a: f64, b: f64, tol: f64) -> bool {
         (a - b).abs() < tol
@@ -374,7 +380,10 @@ mod tests {
             momentum_main: 0.8,
             n_iterations: 300,
             early_exaggeration_iterations: 100,
-            curvature: 0.0,
+            scaling_loss: 0,
+            centering_weight: 0.0,
+            global_loss_weight: 0.0,
+            norm_loss_weight: 0.0,
         }
     }
 
@@ -524,7 +533,7 @@ mod tests {
         // A = [[4, 2], [2, 3]], A = L Lᵀ
         let a = vec![4.0, 2.0, 2.0, 3.0];
         let l = cholesky(&a, 2);
-        let mut recon = vec![0.0; 4];
+        let mut recon = [0.0; 4];
         for i in 0..2 {
             for j in 0..2 {
                 for k in 0..2 {
@@ -670,7 +679,10 @@ mod tests {
         assert!(close(v[2], cfg.momentum_main, 1e-15));
         assert!(close(v[3], cfg.n_iterations as f64, 1e-15));
         assert!(close(v[4], cfg.early_exaggeration_iterations as f64, 1e-15));
-        assert!(close(v[5], cfg.curvature, 1e-15));
+        assert!(close(v[5], cfg.scaling_loss as f64, 1e-15));
+        assert!(close(v[6], cfg.centering_weight, 1e-15));
+        assert!(close(v[7], cfg.global_loss_weight, 1e-15));
+        assert!(close(v[8], cfg.norm_loss_weight, 1e-15));
     }
 
     // ─── GpModel ──────────────────────────────────────────────────────────────
@@ -722,7 +734,7 @@ mod tests {
 
     #[test]
     fn test_optimizer_best_trial_maximize() {
-        let mut opt = GpOptimizer::new(SearchSpace::default_tsne());
+        let mut opt = GpOptimizer::new(maximize_space());
         opt.observe(make_config(1.0, 10.0), 0.5);
         opt.observe(make_config(10.0, 20.0), 0.9);
         opt.observe(make_config(5.0, 5.0), 0.3);
@@ -731,7 +743,7 @@ mod tests {
 
     #[test]
     fn test_optimizer_best_config_is_highest_metric() {
-        let mut opt = GpOptimizer::new(SearchSpace::default_tsne());
+        let mut opt = GpOptimizer::new(maximize_space());
         opt.observe(make_config(1.0, 10.0), 0.5);
         opt.observe(make_config(10.0, 20.0), 0.9);
         opt.observe(make_config(5.0, 5.0), 0.3);
@@ -741,14 +753,14 @@ mod tests {
 
     #[test]
     fn test_optimizer_best_trial_empty() {
-        let opt = GpOptimizer::new(SearchSpace::default_tsne());
+        let opt = GpOptimizer::new(maximize_space());
         assert_eq!(opt.best_trial(), f64::MIN); // maximize direction default
     }
 
     #[test]
     fn test_optimizer_suggest_random_phase() {
         // Fewer than N_INIT=5 trials → random search, must not panic.
-        let mut opt = GpOptimizer::new(SearchSpace::default_tsne());
+        let mut opt = GpOptimizer::new(maximize_space());
         let mut rng = Rng::new(42);
         for _ in 0..4 {
             let cfg = opt.suggest(&mut rng);
@@ -760,7 +772,7 @@ mod tests {
     #[test]
     fn test_optimizer_suggest_gp_phase() {
         // N_INIT+ trials → GP-guided suggest must not panic and return a valid config.
-        let mut opt = GpOptimizer::new(SearchSpace::default_tsne());
+        let mut opt = GpOptimizer::new(maximize_space());
         let mut rng = Rng::new(42);
         for i in 0..10 {
             let cfg = TrialConfig::random(&mut rng);
@@ -777,7 +789,7 @@ mod tests {
         // After observing a clear winner, the GP should suggest configs that
         // resemble it more often than random. We verify EI is highest near the
         // winner, not near the low-metric configs.
-        let mut opt = GpOptimizer::new(SearchSpace::default_tsne());
+        let mut opt = GpOptimizer::new(maximize_space());
 
         // Seed with diverse trials; one clear winner.
         let configs_and_metrics: &[(f64, f64, f64)] = &[

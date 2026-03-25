@@ -22,11 +22,17 @@ pub struct SearchSpace {
     pub direction: OptimizeDirection,
 }
 
-impl SearchSpace {
-    pub fn default_tsne() -> Self {
-        Self {
-            direction: OptimizeDirection::Maximize,
-        }
+
+
+/// Encode a u8 scaling-loss index as a `ScalingLossType`.
+/// 0=None, 1=HardBarrier, 2=SoftplusBarrier, 3=Rms, 4=MeanDistance.
+pub fn scaling_loss_from_u8(v: u8) -> ScalingLossType {
+    match v {
+        1 => ScalingLossType::HardBarrier,
+        2 => ScalingLossType::SoftplusBarrier,
+        3 => ScalingLossType::Rms,
+        4 => ScalingLossType::MeanDistance,
+        _ => ScalingLossType::None,
     }
 }
 
@@ -37,15 +43,21 @@ pub struct TrialConfig {
     pub momentum_main: f64,
     pub n_iterations: i64,
     pub early_exaggeration_iterations: i64,
-    pub curvature: f64,
+    /// Global-constraint weights and scaling-loss strategy.
+    /// scaling_loss: 0=None,1=HardBarrier,2=SoftplusBarrier,3=Rms,4=MeanDistance
+    pub scaling_loss: u8,
+    pub centering_weight: f64,
+    pub global_loss_weight: f64,
+    pub norm_loss_weight: f64,
 }
 
 impl TrialConfig {
-    pub fn to_training_config(&self, n_points: usize, seed: u64) -> TrainingConfig {
+    /// `curvature` is now a fixed per-session value, not part of the search space.
+    pub fn to_training_config(&self, n_points: usize, curvature: f64, seed: u64) -> TrainingConfig {
         TrainingConfig {
             n_points,
             embed_dim: 2,
-            curvature: self.curvature,
+            curvature,
             perplexity: self.perplexity,
             n_iterations: self.n_iterations as usize,
             early_exaggeration_iterations: self.early_exaggeration_iterations as usize,
@@ -55,14 +67,10 @@ impl TrialConfig {
             momentum_main: self.momentum_main,
             init_method: InitMethod::Pca,
             init_scale: get_default_init_scale(2),
-            centering_weight: 0.0,
-            scaling_loss_type: if self.curvature < 0.0 {
-                ScalingLossType::HardBarrier
-            } else {
-                ScalingLossType::None
-            },
-            global_loss_weight: 0.0,
-            norm_loss_weight: 0.0,
+            centering_weight: self.centering_weight,
+            scaling_loss_type: scaling_loss_from_u8(self.scaling_loss),
+            global_loss_weight: self.global_loss_weight,
+            norm_loss_weight: self.norm_loss_weight,
             seed,
         }
     }
@@ -82,7 +90,10 @@ impl TrialConfig {
         let n_iterations = (rng.uniform() * 600.0 + 200.0) as i64;
         let early_exag = (rng.uniform() * 350.0 + 50.0) as i64;
 
-        let curvature = rng.uniform() * 2.0 - 1.0;
+        let scaling_loss = (rng.uniform() * 5.0) as u8; // 0..=4
+        let centering_weight = rng.uniform() * 2.0;
+        let global_loss_weight = rng.uniform() * 50.0;
+        let norm_loss_weight = rng.uniform() * 0.05;
 
         Self {
             learning_rate: lr,
@@ -90,7 +101,10 @@ impl TrialConfig {
             momentum_main: momentum,
             n_iterations,
             early_exaggeration_iterations: early_exag,
-            curvature,
+            scaling_loss,
+            centering_weight,
+            global_loss_weight,
+            norm_loss_weight,
         }
     }
 
@@ -116,8 +130,20 @@ impl TrialConfig {
                 ((cfg.early_exaggeration_iterations as f64 + (rng.uniform() - 0.5) * 100.0) as i64)
                     .clamp(50, 400);
         }
+        if rng.uniform() < 0.2 {
+            cfg.scaling_loss = (rng.uniform() * 5.0) as u8;
+        }
         if rng.uniform() < 0.3 {
-            cfg.curvature = (cfg.curvature + (rng.uniform() - 0.5) * 0.5).clamp(-1.0, 1.0);
+            cfg.centering_weight =
+                (cfg.centering_weight + (rng.uniform() - 0.5) * 0.5).clamp(0.0, 2.0);
+        }
+        if rng.uniform() < 0.3 {
+            cfg.global_loss_weight =
+                (cfg.global_loss_weight + (rng.uniform() - 0.5) * 20.0).clamp(0.0, 50.0);
+        }
+        if rng.uniform() < 0.3 {
+            cfg.norm_loss_weight =
+                (cfg.norm_loss_weight + (rng.uniform() - 0.5) * 0.02).clamp(0.0, 0.05);
         }
         cfg
     }

@@ -23,10 +23,16 @@ impl Evaluator {
         Self { n_samples: n, dataset, high_dim_dist }
     }
 
-    pub fn evaluate(&self, config: &TrialConfig, seed: u64, pb_iters: &ProgressBar) -> EvaluationResult {
+    pub fn evaluate(
+        &self,
+        config: &TrialConfig,
+        curvature: f64,
+        seed: u64,
+        pb_iters: &ProgressBar,
+    ) -> EvaluationResult {
         let n = self.n_samples;
         let n_features = self.dataset.n_features;
-        let training_config = config.to_training_config(n, seed);
+        let training_config = config.to_training_config(n, curvature, seed);
 
         pb_iters.reset();
         pb_iters.set_length(training_config.n_iterations as u64);
@@ -74,8 +80,15 @@ impl Evaluator {
         }
     }
 
-    pub fn evaluate_with_metric(&self, config: &TrialConfig, metric: &str, seed: u64, pb_iters: &ProgressBar) -> f64 {
-        self.evaluate(config, seed, pb_iters).get(metric)
+    pub fn evaluate_with_metric(
+        &self,
+        config: &TrialConfig,
+        curvature: f64,
+        metric: &str,
+        seed: u64,
+        pb_iters: &ProgressBar,
+    ) -> f64 {
+        self.evaluate(config, curvature, seed, pb_iters).get(metric)
     }
 }
 
