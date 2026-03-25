@@ -41,7 +41,9 @@ pub const FIXED_EARLY_EXAG_ITERATIONS: usize = 250;
 #[derive(Debug, Clone)]
 pub struct TrialConfig {
     pub learning_rate: f64,
-    pub perplexity: f64,
+    /// Perplexity expressed as a fraction of n_points.
+    /// Actual perplexity = max(2.0, perplexity_ratio * n_points).
+    pub perplexity_ratio: f64,
     pub momentum_main: f64,
     /// 0=None, 1=HardBarrier, 2=SoftplusBarrier, 3=Rms, 4=MeanDistance
     pub scaling_loss: u8,
@@ -52,11 +54,12 @@ pub struct TrialConfig {
 
 impl TrialConfig {
     pub fn to_training_config(&self, n_points: usize, curvature: f64, seed: u64) -> TrainingConfig {
+        let perplexity = (self.perplexity_ratio * n_points as f64).max(2.0);
         TrainingConfig {
             n_points,
             embed_dim: 2,
             curvature,
-            perplexity: self.perplexity,
+            perplexity,
             n_iterations: FIXED_N_ITERATIONS,
             early_exaggeration_iterations: FIXED_EARLY_EXAG_ITERATIONS,
             early_exaggeration_factor: 12.0,
@@ -79,9 +82,14 @@ impl TrialConfig {
             .exp()
             .clamp(0.5, 300.0);
 
-        let perp = (rng.uniform() * (50.0_f64.ln() - 2.0_f64.ln()) + 2.0_f64.ln())
-            .exp()
-            .clamp(2.0, 50.0);
+        // perplexity_ratio in [0.0004, 0.01], log-uniform.
+        // For n=5000 this yields perplexity in [2, 50]; scales automatically with dataset size.
+        const PERP_RATIO_MIN: f64 = 0.0004;
+        const PERP_RATIO_MAX: f64 = 0.01;
+        let perp_ratio =
+            (rng.uniform() * (PERP_RATIO_MAX.ln() - PERP_RATIO_MIN.ln()) + PERP_RATIO_MIN.ln())
+                .exp()
+                .clamp(PERP_RATIO_MIN, PERP_RATIO_MAX);
 
         let momentum = rng.uniform() * 0.25 + 0.7; // [0.70, 0.95]
 
@@ -92,7 +100,7 @@ impl TrialConfig {
 
         Self {
             learning_rate: lr,
-            perplexity: perp,
+            perplexity_ratio: perp_ratio,
             momentum_main: momentum,
             scaling_loss,
             centering_weight,
@@ -108,8 +116,9 @@ impl TrialConfig {
                 (cfg.learning_rate * 2.0_f64.powf((rng.uniform() - 0.5) * 1.0)).clamp(0.5, 300.0);
         }
         if rng.uniform() < 0.3 {
-            cfg.perplexity =
-                (cfg.perplexity * 2.0_f64.powf((rng.uniform() - 0.5) * 0.8)).clamp(2.0, 50.0);
+            cfg.perplexity_ratio =
+                (cfg.perplexity_ratio * 2.0_f64.powf((rng.uniform() - 0.5) * 0.8))
+                    .clamp(0.0004, 0.01);
         }
         if rng.uniform() < 0.3 {
             cfg.momentum_main =

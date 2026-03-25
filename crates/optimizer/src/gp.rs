@@ -216,7 +216,7 @@ impl GpModel {
 fn config_to_gp_input(config: &TrialConfig) -> Vec<f64> {
     vec![
         config.learning_rate.ln(),
-        config.perplexity.ln(),
+        config.perplexity_ratio.ln(),
         config.momentum_main,
         config.scaling_loss as f64,
         config.centering_weight,
@@ -371,10 +371,10 @@ mod tests {
         (a - b).abs() < tol
     }
 
-    fn make_config(lr: f64, perp: f64) -> TrialConfig {
+    fn make_config(lr: f64, perp_ratio: f64) -> TrialConfig {
         TrialConfig {
             learning_rate: lr,
-            perplexity: perp,
+            perplexity_ratio: perp_ratio,
             momentum_main: 0.8,
             scaling_loss: 0,
             centering_weight: 0.0,
@@ -774,7 +774,7 @@ mod tests {
         }
         let cfg = opt.suggest(&mut rng);
         assert!(cfg.learning_rate > 0.0);
-        assert!(cfg.perplexity >= 2.0);
+        assert!(cfg.perplexity_ratio >= 0.0004);
         assert!(cfg.momentum_main >= 0.7);
     }
 

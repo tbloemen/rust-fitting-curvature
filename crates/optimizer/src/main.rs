@@ -92,7 +92,7 @@ struct TrialResult {
     curvature: f64,
     trial: usize,
     learning_rate: f64,
-    perplexity: f64,
+    perplexity_ratio: f64,
     momentum_main: f64,
     scaling_loss: u8,
     centering_weight: f64,
@@ -174,7 +174,7 @@ fn run_session(curvature: f64, args: &Args, evaluator: Arc<Evaluator>, mp: &Mult
             curvature,
             trial: trial_idx,
             learning_rate: config.learning_rate,
-            perplexity: config.perplexity,
+            perplexity_ratio: config.perplexity_ratio,
             momentum_main: config.momentum_main,
             scaling_loss: config.scaling_loss,
             centering_weight: config.centering_weight,
@@ -189,10 +189,11 @@ fn run_session(curvature: f64, args: &Args, evaluator: Arc<Evaluator>, mp: &Mult
         write_result(&result, &out_path);
 
         let best = optimizer.best_trial();
+        let actual_perp = config.perplexity_ratio * evaluator.n_points() as f64;
         pb.set_prefix(format!("{:.4}", best));
         pb.println(format!(
             "k={:+.1} trial {:3} | {} = {:.4} ± {:.4} | best={:.4} | {}ms \
-             | lr={:.4} perp={:.2} sl={} cw={:.3} glw={:.2} nw={:.4}",
+             | lr={:.4} perp={:.1} (ratio={:.4}) sl={} cw={:.3} glw={:.2} nw={:.4}",
             curvature,
             trial_idx,
             args.metric,
@@ -201,7 +202,8 @@ fn run_session(curvature: f64, args: &Args, evaluator: Arc<Evaluator>, mp: &Mult
             best,
             elapsed,
             config.learning_rate,
-            config.perplexity,
+            actual_perp,
+            config.perplexity_ratio,
             config.scaling_loss,
             config.centering_weight,
             config.global_loss_weight,
@@ -213,16 +215,18 @@ fn run_session(curvature: f64, args: &Args, evaluator: Arc<Evaluator>, mp: &Mult
     pb.finish_with_message(format!("{:+.1} done", curvature));
 
     if let Some(best_config) = optimizer.best_config() {
+        let best_perp = best_config.perplexity_ratio * evaluator.n_points() as f64;
         pb.println(format!(
             "\n=== Best for k={:+.1} | {}={:.4} ===\n  \
-             lr={:.4}  perp={:.4}  momentum={:.4}\n  \
+             lr={:.4}  perp={:.1} (ratio={:.4})  momentum={:.4}\n  \
              n_iter={}  ee_iter={}\n  \
              scaling_loss={}  centering={:.3}  global_loss={:.3}  norm={:.4}",
             curvature,
             args.metric,
             optimizer.best_trial(),
             best_config.learning_rate,
-            best_config.perplexity,
+            best_perp,
+            best_config.perplexity_ratio,
             best_config.momentum_main,
             FIXED_N_ITERATIONS,
             FIXED_EARLY_EXAG_ITERATIONS,
@@ -237,8 +241,9 @@ fn run_session(curvature: f64, args: &Args, evaluator: Arc<Evaluator>, mp: &Mult
 // ─── Scan mode ────────────────────────────────────────────────────────────────
 
 /// Load the best TrialConfig from a JSONL file (by metric_mean).
-/// Uses flexible JSON parsing so it works with both old and new output formats.
-fn load_best_config_from_jsonl(path: &str) -> Option<TrialConfig> {
+/// Handles both old format (absolute `perplexity`) and new format (`perplexity_ratio`).
+/// `n_points` is used to convert old-format absolute perplexity to a ratio.
+fn load_best_config_from_jsonl(path: &str, n_points: usize) -> Option<TrialConfig> {
     let content = std::fs::read_to_string(path).ok()?;
     let mut best_val = f64::NEG_INFINITY;
     let mut best: Option<TrialConfig> = None;
@@ -248,9 +253,13 @@ fn load_best_config_from_jsonl(path: &str) -> Option<TrialConfig> {
         let metric = v["metric_mean"].as_f64().unwrap_or(f64::NEG_INFINITY);
         if metric > best_val {
             best_val = metric;
+            // Prefer new-format perplexity_ratio; fall back to old absolute perplexity / n_points.
+            let perplexity_ratio = v["perplexity_ratio"].as_f64().unwrap_or_else(|| {
+                v["perplexity"].as_f64().unwrap_or(15.0) / n_points as f64
+            });
             best = Some(TrialConfig {
                 learning_rate: v["learning_rate"].as_f64().unwrap_or(10.0),
-                perplexity: v["perplexity"].as_f64().unwrap_or(15.0),
+                perplexity_ratio,
                 momentum_main: v["momentum_main"].as_f64().unwrap_or(0.8),
                 scaling_loss: v["scaling_loss"].as_u64().unwrap_or(0) as u8,
                 centering_weight: v["centering_weight"].as_f64().unwrap_or(0.0),
@@ -277,51 +286,50 @@ fn sweep_values(lo: f64, hi: f64, n: usize, log: bool) -> Vec<f64> {
 }
 
 fn run_scan(curvature: f64, args: &Args, evaluator: Arc<Evaluator>, mp: &MultiProgress) {
+    let n_points = evaluator.n_points();
+    // Default config (perplexity_ratio 0.003 ≈ perplexity 15 for n=5000)
+    let default_config = TrialConfig {
+        learning_rate: 10.0,
+        perplexity_ratio: 0.003,
+        momentum_main: 0.85,
+        scaling_loss: 3,
+        centering_weight: 0.5,
+        global_loss_weight: 0.0,
+        norm_loss_weight: 0.0,
+    };
+
     // Load base config from previous optimization run.
     let base = if let Some(prefix) = &args.scan_from {
         let path = output_path(prefix, curvature);
-        match load_best_config_from_jsonl(&path) {
+        match load_best_config_from_jsonl(&path, n_points) {
             Some(c) => {
-                eprintln!("scan k={}: loaded base config from {} (metric peaked at that trial)", curvature, path);
+                eprintln!(
+                    "scan k={}: loaded base config from {} (best trial)",
+                    curvature, path
+                );
                 c
             }
             None => {
                 eprintln!("scan k={}: could not load from {}, using default config", curvature, path);
-                TrialConfig {
-                    learning_rate: 10.0,
-                    perplexity: 15.0,
-                    momentum_main: 0.85,
-                    scaling_loss: 3,
-                    centering_weight: 0.5,
-                    global_loss_weight: 0.0,
-                    norm_loss_weight: 0.0,
-                }
+                default_config
             }
         }
     } else {
         eprintln!("scan k={}: no --scan-from provided, using default config", curvature);
-        TrialConfig {
-            learning_rate: 10.0,
-            perplexity: 15.0,
-            momentum_main: 0.85,
-            scaling_loss: 3,
-            centering_weight: 0.5,
-            global_loss_weight: 0.0,
-            norm_loss_weight: 0.0,
-        }
+        default_config
     };
 
     let n = args.scan_steps;
 
-    // (param_name, values to sweep, field setter)
+    // (param_name, values to sweep)
     let params: Vec<(&str, Vec<f64>)> = vec![
-        ("learning_rate",    sweep_values(0.5, 300.0, n, true)),
-        ("perplexity",       sweep_values(2.0, 50.0,  n, true)),
-        ("momentum_main",    sweep_values(0.70, 0.95, n, false)),
+        ("learning_rate",    sweep_values(0.5, 300.0,  n, true)),
+        ("perplexity_ratio", sweep_values(0.0004, 0.01, n, true)),
+        ("momentum_main",    sweep_values(0.70, 0.95,  n, false)),
         ("scaling_loss",     vec![0.0, 1.0, 2.0, 3.0, 4.0]),
-        ("centering_weight", sweep_values(0.0, 2.0,   n, false)),
-        ("global_loss_weight", sweep_values(0.0, 2.0, n, false)),
-        ("norm_loss_weight", sweep_values(0.0, 0.02,  n, false)),
+        ("centering_weight", sweep_values(0.0, 2.0,    n, false)),
+        ("global_loss_weight", sweep_values(0.0, 2.0,  n, false)),
+        ("norm_loss_weight", sweep_values(0.0, 0.02,   n, false)),
     ];
 
     let total = params.iter().map(|(_, v)| v.len()).sum::<usize>() as u64;
@@ -350,7 +358,7 @@ fn run_scan(curvature: f64, args: &Args, evaluator: Arc<Evaluator>, mp: &MultiPr
             let mut config = base.clone();
             match *param_name {
                 "learning_rate"      => config.learning_rate = val,
-                "perplexity"         => config.perplexity = val,
+                "perplexity_ratio"   => config.perplexity_ratio = val,
                 "momentum_main"      => config.momentum_main = val,
                 "scaling_loss"       => config.scaling_loss = val as u8,
                 "centering_weight"   => config.centering_weight = val,
@@ -384,7 +392,7 @@ fn run_scan(curvature: f64, args: &Args, evaluator: Arc<Evaluator>, mp: &MultiPr
                 curvature,
                 trial: trial_idx,
                 learning_rate: config.learning_rate,
-                perplexity: config.perplexity,
+                perplexity_ratio: config.perplexity_ratio,
                 momentum_main: config.momentum_main,
                 scaling_loss: config.scaling_loss,
                 centering_weight: config.centering_weight,

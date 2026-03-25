@@ -23,6 +23,10 @@ impl Evaluator {
         Self { n_samples: n, dataset, high_dim_dist }
     }
 
+    pub fn n_points(&self) -> usize {
+        self.n_samples
+    }
+
     pub fn evaluate(
         &self,
         config: &TrialConfig,
