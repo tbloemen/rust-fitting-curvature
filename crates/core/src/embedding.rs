@@ -261,8 +261,8 @@ impl EmbeddingState {
 /// - **Euclidean** (k=0): use as-is.
 /// - **Hyperboloid** (k<0): spatial components = scaled PCA coords (indices 1..);
 ///   time component (index 0) = sqrt(r² + ||spatial||²).
-/// - **Sphere** (k>0): pad with a zero to reach ambient_dim, then normalize
-///   each point to radius r.
+/// - **Sphere** (k>0): spatial components = scaled PCA coords (indices 0..embed_dim);
+///   last component (index embed_dim) = sqrt(r² - ||spatial||²).
 fn lift_pca_to_manifold(
     coords: &[f64],
     n_points: usize,
@@ -296,16 +296,16 @@ fn lift_pca_to_manifold(
                 dst[1 + d] = src[d] * scale;
             }
         } else if curvature > 0.0 {
-            // Sphere: embed in first embed_dim coords, last = 0, then normalize to r.
+            // Sphere layout: [x1, ..., x_d, x_{d+1}]
+            // Analogous to hyperboloid: place PCA coords in the first embed_dim slots,
+            // compute the last coord from the sphere constraint ||x||^2 = r^2.
+            // Requires ||src*scale|| <= r, guaranteed when init_scale <= radius.
+            let spatial_norm_sq: f64 = src.iter().map(|&x| (x * scale).powi(2)).sum();
+            let last_sq = radius * radius - spatial_norm_sq;
             for d in 0..embed_dim {
                 dst[d] = src[d] * scale;
             }
-            // dst[embed_dim] is already 0.
-            let norm: f64 = dst.iter().map(|x| x * x).sum::<f64>().sqrt();
-            let r_scale = if norm > 1e-12 { radius / norm } else { radius };
-            for x in dst.iter_mut() {
-                *x *= r_scale;
-            }
+            dst[embed_dim] = last_sq.max(0.0).sqrt();
         } else {
             // Euclidean: straight copy.
             for d in 0..embed_dim {
