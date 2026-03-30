@@ -86,17 +86,17 @@ impl TrialConfig {
         // For n=5000 this yields perplexity in [2, 50]; scales automatically with dataset size.
         const PERP_RATIO_MIN: f64 = 0.0004;
         const PERP_RATIO_MAX: f64 = 0.01;
-        let perp_ratio =
-            (rng.uniform() * (PERP_RATIO_MAX.ln() - PERP_RATIO_MIN.ln()) + PERP_RATIO_MIN.ln())
-                .exp()
-                .clamp(PERP_RATIO_MIN, PERP_RATIO_MAX);
+        let perp_ratio = (rng.uniform() * (PERP_RATIO_MAX.ln() - PERP_RATIO_MIN.ln())
+            + PERP_RATIO_MIN.ln())
+        .exp()
+        .clamp(PERP_RATIO_MIN, PERP_RATIO_MAX);
 
         let momentum = rng.uniform() * 0.25 + 0.7; // [0.70, 0.95]
 
         let scaling_loss = (rng.uniform() * 5.0) as u8; // 0..=4
         let centering_weight = rng.uniform() * 2.0;
         let global_loss_weight = rng.uniform() * 2.0; // narrowed from [0, 50]
-        let norm_loss_weight = rng.uniform() * 0.02;  // narrowed from [0, 0.05]
+        let norm_loss_weight = rng.uniform() * 0.02; // narrowed from [0, 0.05]
 
         Self {
             learning_rate: lr,
@@ -116,13 +116,12 @@ impl TrialConfig {
                 (cfg.learning_rate * 2.0_f64.powf((rng.uniform() - 0.5) * 1.0)).clamp(0.5, 300.0);
         }
         if rng.uniform() < 0.3 {
-            cfg.perplexity_ratio =
-                (cfg.perplexity_ratio * 2.0_f64.powf((rng.uniform() - 0.5) * 0.8))
-                    .clamp(0.0004, 0.01);
+            cfg.perplexity_ratio = (cfg.perplexity_ratio
+                * 2.0_f64.powf((rng.uniform() - 0.5) * 0.8))
+            .clamp(0.0004, 0.01);
         }
         if rng.uniform() < 0.3 {
-            cfg.momentum_main =
-                (cfg.momentum_main + (rng.uniform() - 0.5) * 0.2).clamp(0.70, 0.95);
+            cfg.momentum_main = (cfg.momentum_main + (rng.uniform() - 0.5) * 0.2).clamp(0.70, 0.95);
         }
         if rng.uniform() < 0.2 {
             cfg.scaling_loss = (rng.uniform() * 5.0) as u8;

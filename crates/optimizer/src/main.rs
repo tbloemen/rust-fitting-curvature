@@ -11,7 +11,7 @@ use crate::data::Dataset;
 use crate::evaluate::Evaluator;
 use crate::gp::GpOptimizer;
 use crate::search_space::{
-    OptimizeDirection, SearchSpace, TrialConfig, FIXED_EARLY_EXAG_ITERATIONS, FIXED_N_ITERATIONS,
+    FIXED_EARLY_EXAG_ITERATIONS, FIXED_N_ITERATIONS, OptimizeDirection, SearchSpace, TrialConfig,
 };
 
 mod data;
@@ -151,13 +151,8 @@ fn run_session(curvature: f64, args: &Args, evaluator: Arc<Evaluator>, mp: &Mult
         let mut metrics = Vec::with_capacity(args.n_seeds);
         for seed_idx in 0..args.n_seeds {
             let seed = 42 + trial_idx as u64 * 100 + seed_idx as u64;
-            let m = evaluator.evaluate_with_metric(
-                &config,
-                curvature,
-                &args.metric,
-                seed,
-                &pb_iters,
-            );
+            let m =
+                evaluator.evaluate_with_metric(&config, curvature, &args.metric, seed, &pb_iters);
             metrics.push(m);
         }
 
@@ -254,9 +249,9 @@ fn load_best_config_from_jsonl(path: &str, n_points: usize) -> Option<TrialConfi
         if metric > best_val {
             best_val = metric;
             // Prefer new-format perplexity_ratio; fall back to old absolute perplexity / n_points.
-            let perplexity_ratio = v["perplexity_ratio"].as_f64().unwrap_or_else(|| {
-                v["perplexity"].as_f64().unwrap_or(15.0) / n_points as f64
-            });
+            let perplexity_ratio = v["perplexity_ratio"]
+                .as_f64()
+                .unwrap_or_else(|| v["perplexity"].as_f64().unwrap_or(15.0) / n_points as f64);
             best = Some(TrialConfig {
                 learning_rate: v["learning_rate"].as_f64().unwrap_or(10.0),
                 perplexity_ratio,
@@ -275,7 +270,11 @@ fn load_best_config_from_jsonl(path: &str, n_points: usize) -> Option<TrialConfi
 fn sweep_values(lo: f64, hi: f64, n: usize, log: bool) -> Vec<f64> {
     (0..n)
         .map(|i| {
-            let t = if n > 1 { i as f64 / (n - 1) as f64 } else { 0.0 };
+            let t = if n > 1 {
+                i as f64 / (n - 1) as f64
+            } else {
+                0.0
+            };
             if log {
                 (lo.ln() + t * (hi.ln() - lo.ln())).exp()
             } else {
@@ -310,12 +309,18 @@ fn run_scan(curvature: f64, args: &Args, evaluator: Arc<Evaluator>, mp: &MultiPr
                 c
             }
             None => {
-                eprintln!("scan k={}: could not load from {}, using default config", curvature, path);
+                eprintln!(
+                    "scan k={}: could not load from {}, using default config",
+                    curvature, path
+                );
                 default_config
             }
         }
     } else {
-        eprintln!("scan k={}: no --scan-from provided, using default config", curvature);
+        eprintln!(
+            "scan k={}: no --scan-from provided, using default config",
+            curvature
+        );
         default_config
     };
 
@@ -323,13 +328,13 @@ fn run_scan(curvature: f64, args: &Args, evaluator: Arc<Evaluator>, mp: &MultiPr
 
     // (param_name, values to sweep)
     let params: Vec<(&str, Vec<f64>)> = vec![
-        ("learning_rate",    sweep_values(0.5, 300.0,  n, true)),
+        ("learning_rate", sweep_values(0.5, 300.0, n, true)),
         ("perplexity_ratio", sweep_values(0.0004, 0.01, n, true)),
-        ("momentum_main",    sweep_values(0.70, 0.95,  n, false)),
-        ("scaling_loss",     vec![0.0, 1.0, 2.0, 3.0, 4.0]),
-        ("centering_weight", sweep_values(0.0, 2.0,    n, false)),
-        ("global_loss_weight", sweep_values(0.0, 2.0,  n, false)),
-        ("norm_loss_weight", sweep_values(0.0, 0.02,   n, false)),
+        ("momentum_main", sweep_values(0.70, 0.95, n, false)),
+        ("scaling_loss", vec![0.0, 1.0, 2.0, 3.0, 4.0]),
+        ("centering_weight", sweep_values(0.0, 2.0, n, false)),
+        ("global_loss_weight", sweep_values(0.0, 2.0, n, false)),
+        ("norm_loss_weight", sweep_values(0.0, 0.02, n, false)),
     ];
 
     let total = params.iter().map(|(_, v)| v.len()).sum::<usize>() as u64;
@@ -357,13 +362,13 @@ fn run_scan(curvature: f64, args: &Args, evaluator: Arc<Evaluator>, mp: &MultiPr
             trial_idx += 1;
             let mut config = base.clone();
             match *param_name {
-                "learning_rate"      => config.learning_rate = val,
-                "perplexity_ratio"   => config.perplexity_ratio = val,
-                "momentum_main"      => config.momentum_main = val,
-                "scaling_loss"       => config.scaling_loss = val as u8,
-                "centering_weight"   => config.centering_weight = val,
+                "learning_rate" => config.learning_rate = val,
+                "perplexity_ratio" => config.perplexity_ratio = val,
+                "momentum_main" => config.momentum_main = val,
+                "scaling_loss" => config.scaling_loss = val as u8,
+                "centering_weight" => config.centering_weight = val,
                 "global_loss_weight" => config.global_loss_weight = val,
-                "norm_loss_weight"   => config.norm_loss_weight = val,
+                "norm_loss_weight" => config.norm_loss_weight = val,
                 _ => unreachable!(),
             }
 

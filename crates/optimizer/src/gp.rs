@@ -46,8 +46,7 @@ impl GpOptimizer {
 
         for _ in 0..self.n_ei_candidates {
             let candidate = if rng.uniform() < 0.3 {
-                let idx =
-                    (rng.uniform() * self.trials.len() as f64) as usize % self.trials.len();
+                let idx = (rng.uniform() * self.trials.len() as f64) as usize % self.trials.len();
                 self.trials[idx].config.mutate(rng)
             } else {
                 TrialConfig::random(rng)
@@ -71,12 +70,16 @@ impl GpOptimizer {
             };
         }
         match self.direction {
-            OptimizeDirection::Maximize => {
-                self.trials.iter().map(|t| t.metric).fold(f64::MIN, f64::max)
-            }
-            OptimizeDirection::Minimize => {
-                self.trials.iter().map(|t| t.metric).fold(f64::MAX, f64::min)
-            }
+            OptimizeDirection::Maximize => self
+                .trials
+                .iter()
+                .map(|t| t.metric)
+                .fold(f64::MIN, f64::max),
+            OptimizeDirection::Minimize => self
+                .trials
+                .iter()
+                .map(|t| t.metric)
+                .fold(f64::MAX, f64::min),
         }
     }
 
@@ -128,7 +131,7 @@ struct GpModel {
     xs_norm: Vec<Vec<f64>>,
     x_means: Vec<f64>,
     x_stds: Vec<f64>,
-    chol: Vec<f64>, // flat row-major lower-triangular Cholesky factor
+    chol: Vec<f64>,  // flat row-major lower-triangular Cholesky factor
     alpha: Vec<f64>, // K⁻¹ y
     f_best_norm: f64,
     length_scale: f64,
@@ -143,8 +146,10 @@ const XI: f64 = 0.01;
 impl GpModel {
     fn fit(trials: &[Trial], direction: OptimizeDirection) -> Self {
         // Map configs to a GP-friendly input space (log-scale for log-uniform params).
-        let raw_xs: Vec<Vec<f64>> =
-            trials.iter().map(|t| config_to_gp_input(&t.config)).collect();
+        let raw_xs: Vec<Vec<f64>> = trials
+            .iter()
+            .map(|t| config_to_gp_input(&t.config))
+            .collect();
 
         // Flip sign for minimization so we always maximize in GP space.
         let ys: Vec<f64> = trials
@@ -157,8 +162,10 @@ impl GpModel {
 
         // Standardize inputs.
         let (x_means, x_stds) = compute_normalization(&raw_xs);
-        let xs_norm: Vec<Vec<f64>> =
-            raw_xs.iter().map(|x| standardize(x, &x_means, &x_stds)).collect();
+        let xs_norm: Vec<Vec<f64>> = raw_xs
+            .iter()
+            .map(|x| standardize(x, &x_means, &x_stds))
+            .collect();
 
         // Standardize outputs.
         let y_mean = ys.iter().sum::<f64>() / ys.len() as f64;
@@ -175,7 +182,16 @@ impl GpModel {
         let alpha = chol_solve(&chol, &ys_norm, n);
         let f_best_norm = ys_norm.iter().cloned().fold(f64::MIN, f64::max);
 
-        Self { xs_norm, x_means, x_stds, chol, alpha, f_best_norm, length_scale, n }
+        Self {
+            xs_norm,
+            x_means,
+            x_stds,
+            chol,
+            alpha,
+            f_best_norm,
+            length_scale,
+            n,
+        }
     }
 
     /// Predict GP posterior mean and standard deviation at a normalized input.
@@ -188,7 +204,11 @@ impl GpModel {
             .collect();
 
         // Posterior mean: k_*ᵀ α
-        let mu: f64 = k_star.iter().zip(self.alpha.iter()).map(|(k, a)| k * a).sum();
+        let mu: f64 = k_star
+            .iter()
+            .zip(self.alpha.iter())
+            .map(|(k, a)| k * a)
+            .sum();
 
         // Posterior variance: k(x*,x*) - k_*ᵀ K⁻¹ k_*
         // Since k(x*,x*) = 1 for RBF, variance = 1 - ‖L⁻¹ k_*‖²
@@ -250,7 +270,10 @@ fn compute_normalization(xs: &[Vec<f64>]) -> (Vec<f64>, Vec<f64>) {
 }
 
 fn standardize(x: &[f64], means: &[f64], stds: &[f64]) -> Vec<f64> {
-    x.iter().enumerate().map(|(d, &v)| (v - means[d]) / stds[d]).collect()
+    x.iter()
+        .enumerate()
+        .map(|(d, &v)| (v - means[d]) / stds[d])
+        .collect()
 }
 
 /// Median of pairwise squared distances, then l = sqrt(median / 2).
@@ -262,13 +285,21 @@ fn median_heuristic(xs: &[Vec<f64>]) -> f64 {
     let mut sq_dists: Vec<f64> = Vec::with_capacity(n * (n - 1) / 2);
     for i in 0..n {
         for j in (i + 1)..n {
-            let d: f64 = xs[i].iter().zip(xs[j].iter()).map(|(a, b)| (a - b).powi(2)).sum();
+            let d: f64 = xs[i]
+                .iter()
+                .zip(xs[j].iter())
+                .map(|(a, b)| (a - b).powi(2))
+                .sum();
             sq_dists.push(d);
         }
     }
     sq_dists.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let median = sq_dists[sq_dists.len() / 2];
-    if median < 1e-10 { 1.0 } else { (median / 2.0).sqrt() }
+    if median < 1e-10 {
+        1.0
+    } else {
+        (median / 2.0).sqrt()
+    }
 }
 
 /// RBF (squared exponential) kernel: exp(−‖x − y‖² / 2l²).
@@ -343,8 +374,9 @@ fn normal_pdf(x: f64) -> f64 {
 /// Maximum absolute error ≈ 7.5 × 10⁻⁸.
 fn normal_cdf(x: f64) -> f64 {
     let t = 1.0 / (1.0 + 0.2316419 * x.abs());
-    let poly = t * (0.319381530
-        + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+    let poly = t
+        * (0.319381530
+            + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
     let p = 1.0 - normal_pdf(x) * poly;
     if x >= 0.0 { p } else { 1.0 - p }
 }
@@ -364,7 +396,9 @@ mod tests {
     use fitting_core::synthetic_data::Rng;
 
     fn maximize_space() -> SearchSpace {
-        SearchSpace { direction: OptimizeDirection::Maximize }
+        SearchSpace {
+            direction: OptimizeDirection::Maximize,
+        }
     }
 
     fn close(a: f64, b: f64, tol: f64) -> bool {
@@ -591,7 +625,11 @@ mod tests {
         let x = chol_solve(&l, &b, 3);
         for i in 0..3 {
             let ax_i: f64 = (0..3).map(|j| a[i * 3 + j] * x[j]).sum();
-            assert!(close(ax_i, b[i], 1e-8), "residual at row {i}: {}", ax_i - b[i]);
+            assert!(
+                close(ax_i, b[i], 1e-8),
+                "residual at row {i}: {}",
+                ax_i - b[i]
+            );
         }
     }
 
@@ -618,7 +656,9 @@ mod tests {
     #[test]
     fn test_median_heuristic_positive() {
         let mut rng = Rng::new(0);
-        let xs: Vec<Vec<f64>> = (0..10).map(|_| vec![rng.uniform(), rng.uniform()]).collect();
+        let xs: Vec<Vec<f64>> = (0..10)
+            .map(|_| vec![rng.uniform(), rng.uniform()])
+            .collect();
         assert!(median_heuristic(&xs) > 0.0);
     }
 
@@ -686,20 +726,29 @@ mod tests {
         // Posterior variance should be small at observed locations.
         let mut rng = Rng::new(42);
         let trials: Vec<Trial> = (0..10)
-            .map(|_| Trial { config: TrialConfig::random(&mut rng), metric: rng.uniform() })
+            .map(|_| Trial {
+                config: TrialConfig::random(&mut rng),
+                metric: rng.uniform(),
+            })
             .collect();
         let gp = GpModel::fit(&trials, OptimizeDirection::Maximize);
         let x_raw = config_to_gp_input(&trials[0].config);
         let x_norm = standardize(&x_raw, &gp.x_means, &gp.x_stds);
         let (_, sigma) = gp.predict(&x_norm);
-        assert!(sigma < 0.1, "expected low sigma near observed point, got {sigma}");
+        assert!(
+            sigma < 0.1,
+            "expected low sigma near observed point, got {sigma}"
+        );
     }
 
     #[test]
     fn test_gp_predict_returns_finite_values() {
         let mut rng = Rng::new(7);
         let trials: Vec<Trial> = (0..8)
-            .map(|_| Trial { config: TrialConfig::random(&mut rng), metric: rng.uniform() })
+            .map(|_| Trial {
+                config: TrialConfig::random(&mut rng),
+                metric: rng.uniform(),
+            })
             .collect();
         let gp = GpModel::fit(&trials, OptimizeDirection::Maximize);
         for _ in 0..20 {
@@ -707,7 +756,10 @@ mod tests {
             let x_norm = standardize(&x_raw, &gp.x_means, &gp.x_stds);
             let (mu, sigma) = gp.predict(&x_norm);
             assert!(mu.is_finite(), "mu should be finite");
-            assert!(sigma.is_finite() && sigma >= 0.0, "sigma should be finite and non-negative");
+            assert!(
+                sigma.is_finite() && sigma >= 0.0,
+                "sigma should be finite and non-negative"
+            );
         }
     }
 
@@ -715,7 +767,10 @@ mod tests {
     fn test_gp_ei_nonnegative() {
         let mut rng = Rng::new(123);
         let trials: Vec<Trial> = (0..8)
-            .map(|_| Trial { config: TrialConfig::random(&mut rng), metric: rng.uniform() })
+            .map(|_| Trial {
+                config: TrialConfig::random(&mut rng),
+                metric: rng.uniform(),
+            })
             .collect();
         let gp = GpModel::fit(&trials, OptimizeDirection::Maximize);
         for _ in 0..30 {
@@ -799,12 +854,18 @@ mod tests {
 
         let trials: Vec<Trial> = configs_and_metrics
             .iter()
-            .map(|&(lr, perp, metric)| Trial { config: make_config(lr, perp), metric })
+            .map(|&(lr, perp, metric)| Trial {
+                config: make_config(lr, perp),
+                metric,
+            })
             .collect();
         let gp = GpModel::fit(&trials, OptimizeDirection::Maximize);
 
         let ei_winner = gp.ei(&make_config(10.0, 20.0));
         let ei_loser = gp.ei(&make_config(0.5, 80.0));
-        assert!(ei_winner >= ei_loser, "EI near winner ({ei_winner:.4}) should be >= loser ({ei_loser:.4})");
+        assert!(
+            ei_winner >= ei_loser,
+            "EI near winner ({ei_winner:.4}) should be >= loser ({ei_loser:.4})"
+        );
     }
 }
