@@ -82,8 +82,16 @@ impl Evaluator {
             trustworthiness: trustworthiness(&self.high_dim_dist, &embedded_dist, n, k),
             continuity: continuity(&self.high_dim_dist, &embedded_dist, n, k),
             knn_overlap: knn_overlap(&self.high_dim_dist, &embedded_dist, n, k),
-            geodesic_distortion_gu2019: geodesic_distortion_gu2019(&self.high_dim_dist, &embedded_dist, n),
-            geodesic_distortion_mse: geodesic_distortion_mse(&self.high_dim_dist, &embedded_dist, n),
+            geodesic_distortion_gu2019: geodesic_distortion_gu2019(
+                &self.high_dim_dist,
+                &embedded_dist,
+                n,
+            ),
+            geodesic_distortion_mse: geodesic_distortion_mse(
+                &self.high_dim_dist,
+                &embedded_dist,
+                n,
+            ),
             davies_bouldin_ratio: davies_bouldin_ratio(
                 &self.high_dim_dist,
                 &projected.coords,
@@ -91,8 +99,16 @@ impl Evaluator {
                 n,
             ),
             dunn_index: dunn_index(&embedded_dist, &self.dataset.labels, n),
-            class_density_measure: class_density_measure(&projected.coords, &self.dataset.labels, n),
-            cluster_density_measure: cluster_density_measure(&projected.coords, &self.dataset.labels, n),
+            class_density_measure: class_density_measure(
+                &projected.coords,
+                &self.dataset.labels,
+                n,
+            ),
+            cluster_density_measure: cluster_density_measure(
+                &projected.coords,
+                &self.dataset.labels,
+                n,
+            ),
         }
     }
 

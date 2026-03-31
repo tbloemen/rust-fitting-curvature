@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::thread;
 
 use crate::data::Dataset;
-use crate::evaluate::{Evaluator, AllMetrics};
+use crate::evaluate::{AllMetrics, Evaluator};
 use crate::gp::GpOptimizer;
 use crate::search_space::{
     FIXED_EARLY_EXAG_ITERATIONS, FIXED_N_ITERATIONS, OptimizeDirection, SearchSpace, TrialConfig,
@@ -35,7 +35,7 @@ struct Args {
     #[arg(long, default_value = "3")]
     n_seeds: usize,
 
-    #[arg(long, default_value = "5000")]
+    #[arg(long, default_value = "1000")]
     n_samples: usize,
 
     /// Output file prefix. Each curvature/dataset session writes to <output>_<dataset>_k<curvature>.jsonl.
@@ -100,11 +100,11 @@ struct TrialResult {
     n_samples: usize,
     n_seeds: usize,
     n_trials_max: usize,
-    
+
     // Trial info
     curvature: f64,
     trial: usize,
-    
+
     // Hyperparameters
     learning_rate: f64,
     perplexity_ratio: f64,
@@ -113,12 +113,12 @@ struct TrialResult {
     centering_weight: f64,
     global_loss_weight: f64,
     norm_loss_weight: f64,
-    
+
     // Results (for optimize/scan modes - backward compatibility)
     metric_name: Option<String>,
     metric_mean: Option<f64>,
     metric_std: Option<f64>,
-    
+
     // Results (for random mode - all metrics)
     trustworthiness: Option<f64>,
     continuity: Option<f64>,
@@ -129,10 +129,10 @@ struct TrialResult {
     dunn_index: Option<f64>,
     class_density_measure: Option<f64>,
     cluster_density_measure: Option<f64>,
-    
+
     // Timing
     time_ms: u64,
-    
+
     // Legacy
     #[serde(skip_serializing_if = "Option::is_none")]
     scan_param: Option<String>,
@@ -161,7 +161,8 @@ fn run_random_search(
     evaluator: Arc<Evaluator>,
     mp: &MultiProgress,
 ) {
-    let mut rng = fitting_core::synthetic_data::Rng::new(curvature.to_bits() ^ 0xdead_beef_cafe_1111);
+    let mut rng =
+        fitting_core::synthetic_data::Rng::new(curvature.to_bits() ^ 0xdead_beef_cafe_1111);
 
     let out_path = output_path(&args.output, dataset_name, curvature);
     // For random mode, we append to existing files (enable long-running resumable searches)
@@ -196,7 +197,8 @@ fn run_random_search(
         let get_mean_std = |f: fn(&AllMetrics) -> f64| -> (f64, f64) {
             let values: Vec<f64> = all_metrics_list.iter().map(f).collect();
             let mean = values.iter().sum::<f64>() / args.n_seeds as f64;
-            let variance = values.iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / args.n_seeds as f64;
+            let variance =
+                values.iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / args.n_seeds as f64;
             (mean, variance.sqrt())
         };
 
@@ -260,7 +262,11 @@ fn run_session(
     evaluator: Arc<Evaluator>,
     mp: &MultiProgress,
 ) {
-    let metric_str_owned = args.metric.as_ref().cloned().unwrap_or_else(|| "unknown".to_string());
+    let metric_str_owned = args
+        .metric
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| "unknown".to_string());
     let metric_str = metric_str_owned.as_str();
     let direction = metric_direction(metric_str);
     let space = SearchSpace { direction };
@@ -388,7 +394,6 @@ fn run_session(
     }
 }
 
-
 // ─── Scan mode ────────────────────────────────────────────────────────────────
 
 /// Load the best TrialConfig from a JSONL file (by metric_mean).
@@ -447,7 +452,11 @@ fn run_scan(
     evaluator: Arc<Evaluator>,
     mp: &MultiProgress,
 ) {
-    let metric_str_owned = args.metric.as_ref().cloned().unwrap_or_else(|| "unknown".to_string());
+    let metric_str_owned = args
+        .metric
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| "unknown".to_string());
     let metric_str = metric_str_owned.as_str();
     let n_points = evaluator.n_points();
     // Default config (perplexity_ratio 0.003 ≈ perplexity 15 for n=5000)
@@ -513,7 +522,10 @@ fn run_scan(
     );
     pb.set_message(format!("{:+.1}", curvature));
 
-    let out_path = format!("{}_{}_k{:.1}_scan.jsonl", args.output, dataset_name, curvature);
+    let out_path = format!(
+        "{}_{}_k{:.1}_scan.jsonl",
+        args.output, dataset_name, curvature
+    );
     if Path::new(&out_path).exists() {
         std::fs::remove_file(&out_path).ok();
     }
@@ -540,7 +552,8 @@ fn run_scan(
             let mut metrics = Vec::with_capacity(args.n_seeds);
             for seed_idx in 0..args.n_seeds {
                 let seed = 42 + trial_idx as u64 * 100 + seed_idx as u64;
-                let m = evaluator.evaluate_with_metric(&config, curvature, metric_str, seed, &pb_iters);
+                let m =
+                    evaluator.evaluate_with_metric(&config, curvature, metric_str, seed, &pb_iters);
                 metrics.push(m);
             }
 
@@ -669,7 +682,10 @@ fn main() {
             println!("Output prefix: {}", args.output);
         }
         other => {
-            eprintln!("Unknown --mode '{}'. Use 'optimize', 'scan', or 'random'.", other);
+            eprintln!(
+                "Unknown --mode '{}'. Use 'optimize', 'scan', or 'random'.",
+                other
+            );
             std::process::exit(1);
         }
     }
