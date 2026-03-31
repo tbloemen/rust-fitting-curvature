@@ -139,7 +139,7 @@ struct TrialResult {
 }
 
 fn output_path(prefix: &str, dataset_name: &str, curvature: f64) -> String {
-    format!("{}_{}_k{:.1}.jsonl", prefix, dataset_name, curvature)
+    format!("{}_{}_k{:.1}.jsonl", prefix, dataset_name, curvature).replace('.', "_")
 }
 
 fn write_result(result: &TrialResult, out_path: &str) {
