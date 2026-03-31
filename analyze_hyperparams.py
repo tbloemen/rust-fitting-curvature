@@ -1,15 +1,21 @@
 """
 Hyperparameter sensitivity analysis for fitting-curvature optimizer results.
 
-Produces SVG plots:
+--mode optimize (default)
   1. spearman_heatmap.svg         — Spearman ρ per (parameter × curvature)
   2. param_importance.svg         — Mean |ρ| across curvatures (bar chart)
   3. param_<name>_vs_metric.svg   — Per-parameter scatter vs metric, one series per curvature
   4. convergence.svg              — Best metric found vs trial number per curvature
   5. pairwise_top<N>.svg          — Pairwise scatter for the top-N most important parameters
 
+--mode scan
+  1. scan_effects.svg             — Clean effect curve per parameter (metric vs swept value)
+  2. scan_sensitivity.svg         — Heatmap of metric range (max−min) per (parameter × curvature)
+  3. scan_optimal.svg             — Where in the sweep range the optimum sits per (param × curvature)
+
 Usage:
     uv run analyze_hyperparams.py
+    uv run analyze_hyperparams.py --mode scan --input results --output plots/
     uv run analyze_hyperparams.py --input results --output plots/ --top-pairs 5
 """
 
@@ -524,12 +530,267 @@ def plot_pairwise_interactions(
     print(f"  {out_path}")
 
 
+# ─── Scan data loading ────────────────────────────────────────────────────────
+
+def load_scan_results(prefix: str) -> list[dict]:
+    """Load all scan JSONL files matching <prefix>_k<curvature>_scan.jsonl."""
+    records = []
+    for k in CURVATURES:
+        path = f"{prefix}_k{k:.1f}_scan.jsonl"
+        if not Path(path).exists():
+            continue
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        records.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+    return records
+
+
+def _scan_params_ordered(records: list[dict]) -> list[str]:
+    """Return scan parameters in the order they first appear in the data."""
+    seen: list[str] = []
+    for r in records:
+        p = r.get("scan_param")
+        if p and p not in seen:
+            seen.append(p)
+    return seen
+
+
+def _base_config(records: list[dict], sweep_param: str, curvature: float) -> dict:
+    """
+    Recover the base (fixed) config for a curvature by reading the non-swept
+    parameter values from any record where a *different* parameter is being swept.
+    """
+    for r in records:
+        if r["curvature"] == curvature and r.get("scan_param") != sweep_param:
+            return r
+    return {}
+
+
+# ─── Scan plot 1: effect curves ───────────────────────────────────────────────
+
+def plot_scan_effects(records: list[dict], out_path: str) -> None:
+    """
+    One subplot per swept parameter. Each subplot shows metric_mean vs parameter
+    value with a ±1 std error band, one line per curvature. A vertical dashed
+    line marks the base-config value for that parameter.
+    """
+    all_ks = sorted({r["curvature"] for r in records})
+    sweep_params = _scan_params_ordered(records)
+    n_params = len(sweep_params)
+    if n_params == 0:
+        print(f"  {out_path} (skipped — no scan_param field found)")
+        return
+
+    ncols = min(3, n_params)
+    nrows = math.ceil(n_params / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 4.5, nrows * 3.4))
+    axes_flat = np.array(axes).flatten() if n_params > 1 else [axes]
+
+    cat_labels = {0: "None", 1: "HardBarrier", 2: "Softplus", 3: "Rms", 4: "MeanDist"}
+
+    for ax, param in zip(axes_flat, sweep_params):
+        is_log = param in LOG_SCALE_PARAMS
+        is_cat = param == "scaling_loss"
+
+        for k in all_ks:
+            group = sorted(
+                [r for r in records if r["curvature"] == k and r.get("scan_param") == param],
+                key=lambda r: r[param],
+            )
+            if not group:
+                continue
+
+            xs = np.array([r[param] for r in group])
+            ys = np.array([r["metric_mean"] for r in group])
+            errs = np.array([r.get("metric_std", 0.0) for r in group])
+            col = k_color(k, all_ks)
+
+            ax.plot(xs, ys, color=col, linewidth=1.8, label=f"k={k:+.1f}", marker="o",
+                    markersize=3.5, zorder=3)
+            ax.fill_between(xs, ys - errs, ys + errs, color=col, alpha=0.12)
+
+        # Mark base-config value with a vertical dashed line.
+        # Read it from a record where a different param is swept.
+        base = _base_config(records, param, all_ks[0])
+        if param in base:
+            ax.axvline(base[param], color="black", linestyle=":", linewidth=1.2,
+                       alpha=0.6, label="base config")
+
+        if is_log:
+            ax.set_xscale("log")
+        if is_cat:
+            ax.set_xticks(list(cat_labels.keys()))
+            ax.set_xticklabels(list(cat_labels.values()), fontsize=7, rotation=20)
+
+        ax.set_title(param, fontsize=9)
+        ax.set_xlabel(param + (" (log)" if is_log else ""), fontsize=7)
+        ax.set_ylabel("metric_mean", fontsize=7)
+        ax.tick_params(labelsize=7)
+
+    # Hide unused subplots
+    for ax in axes_flat[n_params:]:
+        ax.set_visible(False)
+
+    # Shared legend (curvature lines)
+    handles, labels = axes_flat[0].get_legend_handles_labels()
+    fig.legend(handles, labels, fontsize=7, ncol=min(5, len(all_ks) + 1),
+               loc="lower center", bbox_to_anchor=(0.5, -0.02))
+
+    fig.suptitle("Scan: effect of each parameter on metric (others fixed at base config)",
+                 fontsize=10)
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
+# ─── Scan plot 2: sensitivity heatmap ─────────────────────────────────────────
+
+def plot_scan_sensitivity(records: list[dict], out_path: str) -> None:
+    """
+    Heatmap of metric range (max − min) across the sweep, for each
+    (parameter × curvature). Larger range = more sensitive to that parameter.
+    """
+    all_ks = sorted({r["curvature"] for r in records})
+    sweep_params = _scan_params_ordered(records)
+    if not sweep_params:
+        return
+
+    matrix = np.full((len(sweep_params), len(all_ks)), np.nan)
+    for i, param in enumerate(sweep_params):
+        for j, k in enumerate(all_ks):
+            group = [r for r in records if r["curvature"] == k and r.get("scan_param") == param]
+            if len(group) < 2:
+                continue
+            vals = [r["metric_mean"] for r in group]
+            matrix[i, j] = max(vals) - min(vals)
+
+    fig, ax = plt.subplots(figsize=(len(all_ks) * 0.95 + 2.0, len(sweep_params) * 0.55 + 1.8))
+
+    vmax = np.nanmax(matrix) if not np.all(np.isnan(matrix)) else 1.0
+    im = ax.imshow(matrix, cmap="YlOrRd", vmin=0, vmax=vmax, aspect="auto")
+
+    ax.set_xticks(range(len(all_ks)))
+    ax.set_xticklabels([f"k={k:+.1f}" for k in all_ks], rotation=45, ha="right")
+    ax.set_yticks(range(len(sweep_params)))
+    ax.set_yticklabels(sweep_params)
+
+    for i in range(len(sweep_params)):
+        for j in range(len(all_ks)):
+            if not np.isnan(matrix[i, j]):
+                color = "white" if matrix[i, j] > vmax * 0.6 else "black"
+                ax.text(j, i, f"{matrix[i, j]:.3f}", ha="center", va="center",
+                        fontsize=8, color=color)
+
+    plt.colorbar(im, ax=ax, label="metric range (max − min)", fraction=0.03, pad=0.02)
+    ax.set_title("Scan sensitivity: metric range per (parameter × curvature)\n"
+                 "larger = more impact when this parameter is varied", pad=10)
+    fig.tight_layout()
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
+# ─── Scan plot 3: optimal value location ──────────────────────────────────────
+
+def plot_scan_optimal(records: list[dict], out_path: str) -> None:
+    """
+    For each (parameter × curvature), show where in the sweep range the optimum
+    lies, normalised to [0, 1] (0 = low end of range, 1 = high end).
+    Discrete parameters show the optimal category index.
+    Helps answer: "is the optimum always near the boundary, or in the interior?"
+    """
+    all_ks = sorted({r["curvature"] for r in records})
+    sweep_params = _scan_params_ordered(records)
+    if not sweep_params:
+        return
+
+    # Two matrices: normalised optimal position, and actual optimal value
+    pos_matrix = np.full((len(sweep_params), len(all_ks)), np.nan)
+    val_matrix = np.full((len(sweep_params), len(all_ks)), np.nan)
+
+    for i, param in enumerate(sweep_params):
+        for j, k in enumerate(all_ks):
+            group = sorted(
+                [r for r in records if r["curvature"] == k and r.get("scan_param") == param],
+                key=lambda r: r[param],
+            )
+            if not group:
+                continue
+            xs = [r[param] for r in group]
+            ys = [r["metric_mean"] for r in group]
+            best_idx = int(np.argmax(ys))
+            val_matrix[i, j] = ys[best_idx]
+            # Normalise position: 0 = lowest x, 1 = highest x
+            x_min, x_max = min(xs), max(xs)
+            if x_max > x_min:
+                pos_matrix[i, j] = (xs[best_idx] - x_min) / (x_max - x_min)
+            else:
+                pos_matrix[i, j] = 0.5
+
+    fig, axes = plt.subplots(1, 2, figsize=(len(all_ks) * 1.6 + 2.5, len(sweep_params) * 0.6 + 2.2))
+
+    # Left: optimal position (0=low end, 1=high end)
+    # Diverging colormap centred at 0.5 highlights boundary-sitting optima
+    im0 = axes[0].imshow(pos_matrix, cmap="RdYlGn", vmin=0, vmax=1, aspect="auto")
+    axes[0].set_xticks(range(len(all_ks)))
+    axes[0].set_xticklabels([f"k={k:+.1f}" for k in all_ks], rotation=45, ha="right")
+    axes[0].set_yticks(range(len(sweep_params)))
+    axes[0].set_yticklabels(sweep_params)
+    for i in range(len(sweep_params)):
+        for j in range(len(all_ks)):
+            if not np.isnan(pos_matrix[i, j]):
+                v = pos_matrix[i, j]
+                color = "black" if 0.25 < v < 0.75 else "white"
+                axes[0].text(j, i, f"{v:.2f}", ha="center", va="center",
+                             fontsize=8, color=color)
+    plt.colorbar(im0, ax=axes[0], label="normalised position of optimum\n(0=low end, 1=high end)",
+                 fraction=0.04, pad=0.02)
+    axes[0].set_title("Where is the optimum?\n(red=low end, green=high end, yellow=interior)")
+
+    # Right: best metric value achieved
+    vmin2 = np.nanmin(val_matrix)
+    vmax2 = np.nanmax(val_matrix)
+    im1 = axes[1].imshow(val_matrix, cmap="Blues", vmin=vmin2, vmax=vmax2, aspect="auto")
+    axes[1].set_xticks(range(len(all_ks)))
+    axes[1].set_xticklabels([f"k={k:+.1f}" for k in all_ks], rotation=45, ha="right")
+    axes[1].set_yticks(range(len(sweep_params)))
+    axes[1].set_yticklabels([""] * len(sweep_params))
+    for i in range(len(sweep_params)):
+        for j in range(len(all_ks)):
+            if not np.isnan(val_matrix[i, j]):
+                v = val_matrix[i, j]
+                color = "white" if v > vmin2 + (vmax2 - vmin2) * 0.6 else "black"
+                axes[1].text(j, i, f"{v:.3f}", ha="center", va="center",
+                             fontsize=8, color=color)
+    plt.colorbar(im1, ax=axes[1], label="best metric value in sweep",
+                 fraction=0.04, pad=0.02)
+    axes[1].set_title("Best metric achieved\nat the optimal sweep point")
+
+    fig.suptitle("Scan: optimal sweep point per (parameter × curvature)", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Hyperparameter sensitivity analysis for fitting-curvature"
+    )
+    parser.add_argument(
+        "--mode",
+        default="optimize",
+        choices=["optimize", "scan"],
+        help="Analysis mode: 'optimize' (default) or 'scan'",
     )
     parser.add_argument(
         "--input",
@@ -551,6 +812,26 @@ def main() -> None:
 
     os.makedirs(args.output, exist_ok=True)
 
+    if args.mode == "scan":
+        print(f"Loading scan results from '{args.input}_k*_scan.jsonl' ...")
+        records = load_scan_results(args.input)
+        if not records:
+            print("No scan results found. Run the optimizer with --mode scan first.")
+            return
+        n_curvatures = len({r["curvature"] for r in records})
+        sweep_params = _scan_params_ordered(records)
+        print(f"Loaded {len(records)} scan records across {n_curvatures} curvatures.")
+        print(f"Parameters swept: {sweep_params}\n")
+
+        print("Generating scan plots:")
+        plot_scan_effects(records, os.path.join(args.output, "scan_effects.svg"))
+        plot_scan_sensitivity(records, os.path.join(args.output, "scan_sensitivity.svg"))
+        plot_scan_optimal(records, os.path.join(args.output, "scan_optimal.svg"))
+
+        print(f"\nDone. All plots saved to '{args.output}/'.")
+        return
+
+    # ── optimize mode ──────────────────────────────────────────────────────────
     print(f"Loading results from '{args.input}_k*.jsonl' ...")
     records = load_results(args.input)
     if not records:
