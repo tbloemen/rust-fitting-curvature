@@ -1,4 +1,5 @@
 pub mod affinities;
+pub mod curvature_detection;
 pub mod config;
 pub mod data;
 pub mod embedding;

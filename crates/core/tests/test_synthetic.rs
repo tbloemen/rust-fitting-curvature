@@ -135,7 +135,7 @@ fn test_spherical_distances_diagonal_zero() {
 
 #[test]
 fn test_uniform_hyperbolic_shape() {
-    let data = generate_uniform_hyperbolic(50, 42);
+    let data = generate_uniform_hyperbolic(50, 42, 3.0);
     assert_eq!(data.n_points, 50);
     assert_eq!(data.ambient_dim, 3);
     assert_eq!(data.distances.len(), 50 * 50);
@@ -143,7 +143,7 @@ fn test_uniform_hyperbolic_shape() {
 
 #[test]
 fn test_hyperbolic_points_on_hyperboloid() {
-    let data = generate_uniform_hyperbolic(50, 42);
+    let data = generate_uniform_hyperbolic(50, 42, 3.0);
     for i in 0..50 {
         let x0 = data.x[i * 3];
         let x1 = data.x[i * 3 + 1];
@@ -159,7 +159,7 @@ fn test_hyperbolic_points_on_hyperboloid() {
 
 #[test]
 fn test_hyperbolic_distances_match_acosh() {
-    let data = generate_uniform_hyperbolic(30, 42);
+    let data = generate_uniform_hyperbolic(30, 42, 3.0);
     let d = &data.distances;
     let n = 30;
 
@@ -178,7 +178,7 @@ fn test_hyperbolic_distances_match_acosh() {
 
 #[test]
 fn test_hyperbolic_distances_symmetric() {
-    let data = generate_uniform_hyperbolic(30, 42);
+    let data = generate_uniform_hyperbolic(30, 42, 3.0);
     let d = &data.distances;
     let n = 30;
     for i in 0..n {
