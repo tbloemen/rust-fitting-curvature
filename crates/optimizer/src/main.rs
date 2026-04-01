@@ -12,6 +12,7 @@ use crate::evaluate::{AllMetrics, Evaluator};
 use crate::gp::GpOptimizer;
 use crate::search_space::{
     FIXED_EARLY_EXAG_ITERATIONS, FIXED_N_ITERATIONS, OptimizeDirection, SearchSpace, TrialConfig,
+    scaling_loss_name,
 };
 
 mod data;
@@ -39,7 +40,7 @@ struct Args {
     n_samples: usize,
 
     /// Output file prefix. Each curvature/dataset session writes to <output>_<dataset>_k<curvature>.jsonl.
-    #[arg(long, default_value = "results")]
+    #[arg(long, default_value = "results/results")]
     output: String,
 
     #[arg(long)]
@@ -92,34 +93,23 @@ fn metric_direction(name: &str) -> OptimizeDirection {
     }
 }
 
+// ─── Trial result output ─────────────────────────────────────────────────────
+
 #[derive(Debug, Serialize)]
 struct TrialResult {
-    // Metadata
     dataset_name: String,
-    data_path: String,
     n_samples: usize,
     n_seeds: usize,
-    n_trials_max: usize,
-
-    // Trial info
     curvature: f64,
-    trial: usize,
 
-    // Hyperparameters
     learning_rate: f64,
     perplexity_ratio: f64,
     momentum_main: f64,
-    scaling_loss: u8,
+    scaling_loss: String,
     centering_weight: f64,
     global_loss_weight: f64,
     norm_loss_weight: f64,
 
-    // Results (for optimize/scan modes - backward compatibility)
-    metric_name: Option<String>,
-    metric_mean: Option<f64>,
-    metric_std: Option<f64>,
-
-    // Results (for random mode - all metrics)
     trustworthiness: Option<f64>,
     continuity: Option<f64>,
     knn_overlap: Option<f64>,
@@ -130,12 +120,59 @@ struct TrialResult {
     class_density_measure: Option<f64>,
     cluster_density_measure: Option<f64>,
 
-    // Timing
     time_ms: u64,
 
-    // Legacy
     #[serde(skip_serializing_if = "Option::is_none")]
     scan_param: Option<String>,
+}
+
+impl TrialResult {
+    fn new(
+        config: &TrialConfig,
+        dataset_name: &str,
+        n_samples: usize,
+        n_seeds: usize,
+        curvature: f64,
+        time_ms: u64,
+    ) -> Self {
+        Self {
+            dataset_name: dataset_name.to_string(),
+            n_samples,
+            n_seeds,
+            curvature,
+            learning_rate: config.learning_rate,
+            perplexity_ratio: config.perplexity_ratio,
+            momentum_main: config.momentum_main,
+            scaling_loss: scaling_loss_name(config.scaling_loss).to_string(),
+            centering_weight: config.centering_weight,
+            global_loss_weight: config.global_loss_weight,
+            norm_loss_weight: config.norm_loss_weight,
+            trustworthiness: None,
+            continuity: None,
+            knn_overlap: None,
+            geodesic_distortion_gu2019: None,
+            geodesic_distortion_mse: None,
+            davies_bouldin_ratio: None,
+            dunn_index: None,
+            class_density_measure: None,
+            cluster_density_measure: None,
+            time_ms,
+            scan_param: None,
+        }
+    }
+
+    fn with_all_metrics(mut self, m: &AggregatedMetrics) -> Self {
+        self.trustworthiness = Some(m.trustworthiness);
+        self.continuity = Some(m.continuity);
+        self.knn_overlap = Some(m.knn_overlap);
+        self.geodesic_distortion_gu2019 = Some(m.geodesic_distortion_gu2019);
+        self.geodesic_distortion_mse = Some(m.geodesic_distortion_mse);
+        self.davies_bouldin_ratio = Some(m.davies_bouldin_ratio);
+        self.dunn_index = Some(m.dunn_index);
+        self.class_density_measure = Some(m.class_density_measure);
+        self.cluster_density_measure = Some(m.cluster_density_measure);
+        self
+    }
 }
 
 fn output_path(prefix: &str, dataset_name: &str, curvature: f64) -> String {
@@ -152,125 +189,109 @@ fn write_result(result: &TrialResult, out_path: &str) {
     writeln!(file, "{}", json).ok();
 }
 
-// ─── Random Search Mode ────────────────────────────────────────────────────
+// ─── Shared evaluation helpers ───────────────────────────────────────────────
 
-fn run_random_search(
-    curvature: f64,
-    dataset_name: &str,
-    args: &Args,
-    evaluator: Arc<Evaluator>,
-    mp: &MultiProgress,
-) {
-    let mut rng =
-        fitting_core::synthetic_data::Rng::new(curvature.to_bits() ^ 0xdead_beef_cafe_1111);
-
-    let out_path = output_path(&args.output, dataset_name, curvature);
-    // For random mode, we append to existing files (enable long-running resumable searches)
-    // No need to delete old results
-
-    let trial_style = ProgressStyle::with_template(
-        "{spinner:.green} {msg} [{bar:35.cyan/blue}] {pos}/{len} | {wide_msg}",
-    )
-    .unwrap()
-    .progress_chars("=>-");
-
-    let pb = mp.add(ProgressBar::new(args.max_trials as u64));
-    pb.set_style(trial_style);
-    pb.set_message(format!("k={:+.1} dataset={}", curvature, dataset_name));
-
-    let pb_iters = ProgressBar::hidden();
-
-    for trial_idx in 1..=args.max_trials {
-        let start = std::time::Instant::now();
-        let config = TrialConfig::random(&mut rng);
-
-        let mut all_metrics_list = Vec::with_capacity(args.n_seeds);
-        for seed_idx in 0..args.n_seeds {
-            let seed = 42 + trial_idx as u64 * 100 + seed_idx as u64;
-            let metrics = evaluator.compute_all_metrics(&config, curvature, seed, &pb_iters);
-            all_metrics_list.push(metrics);
-        }
-
-        let elapsed = start.elapsed().as_millis() as u64;
-
-        // Aggregate metrics across seeds (mean and std)
-        let get_mean_std = |f: fn(&AllMetrics) -> f64| -> (f64, f64) {
-            let values: Vec<f64> = all_metrics_list.iter().map(f).collect();
-            let mean = values.iter().sum::<f64>() / args.n_seeds as f64;
-            let variance =
-                values.iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / args.n_seeds as f64;
-            (mean, variance.sqrt())
-        };
-
-        let (trust_mean, _trust_std) = get_mean_std(|m| m.trustworthiness);
-        let (cont_mean, _cont_std) = get_mean_std(|m| m.continuity);
-        let (knn_mean, _knn_std) = get_mean_std(|m| m.knn_overlap);
-        let (gd_gu_mean, _gd_gu_std) = get_mean_std(|m| m.geodesic_distortion_gu2019);
-        let (gd_mse_mean, _gd_mse_std) = get_mean_std(|m| m.geodesic_distortion_mse);
-        let (db_mean, db_std) = get_mean_std(|m| m.davies_bouldin_ratio);
-        let (dunn_mean, _dunn_std) = get_mean_std(|m| m.dunn_index);
-        let (cdm_mean, _cdm_std) = get_mean_std(|m| m.class_density_measure);
-        let (cldm_mean, _cldm_std) = get_mean_std(|m| m.cluster_density_measure);
-
-        let result = TrialResult {
-            dataset_name: dataset_name.to_string(),
-            data_path: args.data_path.clone(),
-            n_samples: args.n_samples,
-            n_seeds: args.n_seeds,
-            n_trials_max: args.max_trials,
-            curvature,
-            trial: trial_idx,
-            learning_rate: config.learning_rate,
-            perplexity_ratio: config.perplexity_ratio,
-            momentum_main: config.momentum_main,
-            scaling_loss: config.scaling_loss,
-            centering_weight: config.centering_weight,
-            global_loss_weight: config.global_loss_weight,
-            norm_loss_weight: config.norm_loss_weight,
-            metric_name: None,
-            metric_mean: None,
-            metric_std: None,
-            trustworthiness: Some(trust_mean),
-            continuity: Some(cont_mean),
-            knn_overlap: Some(knn_mean),
-            geodesic_distortion_gu2019: Some(gd_gu_mean),
-            geodesic_distortion_mse: Some(gd_mse_mean),
-            davies_bouldin_ratio: Some(db_mean),
-            dunn_index: Some(dunn_mean),
-            class_density_measure: Some(cdm_mean),
-            cluster_density_measure: Some(cldm_mean),
-            time_ms: elapsed,
-            scan_param: None,
-        };
-
-        write_result(&result, &out_path);
-
-        pb.set_message(format!(
-            "k={:+.1} trial {:4} | db_ratio={:.4} ± {:.4} | trust={:.4} | {}ms",
-            curvature, trial_idx, db_mean, db_std, trust_mean, elapsed
-        ));
-        pb.inc(1);
-    }
-
-    pb.finish_with_message(format!("k={:+.1} dataset={} done", curvature, dataset_name));
+fn trial_seed(trial_idx: usize, seed_idx: usize) -> u64 {
+    42 + trial_idx as u64 * 100 + seed_idx as u64
 }
 
-fn run_session(
+fn mean_std(values: &[f64]) -> (f64, f64) {
+    let n = values.len() as f64;
+    let mean = values.iter().sum::<f64>() / n;
+    let variance = values.iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / n;
+    (mean, variance.sqrt())
+}
+
+/// Run a single metric evaluation over multiple seeds, returning (mean, std).
+fn eval_single_metric(
+    evaluator: &Evaluator,
+    config: &TrialConfig,
+    curvature: f64,
+    metric: &str,
+    n_seeds: usize,
+    trial_idx: usize,
+    pb_iters: &ProgressBar,
+) -> (f64, f64) {
+    let values: Vec<f64> = (0..n_seeds)
+        .map(|si| {
+            evaluator.evaluate_with_metric(
+                config,
+                curvature,
+                metric,
+                trial_seed(trial_idx, si),
+                pb_iters,
+            )
+        })
+        .collect();
+    mean_std(&values)
+}
+
+/// Mean of each metric field across multiple AllMetrics samples.
+struct AggregatedMetrics {
+    trustworthiness: f64,
+    continuity: f64,
+    knn_overlap: f64,
+    geodesic_distortion_gu2019: f64,
+    geodesic_distortion_mse: f64,
+    davies_bouldin_ratio: f64,
+    dunn_index: f64,
+    class_density_measure: f64,
+    cluster_density_measure: f64,
+}
+
+fn eval_all_metrics(
+    evaluator: &Evaluator,
+    config: &TrialConfig,
+    curvature: f64,
+    n_seeds: usize,
+    trial_idx: usize,
+    pb_iters: &ProgressBar,
+) -> AggregatedMetrics {
+    let samples: Vec<AllMetrics> = (0..n_seeds)
+        .map(|si| {
+            evaluator.compute_all_metrics(config, curvature, trial_seed(trial_idx, si), pb_iters)
+        })
+        .collect();
+
+    let avg = |f: fn(&AllMetrics) -> f64| -> f64 {
+        samples.iter().map(f).sum::<f64>() / samples.len() as f64
+    };
+
+    AggregatedMetrics {
+        trustworthiness: avg(|m| m.trustworthiness),
+        continuity: avg(|m| m.continuity),
+        knn_overlap: avg(|m| m.knn_overlap),
+        geodesic_distortion_gu2019: avg(|m| m.geodesic_distortion_gu2019),
+        geodesic_distortion_mse: avg(|m| m.geodesic_distortion_mse),
+        davies_bouldin_ratio: avg(|m| m.davies_bouldin_ratio),
+        dunn_index: avg(|m| m.dunn_index),
+        class_density_measure: avg(|m| m.class_density_measure),
+        cluster_density_measure: avg(|m| m.cluster_density_measure),
+    }
+}
+
+fn make_progress_bar(mp: &MultiProgress, total: u64, template: &str) -> ProgressBar {
+    let pb = mp.add(ProgressBar::new(total));
+    pb.set_style(
+        ProgressStyle::with_template(template)
+            .unwrap()
+            .progress_chars("=>-"),
+    );
+    pb
+}
+
+// ─── Optimize mode ───────────────────────────────────────────────────────────
+
+fn run_optimize(
     curvature: f64,
     dataset_name: &str,
     args: &Args,
     evaluator: Arc<Evaluator>,
     mp: &MultiProgress,
 ) {
-    let metric_str_owned = args
-        .metric
-        .as_ref()
-        .cloned()
-        .unwrap_or_else(|| "unknown".to_string());
-    let metric_str = metric_str_owned.as_str();
-    let direction = metric_direction(metric_str);
-    let space = SearchSpace { direction };
-    let mut optimizer = GpOptimizer::new(space);
+    let metric = args.metric.as_deref().unwrap();
+    let direction = metric_direction(metric);
+    let mut optimizer = GpOptimizer::new(SearchSpace { direction });
     let mut rng =
         fitting_core::synthetic_data::Rng::new(curvature.to_bits() ^ 0xdead_beef_cafe_0000);
 
@@ -279,69 +300,34 @@ fn run_session(
         std::fs::remove_file(&out_path).ok();
     }
 
-    let trial_style = ProgressStyle::with_template(
+    let pb = make_progress_bar(
+        mp,
+        args.n_trials as u64,
         "{spinner:.green} k={msg} [{bar:35.cyan/blue}] {pos}/{len} | best: {prefix}",
-    )
-    .unwrap()
-    .progress_chars("=>-");
-
-    let pb = mp.add(ProgressBar::new(args.n_trials as u64));
-    pb.set_style(trial_style);
+    );
     pb.set_message(format!("{:+.1}", curvature));
     pb.set_prefix("n/a");
-
     let pb_iters = ProgressBar::hidden();
 
     for trial_idx in 1..=args.n_trials {
         let start = std::time::Instant::now();
         let config = optimizer.suggest(&mut rng);
-
-        let mut metrics = Vec::with_capacity(args.n_seeds);
-        for seed_idx in 0..args.n_seeds {
-            let seed = 42 + trial_idx as u64 * 100 + seed_idx as u64;
-            let m = evaluator.evaluate_with_metric(&config, curvature, metric_str, seed, &pb_iters);
-            metrics.push(m);
-        }
-
-        let mean = metrics.iter().sum::<f64>() / args.n_seeds as f64;
-        let variance =
-            metrics.iter().map(|&m| (m - mean).powi(2)).sum::<f64>() / args.n_seeds as f64;
-        let std = variance.sqrt();
+        let (mean, std) = eval_single_metric(
+            &evaluator,
+            &config,
+            curvature,
+            metric,
+            args.n_seeds,
+            trial_idx,
+            &pb_iters,
+        );
 
         optimizer.observe(config.clone(), mean);
         let elapsed = start.elapsed().as_millis() as u64;
 
-        let result = TrialResult {
-            dataset_name: dataset_name.to_string(),
-            data_path: args.data_path.clone(),
-            n_samples: args.n_samples,
-            n_seeds: args.n_seeds,
-            n_trials_max: args.n_trials,
-            curvature,
-            trial: trial_idx,
-            learning_rate: config.learning_rate,
-            perplexity_ratio: config.perplexity_ratio,
-            momentum_main: config.momentum_main,
-            scaling_loss: config.scaling_loss,
-            centering_weight: config.centering_weight,
-            global_loss_weight: config.global_loss_weight,
-            norm_loss_weight: config.norm_loss_weight,
-            metric_name: Some(metric_str.to_string()),
-            metric_mean: Some(mean),
-            metric_std: Some(std),
-            trustworthiness: None,
-            continuity: None,
-            knn_overlap: None,
-            geodesic_distortion_gu2019: None,
-            geodesic_distortion_mse: None,
-            davies_bouldin_ratio: None,
-            dunn_index: None,
-            class_density_measure: None,
-            cluster_density_measure: None,
-            time_ms: elapsed,
-            scan_param: None,
-        };
-
+        let result = TrialResult::new(
+            &config, dataset_name, args.n_samples, args.n_seeds, curvature, elapsed,
+        );
         write_result(&result, &out_path);
 
         let best = optimizer.best_trial();
@@ -352,7 +338,7 @@ fn run_session(
              | lr={:.4} perp={:.1} (ratio={:.4}) sl={} cw={:.3} glw={:.2} nw={:.4}",
             curvature,
             trial_idx,
-            metric_str,
+            metric,
             mean,
             std,
             best,
@@ -378,7 +364,7 @@ fn run_session(
              n_iter={}  ee_iter={}\n  \
              scaling_loss={}  centering={:.3}  global_loss={:.3}  norm={:.4}",
             curvature,
-            metric_str,
+            metric,
             optimizer.best_trial(),
             best_config.learning_rate,
             best_perp,
@@ -394,11 +380,10 @@ fn run_session(
     }
 }
 
-// ─── Scan mode ────────────────────────────────────────────────────────────────
+// ─── Scan mode ───────────────────────────────────────────────────────────────
 
 /// Load the best TrialConfig from a JSONL file (by metric_mean).
 /// Handles both old format (absolute `perplexity`) and new format (`perplexity_ratio`).
-/// `n_points` is used to convert old-format absolute perplexity to a ratio.
 fn load_best_config_from_jsonl(path: &str, n_points: usize) -> Option<TrialConfig> {
     let content = std::fs::read_to_string(path).ok()?;
     let mut best_val = f64::NEG_INFINITY;
@@ -409,7 +394,6 @@ fn load_best_config_from_jsonl(path: &str, n_points: usize) -> Option<TrialConfi
         let metric = v["metric_mean"].as_f64().unwrap_or(f64::NEG_INFINITY);
         if metric > best_val {
             best_val = metric;
-            // Prefer new-format perplexity_ratio; fall back to old absolute perplexity / n_points.
             let perplexity_ratio = v["perplexity_ratio"]
                 .as_f64()
                 .unwrap_or_else(|| v["perplexity"].as_f64().unwrap_or(15.0) / n_points as f64);
@@ -417,7 +401,13 @@ fn load_best_config_from_jsonl(path: &str, n_points: usize) -> Option<TrialConfi
                 learning_rate: v["learning_rate"].as_f64().unwrap_or(10.0),
                 perplexity_ratio,
                 momentum_main: v["momentum_main"].as_f64().unwrap_or(0.8),
-                scaling_loss: v["scaling_loss"].as_u64().unwrap_or(0) as u8,
+                scaling_loss: match v["scaling_loss"].as_str() {
+                    Some("hard_barrier") => 1,
+                    Some("softplus_barrier") => 2,
+                    Some("rms") => 3,
+                    Some("mean_distance") => 4,
+                    Some(_) | None => v["scaling_loss"].as_u64().unwrap_or(0) as u8,
+                },
                 centering_weight: v["centering_weight"].as_f64().unwrap_or(0.0),
                 global_loss_weight: v["global_loss_weight"].as_f64().unwrap_or(0.0),
                 norm_loss_weight: v["norm_loss_weight"].as_f64().unwrap_or(0.0),
@@ -445,6 +435,19 @@ fn sweep_values(lo: f64, hi: f64, n: usize, log: bool) -> Vec<f64> {
         .collect()
 }
 
+fn apply_param(config: &mut TrialConfig, param: &str, val: f64) {
+    match param {
+        "learning_rate" => config.learning_rate = val,
+        "perplexity_ratio" => config.perplexity_ratio = val,
+        "momentum_main" => config.momentum_main = val,
+        "scaling_loss" => config.scaling_loss = val as u8,
+        "centering_weight" => config.centering_weight = val,
+        "global_loss_weight" => config.global_loss_weight = val,
+        "norm_loss_weight" => config.norm_loss_weight = val,
+        _ => unreachable!(),
+    }
+}
+
 fn run_scan(
     curvature: f64,
     dataset_name: &str,
@@ -452,14 +455,9 @@ fn run_scan(
     evaluator: Arc<Evaluator>,
     mp: &MultiProgress,
 ) {
-    let metric_str_owned = args
-        .metric
-        .as_ref()
-        .cloned()
-        .unwrap_or_else(|| "unknown".to_string());
-    let metric_str = metric_str_owned.as_str();
+    let metric = args.metric.as_deref().unwrap();
     let n_points = evaluator.n_points();
-    // Default config (perplexity_ratio 0.003 ≈ perplexity 15 for n=5000)
+
     let default_config = TrialConfig {
         learning_rate: 10.0,
         perplexity_ratio: 0.003,
@@ -470,36 +468,27 @@ fn run_scan(
         norm_loss_weight: 0.0,
     };
 
-    // Load base config from previous optimization run.
     let base = if let Some(prefix) = &args.scan_from {
         let path = output_path(prefix, dataset_name, curvature);
         match load_best_config_from_jsonl(&path, n_points) {
             Some(c) => {
-                eprintln!(
-                    "scan k={}: loaded base config from {} (best trial)",
-                    curvature, path
-                );
+                eprintln!("scan k={}: loaded base config from {}", curvature, path);
                 c
             }
             None => {
                 eprintln!(
-                    "scan k={}: could not load from {}, using default config",
+                    "scan k={}: could not load from {}, using default",
                     curvature, path
                 );
                 default_config
             }
         }
     } else {
-        eprintln!(
-            "scan k={}: no --scan-from provided, using default config",
-            curvature
-        );
+        eprintln!("scan k={}: no --scan-from, using default config", curvature);
         default_config
     };
 
     let n = args.scan_steps;
-
-    // (param_name, values to sweep)
     let params: Vec<(&str, Vec<f64>)> = vec![
         ("learning_rate", sweep_values(0.5, 300.0, n, true)),
         ("perplexity_ratio", sweep_values(0.0004, 0.01, n, true)),
@@ -511,21 +500,18 @@ fn run_scan(
     ];
 
     let total = params.iter().map(|(_, v)| v.len()).sum::<usize>() as u64;
-
-    let pb = mp.add(ProgressBar::new(total));
-    pb.set_style(
-        ProgressStyle::with_template(
-            "{spinner:.green} scan k={msg} [{bar:35.cyan/blue}] {pos}/{len} {wide_msg}",
-        )
-        .unwrap()
-        .progress_chars("=>-"),
+    let pb = make_progress_bar(
+        mp,
+        total,
+        "{spinner:.green} scan k={msg} [{bar:35.cyan/blue}] {pos}/{len} {wide_msg}",
     );
     pb.set_message(format!("{:+.1}", curvature));
 
     let out_path = format!(
         "{}_{}_k{:.1}_scan.jsonl",
         args.output, dataset_name, curvature
-    );
+    )
+    .replace('.', "_");
     if Path::new(&out_path).exists() {
         std::fs::remove_file(&out_path).ok();
     }
@@ -537,63 +523,24 @@ fn run_scan(
         for &val in values {
             trial_idx += 1;
             let mut config = base.clone();
-            match *param_name {
-                "learning_rate" => config.learning_rate = val,
-                "perplexity_ratio" => config.perplexity_ratio = val,
-                "momentum_main" => config.momentum_main = val,
-                "scaling_loss" => config.scaling_loss = val as u8,
-                "centering_weight" => config.centering_weight = val,
-                "global_loss_weight" => config.global_loss_weight = val,
-                "norm_loss_weight" => config.norm_loss_weight = val,
-                _ => unreachable!(),
-            }
+            apply_param(&mut config, param_name, val);
 
             let start = std::time::Instant::now();
-            let mut metrics = Vec::with_capacity(args.n_seeds);
-            for seed_idx in 0..args.n_seeds {
-                let seed = 42 + trial_idx as u64 * 100 + seed_idx as u64;
-                let m =
-                    evaluator.evaluate_with_metric(&config, curvature, metric_str, seed, &pb_iters);
-                metrics.push(m);
-            }
-
-            let mean = metrics.iter().sum::<f64>() / args.n_seeds as f64;
-            let variance =
-                metrics.iter().map(|&m| (m - mean).powi(2)).sum::<f64>() / args.n_seeds as f64;
-            let std = variance.sqrt();
+            let (mean, std) = eval_single_metric(
+                &evaluator,
+                &config,
+                curvature,
+                metric,
+                args.n_seeds,
+                trial_idx,
+                &pb_iters,
+            );
             let elapsed = start.elapsed().as_millis() as u64;
 
-            let result = TrialResult {
-                dataset_name: dataset_name.to_string(),
-                data_path: args.data_path.clone(),
-                n_samples: args.n_samples,
-                n_seeds: args.n_seeds,
-                n_trials_max: args.n_trials,
-                curvature,
-                trial: trial_idx,
-                learning_rate: config.learning_rate,
-                perplexity_ratio: config.perplexity_ratio,
-                momentum_main: config.momentum_main,
-                scaling_loss: config.scaling_loss,
-                centering_weight: config.centering_weight,
-                global_loss_weight: config.global_loss_weight,
-                norm_loss_weight: config.norm_loss_weight,
-                metric_name: Some(metric_str.to_string()),
-                metric_mean: Some(mean),
-                metric_std: Some(std),
-                trustworthiness: None,
-                continuity: None,
-                knn_overlap: None,
-                geodesic_distortion_gu2019: None,
-                geodesic_distortion_mse: None,
-                davies_bouldin_ratio: None,
-                dunn_index: None,
-                class_density_measure: None,
-                cluster_density_measure: None,
-                time_ms: elapsed,
-                scan_param: Some(param_name.to_string()),
-            };
-
+            let mut result = TrialResult::new(
+                &config, dataset_name, args.n_samples, args.n_seeds, curvature, elapsed,
+            );
+            result.scan_param = Some(param_name.to_string());
             write_result(&result, &out_path);
 
             pb.set_message(format!(
@@ -605,6 +552,57 @@ fn run_scan(
     }
 
     pb.finish_with_message(format!("{:+.1} scan done", curvature));
+}
+
+// ─── Random search mode ─────────────────────────────────────────────────────
+
+fn run_random(
+    curvature: f64,
+    dataset_name: &str,
+    args: &Args,
+    evaluator: Arc<Evaluator>,
+    mp: &MultiProgress,
+) {
+    let mut rng =
+        fitting_core::synthetic_data::Rng::new(curvature.to_bits() ^ 0xdead_beef_cafe_1111);
+
+    let out_path = output_path(&args.output, dataset_name, curvature);
+
+    let pb = make_progress_bar(
+        mp,
+        args.n_trials as u64,
+        "{spinner:.green} {msg} [{bar:35.cyan/blue}] {pos}/{len} | {wide_msg}",
+    );
+    pb.set_message(format!("k={:+.1} dataset={}", curvature, dataset_name));
+    let pb_iters = ProgressBar::hidden();
+
+    for trial_idx in 1..=args.n_trials {
+        let start = std::time::Instant::now();
+        let config = TrialConfig::random(&mut rng);
+        let agg = eval_all_metrics(
+            &evaluator,
+            &config,
+            curvature,
+            args.n_seeds,
+            trial_idx,
+            &pb_iters,
+        );
+        let elapsed = start.elapsed().as_millis() as u64;
+
+        let result = TrialResult::new(
+            &config, dataset_name, args.n_samples, args.n_seeds, curvature, elapsed,
+        )
+        .with_all_metrics(&agg);
+        write_result(&result, &out_path);
+
+        pb.set_message(format!(
+            "k={:+.1} trial {:4} | db_ratio={:.4} | trust={:.4} | {}ms",
+            curvature, trial_idx, agg.davies_bouldin_ratio, agg.trustworthiness, elapsed
+        ));
+        pb.inc(1);
+    }
+
+    pb.finish_with_message(format!("k={:+.1} dataset={} done", curvature, dataset_name));
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
@@ -625,8 +623,18 @@ fn get_dataset_names(dataset_arg: &Option<String>) -> Vec<String> {
 fn main() {
     let args = Args::parse();
 
+    // Ensure the output directory exists.
+    if let Some(parent) = Path::new(&args.output).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).ok();
+        }
+    }
+
     let dataset_names = get_dataset_names(&args.dataset);
     println!("Will run on datasets: {}", dataset_names.join(", "));
+
+    let direction = metric_direction(&args.metric);
+    let evaluator = Arc::new(Evaluator::new(dataset));
 
     let mode = args.mode.as_str();
     match mode {
@@ -674,7 +682,7 @@ fn main() {
                 "Starting random search: {} datasets × {} curvatures × {} trials, all metrics, seeds={}",
                 dataset_names.len(),
                 args.curvatures.len(),
-                args.max_trials,
+                args.n_trials,
                 args.n_seeds
             );
             println!("Curvatures: {:?}", args.curvatures);
@@ -723,8 +731,8 @@ fn main() {
             let mp = Arc::clone(&mp);
             let h = thread::spawn(move || match args.mode.as_str() {
                 "scan" => run_scan(k, &dataset_name, &args, evaluator, &mp),
-                "random" => run_random_search(k, &dataset_name, &args, evaluator, &mp),
-                _ => run_session(k, &dataset_name, &args, evaluator, &mp),
+                "random" => run_random(k, &dataset_name, &args, evaluator, &mp),
+                _ => run_optimize(k, &dataset_name, &args, evaluator, &mp),
             });
             handles.push(h);
         }

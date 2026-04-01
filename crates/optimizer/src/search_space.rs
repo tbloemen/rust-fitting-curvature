@@ -34,6 +34,16 @@ pub fn scaling_loss_from_u8(v: u8) -> ScalingLossType {
     }
 }
 
+pub fn scaling_loss_name(v: u8) -> &'static str {
+    match v {
+        1 => "hard_barrier",
+        2 => "softplus_barrier",
+        3 => "rms",
+        4 => "mean_distance",
+        _ => "none",
+    }
+}
+
 /// Fixed iteration counts — not tuned, set to high-quality defaults.
 pub const FIXED_N_ITERATIONS: usize = 800;
 pub const FIXED_EARLY_EXAG_ITERATIONS: usize = 250;
@@ -78,20 +88,20 @@ impl TrialConfig {
 
     pub fn random(rng: &mut fitting_core::synthetic_data::Rng) -> Self {
         // Log-uniform on [a, b]: exp(uniform() * (ln(b) - ln(a)) + ln(a))
-        let lr = (rng.uniform() * (300.0_f64.ln() - 0.5_f64.ln()) + 0.5_f64.ln())
+        let lr = (rng.uniform() * (50.0_f64.ln() - 0.5_f64.ln()) + 0.5_f64.ln())
             .exp()
-            .clamp(0.5, 300.0);
+            .clamp(0.5, 50.0);
 
         // perplexity_ratio in [0.0004, 0.01], log-uniform.
         // For n=5000 this yields perplexity in [2, 50]; scales automatically with dataset size.
         const PERP_RATIO_MIN: f64 = 0.0004;
-        const PERP_RATIO_MAX: f64 = 0.01;
+        const PERP_RATIO_MAX: f64 = 0.03;
         let perp_ratio = (rng.uniform() * (PERP_RATIO_MAX.ln() - PERP_RATIO_MIN.ln())
             + PERP_RATIO_MIN.ln())
         .exp()
         .clamp(PERP_RATIO_MIN, PERP_RATIO_MAX);
 
-        let momentum = rng.uniform() * 0.25 + 0.7; // [0.70, 0.95]
+        let momentum = rng.uniform() * 0.4 + 0.6; // [0.70, 0.95]
 
         let scaling_loss = (rng.uniform() * 5.0) as u8; // 0..=4
         let centering_weight = rng.uniform() * 2.0;

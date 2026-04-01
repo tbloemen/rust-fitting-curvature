@@ -112,21 +112,6 @@ impl Evaluator {
         }
     }
 
-    pub fn get_metric_value(&self, metrics: &AllMetrics, metric: &str) -> f64 {
-        match metric {
-            "trustworthiness" => metrics.trustworthiness,
-            "continuity" => metrics.continuity,
-            "knn_overlap" => metrics.knn_overlap,
-            "geodesic_distortion_gu2019" => metrics.geodesic_distortion_gu2019,
-            "geodesic_distortion_mse" => metrics.geodesic_distortion_mse,
-            "davies_bouldin_ratio" => metrics.davies_bouldin_ratio,
-            "dunn_index" => metrics.dunn_index,
-            "class_density_measure" => metrics.class_density_measure,
-            "cluster_density_measure" => metrics.cluster_density_measure,
-            _ => panic!("Unknown metric: {}", metric),
-        }
-    }
-
     pub fn evaluate_with_metric(
         &self,
         config: &TrialConfig,

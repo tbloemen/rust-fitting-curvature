@@ -13,10 +13,14 @@ Hyperparameter sensitivity analysis for fitting-curvature optimizer results.
   2. scan_sensitivity.svg         — Heatmap of metric range (max−min) per (parameter × curvature)
   3. scan_optimal.svg             — Where in the sweep range the optimum sits per (param × curvature)
 
+Supports both old format (metric_mean/metric_std/trial fields) and new format
+(individual metric columns like trustworthiness, davies_bouldin_ratio, etc.).
+Use --metric to select which metric column to analyze when using the new format.
+
 Usage:
-    uv run analyze_hyperparams.py
-    uv run analyze_hyperparams.py --mode scan --input results --output plots/
-    uv run analyze_hyperparams.py --input results --output plots/ --top-pairs 5
+    uv run analyze_hyperparams.py --metric davies_bouldin_ratio
+    uv run analyze_hyperparams.py --mode scan --input results/results --output plots/
+    uv run analyze_hyperparams.py --input results/results --output plots/ --top-pairs 5
 """
 
 import argparse
@@ -55,6 +59,55 @@ ALL_PARAMS = [
 
 LOG_SCALE_PARAMS = {"learning_rate", "perplexity", "perplexity_ratio"}
 
+# Scaling loss: string ↔ numeric mapping for backward compatibility.
+SCALING_LOSS_NAMES = ["none", "hard_barrier", "softplus_barrier", "rms", "mean_distance"]
+SCALING_LOSS_TO_NUM = {name: i for i, name in enumerate(SCALING_LOSS_NAMES)}
+
+ALL_METRICS = [
+    "trustworthiness", "continuity", "knn_overlap",
+    "geodesic_distortion_gu2019", "geodesic_distortion_mse",
+    "davies_bouldin_ratio", "dunn_index",
+    "class_density_measure", "cluster_density_measure",
+]
+
+
+def scaling_loss_to_numeric(val) -> float:
+    """Convert a scaling_loss value (string or int) to a numeric value."""
+    if isinstance(val, str):
+        return float(SCALING_LOSS_TO_NUM.get(val, 0))
+    return float(val)
+
+
+def scaling_loss_label(val) -> str:
+    """Convert a scaling_loss value (string or int) to a human-readable label."""
+    if isinstance(val, str):
+        return val.replace("_", " ").title()
+    labels = {0: "None", 1: "Hard Barrier", 2: "Softplus Barrier", 3: "Rms", 4: "Mean Distance"}
+    return labels.get(int(val), str(val))
+
+
+def get_metric_value(record: dict, metric: str | None) -> float | None:
+    """Extract the metric value from a record.
+
+    Tries the explicit metric column first (new format), then falls back
+    to metric_mean (old format).
+    """
+    if metric and metric in record and record[metric] is not None:
+        return record[metric]
+    if "metric_mean" in record and record["metric_mean"] is not None:
+        return record["metric_mean"]
+    return None
+
+
+def get_param_value(record: dict, param: str) -> float | None:
+    """Extract a parameter value, converting scaling_loss strings to numeric."""
+    val = record.get(param)
+    if val is None:
+        return None
+    if param == "scaling_loss":
+        return scaling_loss_to_numeric(val)
+    return float(val)
+
 # Curvature color map (tab10 via curvature index)
 _CMAP_K = plt.cm.tab10
 
@@ -67,11 +120,16 @@ def k_color(k: float, all_ks: list[float]) -> tuple:
 # ─── Data loading ─────────────────────────────────────────────────────────────
 
 
+def _rust_output_path(prefix: str, curvature: float, suffix: str = "") -> str:
+    """Replicate the Rust output_path() convention: dots replaced with underscores."""
+    return f"{prefix}_k{curvature:.1f}{suffix}.jsonl".replace(".", "_")
+
+
 def load_results(prefix: str) -> list[dict]:
-    """Load all JSONL result files matching <prefix>_k<curvature>.jsonl."""
+    """Load all JSONL result files matching the Rust output convention."""
     records = []
     for k in CURVATURES:
-        path = f"{prefix}_k{k:.1f}.jsonl"
+        path = _rust_output_path(prefix, k)
         if not Path(path).exists():
             continue
         with open(path) as f:
@@ -97,7 +155,7 @@ def present_params(records: list[dict]) -> list[str]:
 
 
 def compute_correlations(
-    records: list[dict], params: list[str]
+    records: list[dict], params: list[str], metric: str | None = None,
 ) -> dict[str, dict[float, tuple[float, float]]]:
     """
     Returns {param: {curvature: (rho, pval)}}.
@@ -111,7 +169,11 @@ def compute_correlations(
     for param in params:
         result[param] = {}
         for k, group in by_k.items():
-            pairs = [(r[param], r["metric_mean"]) for r in group if param in r]
+            pairs = [
+                (get_param_value(r, param), get_metric_value(r, metric))
+                for r in group if param in r
+            ]
+            pairs = [(x, y) for x, y in pairs if x is not None and y is not None]
             if len(pairs) < 5:
                 continue
             xs, ys = zip(*pairs)
@@ -249,8 +311,11 @@ def _moving_average(y: np.ndarray, window: int) -> np.ndarray:
     return np.convolve(y, np.ones(window) / window, mode="valid")
 
 
-def plot_param_vs_metric(records: list[dict], params: list[str], out_dir: str) -> None:
+def plot_param_vs_metric(
+    records: list[dict], params: list[str], out_dir: str, metric: str | None = None,
+) -> None:
     all_ks = sorted({r["curvature"] for r in records})
+    metric_label = metric or "metric_mean"
 
     for param in params:
         is_log = param in LOG_SCALE_PARAMS
@@ -259,16 +324,17 @@ def plot_param_vs_metric(records: list[dict], params: list[str], out_dir: str) -
         if is_cat:
             fig, ax = plt.subplots(figsize=(8, 4.5))
             # Box plot per category value, grouped by curvature
-            categories = sorted({int(r[param]) for r in records if param in r})
+            cat_vals = sorted({scaling_loss_to_numeric(r[param]) for r in records if param in r})
             width = 0.8 / len(all_ks)
             for ki, k in enumerate(all_ks):
                 group = [r for r in records if r["curvature"] == k and param in r]
                 positions = [
-                    c + ki * width - 0.4 + width / 2 for c in range(len(categories))
+                    ci + ki * width - 0.4 + width / 2 for ci in range(len(cat_vals))
                 ]
                 data = [
-                    [r["metric_mean"] for r in group if int(r[param]) == c]
-                    for c in categories
+                    [get_metric_value(r, metric) for r in group
+                     if scaling_loss_to_numeric(r[param]) == c and get_metric_value(r, metric) is not None]
+                    for c in cat_vals
                 ]
                 data = [d for d in data if d]  # drop empty
                 if not data:
@@ -284,29 +350,22 @@ def plot_param_vs_metric(records: list[dict], params: list[str], out_dir: str) -
                     capprops=dict(linewidth=0.8),
                     flierprops=dict(marker=".", markersize=3, alpha=0.4),
                 )
-            cat_labels = {
-                0: "None",
-                1: "HardBarrier",
-                2: "Softplus",
-                3: "Rms",
-                4: "MeanDist",
-            }
-            ax.set_xticks(range(len(categories)))
-            ax.set_xticklabels([cat_labels.get(c, str(c)) for c in categories])
+            ax.set_xticks(range(len(cat_vals)))
+            ax.set_xticklabels([scaling_loss_label(SCALING_LOSS_NAMES[int(c)]) for c in cat_vals])
             ax.set_xlabel("scaling_loss variant")
         else:
             fig, ax = plt.subplots(figsize=(7, 4.5))
             for k in all_ks:
-                group = [r for r in records if r["curvature"] == k and param in r]
+                group = [
+                    r for r in records
+                    if r["curvature"] == k and param in r and get_metric_value(r, metric) is not None
+                ]
                 if not group:
                     continue
                 col = k_color(k, all_ks)
-                xs = np.array([r[param] for r in group])
-                ys = np.array([r["metric_mean"] for r in group])
-                # Scatter (size ∝ 1/std for certainty)
-                stds = np.array([r.get("metric_std", 0.1) for r in group])
-                sizes = np.clip(20 / (stds + 0.01), 3, 60)
-                ax.scatter(xs, ys, color=col, alpha=0.35, s=sizes, linewidths=0)
+                xs = np.array([get_param_value(r, param) for r in group])
+                ys = np.array([get_metric_value(r, metric) for r in group])
+                ax.scatter(xs, ys, color=col, alpha=0.35, s=12, linewidths=0)
                 # Trend: sort by x, then moving average
                 order = np.argsort(xs)
                 xs_s, ys_s = xs[order], ys[order]
@@ -328,8 +387,8 @@ def plot_param_vs_metric(records: list[dict], params: list[str], out_dir: str) -
             ax.set_xlabel(param + (" (log scale)" if is_log else ""))
             ax.legend(fontsize=7, ncol=3, loc="best", markerscale=1.2)
 
-        ax.set_ylabel("metric_mean")
-        ax.set_title(f"Effect of {param} on metric")
+        ax.set_ylabel(metric_label)
+        ax.set_title(f"Effect of {param} on {metric_label}")
 
         fig.tight_layout()
         out_path = os.path.join(out_dir, f"param_{param}_vs_metric.svg")
@@ -341,36 +400,35 @@ def plot_param_vs_metric(records: list[dict], params: list[str], out_dir: str) -
 # ─── Plot 4: Optimizer convergence ────────────────────────────────────────────
 
 
-def plot_convergence(records: list[dict], out_path: str) -> None:
+def plot_convergence(records: list[dict], out_path: str, metric: str | None = None) -> None:
     all_ks = sorted({r["curvature"] for r in records})
+    metric_label = metric or "metric_mean"
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
 
     for k in all_ks:
-        group = sorted(
-            [r for r in records if r["curvature"] == k], key=lambda r: r["trial"]
-        )
+        group = [r for r in records if r["curvature"] == k and get_metric_value(r, metric) is not None]
         if not group:
             continue
         col = k_color(k, all_ks)
-        trials = [r["trial"] for r in group]
-        metrics = [r["metric_mean"] for r in group]
+        trials = list(range(1, len(group) + 1))
+        metrics = [get_metric_value(r, metric) for r in group]
         best_so_far = [max(metrics[: i + 1]) for i in range(len(metrics))]
 
         axes[0].plot(trials, metrics, color=col, alpha=0.4, linewidth=0.8)
         axes[0].scatter(trials, metrics, color=col, s=5, alpha=0.5)
         axes[1].plot(trials, best_so_far, color=col, linewidth=1.8, label=f"k={k:+.1f}")
 
-    axes[0].set_title("Metric per trial")
+    axes[0].set_title(f"{metric_label} per trial")
     axes[0].set_xlabel("Trial")
-    axes[0].set_ylabel("metric_mean")
+    axes[0].set_ylabel(metric_label)
 
-    axes[1].set_title("Best metric found so far")
+    axes[1].set_title(f"Best {metric_label} found so far")
     axes[1].set_xlabel("Trial")
-    axes[1].set_ylabel("Best metric_mean")
+    axes[1].set_ylabel(f"Best {metric_label}")
     axes[1].legend(fontsize=7, ncol=2, loc="lower right")
 
-    fig.suptitle("Optimizer convergence by curvature", y=1.01)
+    fig.suptitle("Convergence by curvature", y=1.01)
     fig.tight_layout()
     fig.savefig(out_path, format="svg", bbox_inches="tight")
     plt.close(fig)
@@ -384,21 +442,23 @@ def plot_pairwise_interactions(
     records: list[dict],
     top_params: list[str],
     out_path: str,
+    metric: str | None = None,
 ) -> None:
     """
     Grid of pairwise scatter plots for top_params.
-    Upper triangle: scatter colored by metric_mean.
+    Upper triangle: scatter colored by metric value.
     Diagonal:       KDE / histogram of each parameter.
     Lower triangle: scatter colored by curvature.
     """
     all_ks = sorted({r["curvature"] for r in records})
     n = len(top_params)
+    metric_label = metric or "metric_mean"
 
     fig, axes = plt.subplots(n, n, figsize=(n * 2.3, n * 2.1))
     if n == 1:
         axes = np.array([[axes]])
 
-    metrics = np.array([r["metric_mean"] for r in records])
+    metrics = np.array([get_metric_value(r, metric) or 0.0 for r in records])
     norm_metric = mcolors.Normalize(
         vmin=np.percentile(metrics, 5), vmax=np.percentile(metrics, 95)
     )
@@ -411,9 +471,9 @@ def plot_pairwise_interactions(
         for j, pj in enumerate(top_params):
             ax = axes[i, j]
 
-            xi = np.array([r.get(pi, np.nan) for r in records], dtype=float)
-            xj = np.array([r.get(pj, np.nan) for r in records], dtype=float)
-            m = np.array([r["metric_mean"] for r in records], dtype=float)
+            xi = np.array([get_param_value(r, pi) if pi in r else np.nan for r in records], dtype=float)
+            xj = np.array([get_param_value(r, pj) if pj in r else np.nan for r in records], dtype=float)
+            m = np.array([get_metric_value(r, metric) or np.nan for r in records], dtype=float)
             k_vals = np.array([r["curvature"] for r in records])
 
             if i == j:
@@ -491,7 +551,7 @@ def plot_pairwise_interactions(
     sm = cm.ScalarMappable(cmap=cmap_metric, norm=norm_metric)
     sm.set_array([])
     cbar = fig.colorbar(
-        sm, ax=axes, label="metric_mean (upper triangle)", shrink=0.6, pad=0.02
+        sm, ax=axes, label=f"{metric_label} (upper triangle)", shrink=0.6, pad=0.02
     )
     cbar.ax.tick_params(labelsize=7)
 
@@ -533,10 +593,10 @@ def plot_pairwise_interactions(
 # ─── Scan data loading ────────────────────────────────────────────────────────
 
 def load_scan_results(prefix: str) -> list[dict]:
-    """Load all scan JSONL files matching <prefix>_k<curvature>_scan.jsonl."""
+    """Load all scan JSONL files matching the Rust scan output convention."""
     records = []
     for k in CURVATURES:
-        path = f"{prefix}_k{k:.1f}_scan.jsonl"
+        path = _rust_output_path(prefix, k, suffix="_scan")
         if not Path(path).exists():
             continue
         with open(path) as f:
@@ -573,14 +633,15 @@ def _base_config(records: list[dict], sweep_param: str, curvature: float) -> dic
 
 # ─── Scan plot 1: effect curves ───────────────────────────────────────────────
 
-def plot_scan_effects(records: list[dict], out_path: str) -> None:
+def plot_scan_effects(records: list[dict], out_path: str, metric: str | None = None) -> None:
     """
-    One subplot per swept parameter. Each subplot shows metric_mean vs parameter
-    value with a ±1 std error band, one line per curvature. A vertical dashed
-    line marks the base-config value for that parameter.
+    One subplot per swept parameter. Each subplot shows metric vs parameter
+    value, one line per curvature. A vertical dashed line marks the base-config
+    value for that parameter.
     """
     all_ks = sorted({r["curvature"] for r in records})
     sweep_params = _scan_params_ordered(records)
+    metric_label = metric or "metric_mean"
     n_params = len(sweep_params)
     if n_params == 0:
         print(f"  {out_path} (skipped — no scan_param field found)")
@@ -591,8 +652,6 @@ def plot_scan_effects(records: list[dict], out_path: str) -> None:
     fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 4.5, nrows * 3.4))
     axes_flat = np.array(axes).flatten() if n_params > 1 else [axes]
 
-    cat_labels = {0: "None", 1: "HardBarrier", 2: "Softplus", 3: "Rms", 4: "MeanDist"}
-
     for ax, param in zip(axes_flat, sweep_params):
         is_log = param in LOG_SCALE_PARAMS
         is_cat = param == "scaling_loss"
@@ -600,36 +659,34 @@ def plot_scan_effects(records: list[dict], out_path: str) -> None:
         for k in all_ks:
             group = sorted(
                 [r for r in records if r["curvature"] == k and r.get("scan_param") == param],
-                key=lambda r: r[param],
+                key=lambda r: get_param_value(r, param) or 0,
             )
             if not group:
                 continue
 
-            xs = np.array([r[param] for r in group])
-            ys = np.array([r["metric_mean"] for r in group])
-            errs = np.array([r.get("metric_std", 0.0) for r in group])
+            xs = np.array([get_param_value(r, param) for r in group])
+            ys = np.array([get_metric_value(r, metric) or 0.0 for r in group])
             col = k_color(k, all_ks)
 
             ax.plot(xs, ys, color=col, linewidth=1.8, label=f"k={k:+.1f}", marker="o",
                     markersize=3.5, zorder=3)
-            ax.fill_between(xs, ys - errs, ys + errs, color=col, alpha=0.12)
 
         # Mark base-config value with a vertical dashed line.
-        # Read it from a record where a different param is swept.
         base = _base_config(records, param, all_ks[0])
         if param in base:
-            ax.axvline(base[param], color="black", linestyle=":", linewidth=1.2,
+            ax.axvline(get_param_value(base, param), color="black", linestyle=":", linewidth=1.2,
                        alpha=0.6, label="base config")
 
         if is_log:
             ax.set_xscale("log")
         if is_cat:
-            ax.set_xticks(list(cat_labels.keys()))
-            ax.set_xticklabels(list(cat_labels.values()), fontsize=7, rotation=20)
+            ticks = list(range(len(SCALING_LOSS_NAMES)))
+            ax.set_xticks(ticks)
+            ax.set_xticklabels([scaling_loss_label(n) for n in SCALING_LOSS_NAMES], fontsize=7, rotation=20)
 
         ax.set_title(param, fontsize=9)
         ax.set_xlabel(param + (" (log)" if is_log else ""), fontsize=7)
-        ax.set_ylabel("metric_mean", fontsize=7)
+        ax.set_ylabel(metric_label, fontsize=7)
         ax.tick_params(labelsize=7)
 
     # Hide unused subplots
@@ -641,7 +698,7 @@ def plot_scan_effects(records: list[dict], out_path: str) -> None:
     fig.legend(handles, labels, fontsize=7, ncol=min(5, len(all_ks) + 1),
                loc="lower center", bbox_to_anchor=(0.5, -0.02))
 
-    fig.suptitle("Scan: effect of each parameter on metric (others fixed at base config)",
+    fig.suptitle(f"Scan: effect of each parameter on {metric_label} (others fixed at base config)",
                  fontsize=10)
     fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(out_path, format="svg", bbox_inches="tight")
@@ -651,13 +708,14 @@ def plot_scan_effects(records: list[dict], out_path: str) -> None:
 
 # ─── Scan plot 2: sensitivity heatmap ─────────────────────────────────────────
 
-def plot_scan_sensitivity(records: list[dict], out_path: str) -> None:
+def plot_scan_sensitivity(records: list[dict], out_path: str, metric: str | None = None) -> None:
     """
     Heatmap of metric range (max − min) across the sweep, for each
     (parameter × curvature). Larger range = more sensitive to that parameter.
     """
     all_ks = sorted({r["curvature"] for r in records})
     sweep_params = _scan_params_ordered(records)
+    metric_label = metric or "metric_mean"
     if not sweep_params:
         return
 
@@ -667,7 +725,10 @@ def plot_scan_sensitivity(records: list[dict], out_path: str) -> None:
             group = [r for r in records if r["curvature"] == k and r.get("scan_param") == param]
             if len(group) < 2:
                 continue
-            vals = [r["metric_mean"] for r in group]
+            vals = [get_metric_value(r, metric) for r in group]
+            vals = [v for v in vals if v is not None]
+            if len(vals) < 2:
+                continue
             matrix[i, j] = max(vals) - min(vals)
 
     fig, ax = plt.subplots(figsize=(len(all_ks) * 0.95 + 2.0, len(sweep_params) * 0.55 + 1.8))
@@ -688,7 +749,7 @@ def plot_scan_sensitivity(records: list[dict], out_path: str) -> None:
                         fontsize=8, color=color)
 
     plt.colorbar(im, ax=ax, label="metric range (max − min)", fraction=0.03, pad=0.02)
-    ax.set_title("Scan sensitivity: metric range per (parameter × curvature)\n"
+    ax.set_title(f"Scan sensitivity: {metric_label} range per (parameter × curvature)\n"
                  "larger = more impact when this parameter is varied", pad=10)
     fig.tight_layout()
     fig.savefig(out_path, format="svg", bbox_inches="tight")
@@ -698,7 +759,7 @@ def plot_scan_sensitivity(records: list[dict], out_path: str) -> None:
 
 # ─── Scan plot 3: optimal value location ──────────────────────────────────────
 
-def plot_scan_optimal(records: list[dict], out_path: str) -> None:
+def plot_scan_optimal(records: list[dict], out_path: str, metric: str | None = None) -> None:
     """
     For each (parameter × curvature), show where in the sweep range the optimum
     lies, normalised to [0, 1] (0 = low end of range, 1 = high end).
@@ -707,6 +768,7 @@ def plot_scan_optimal(records: list[dict], out_path: str) -> None:
     """
     all_ks = sorted({r["curvature"] for r in records})
     sweep_params = _scan_params_ordered(records)
+    metric_label = metric or "metric_mean"
     if not sweep_params:
         return
 
@@ -717,13 +779,14 @@ def plot_scan_optimal(records: list[dict], out_path: str) -> None:
     for i, param in enumerate(sweep_params):
         for j, k in enumerate(all_ks):
             group = sorted(
-                [r for r in records if r["curvature"] == k and r.get("scan_param") == param],
-                key=lambda r: r[param],
+                [r for r in records if r["curvature"] == k and r.get("scan_param") == param
+                 and get_metric_value(r, metric) is not None],
+                key=lambda r: get_param_value(r, param) or 0,
             )
             if not group:
                 continue
-            xs = [r[param] for r in group]
-            ys = [r["metric_mean"] for r in group]
+            xs = [get_param_value(r, param) or 0 for r in group]
+            ys = [get_metric_value(r, metric) for r in group]
             best_idx = int(np.argmax(ys))
             val_matrix[i, j] = ys[best_idx]
             # Normalise position: 0 = lowest x, 1 = highest x
@@ -770,9 +833,9 @@ def plot_scan_optimal(records: list[dict], out_path: str) -> None:
                              fontsize=8, color=color)
     plt.colorbar(im1, ax=axes[1], label="best metric value in sweep",
                  fraction=0.04, pad=0.02)
-    axes[1].set_title("Best metric achieved\nat the optimal sweep point")
+    axes[1].set_title(f"Best {metric_label} achieved\nat the optimal sweep point")
 
-    fig.suptitle("Scan: optimal sweep point per (parameter × curvature)", fontsize=10)
+    fig.suptitle(f"Scan: optimal sweep point per (parameter × curvature) — {metric_label}", fontsize=10)
     fig.tight_layout()
     fig.savefig(out_path, format="svg", bbox_inches="tight")
     plt.close(fig)
@@ -794,13 +857,19 @@ def main() -> None:
     )
     parser.add_argument(
         "--input",
-        default="results",
-        help="JSONL file prefix, e.g. 'results' loads 'results_k0.0.jsonl' etc. (default: results)",
+        default="results/results",
+        help="JSONL file prefix (default: results/results)",
     )
     parser.add_argument(
         "--output",
         default="plots",
         help="Output directory for SVG files (default: plots/)",
+    )
+    parser.add_argument(
+        "--metric",
+        default=None,
+        help="Metric column to analyze, e.g. 'davies_bouldin_ratio'. "
+             "Falls back to 'metric_mean' field if not set (old format).",
     )
     parser.add_argument(
         "--top-pairs",
@@ -811,6 +880,7 @@ def main() -> None:
     args = parser.parse_args()
 
     os.makedirs(args.output, exist_ok=True)
+    metric = args.metric
 
     if args.mode == "scan":
         print(f"Loading scan results from '{args.input}_k*_scan.jsonl' ...")
@@ -821,12 +891,13 @@ def main() -> None:
         n_curvatures = len({r["curvature"] for r in records})
         sweep_params = _scan_params_ordered(records)
         print(f"Loaded {len(records)} scan records across {n_curvatures} curvatures.")
-        print(f"Parameters swept: {sweep_params}\n")
+        print(f"Parameters swept: {sweep_params}")
+        print(f"Metric: {metric or 'metric_mean (auto)'}\n")
 
         print("Generating scan plots:")
-        plot_scan_effects(records, os.path.join(args.output, "scan_effects.svg"))
-        plot_scan_sensitivity(records, os.path.join(args.output, "scan_sensitivity.svg"))
-        plot_scan_optimal(records, os.path.join(args.output, "scan_optimal.svg"))
+        plot_scan_effects(records, os.path.join(args.output, "scan_effects.svg"), metric)
+        plot_scan_sensitivity(records, os.path.join(args.output, "scan_sensitivity.svg"), metric)
+        plot_scan_optimal(records, os.path.join(args.output, "scan_optimal.svg"), metric)
 
         print(f"\nDone. All plots saved to '{args.output}/'.")
         return
@@ -840,11 +911,12 @@ def main() -> None:
     print(
         f"Loaded {len(records)} trials across {len({r['curvature'] for r in records})} curvatures."
     )
+    print(f"Metric: {metric or 'metric_mean (auto)'}\n")
 
     params = present_params(records)
     print(f"Parameters: {params}\n")
 
-    correlations = compute_correlations(records, params)
+    correlations = compute_correlations(records, params, metric)
     importance = mean_abs_rho(correlations, params)
     top_params = sorted(importance, key=lambda p: importance[p], reverse=True)[
         : args.top_pairs
@@ -857,8 +929,8 @@ def main() -> None:
     plot_param_importance(
         correlations, params, os.path.join(args.output, "param_importance.svg")
     )
-    plot_convergence(records, os.path.join(args.output, "convergence.svg"))
-    plot_param_vs_metric(records, params, args.output)
+    plot_convergence(records, os.path.join(args.output, "convergence.svg"), metric)
+    plot_param_vs_metric(records, params, args.output, metric)
 
     print(f"\nTop {args.top_pairs} for pairwise plot: {top_params}")
     if not top_params:
@@ -869,6 +941,7 @@ def main() -> None:
         records,
         top_params,
         os.path.join(args.output, f"pairwise_top{args.top_pairs}.svg"),
+        metric,
     )
 
     print(f"\nDone. All plots saved to '{args.output}/'.")
