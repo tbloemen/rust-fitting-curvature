@@ -262,7 +262,9 @@ fn test_hd_sphere_distances_match_arccos() {
     let dim = 8;
     for i in 0..n {
         for j in (i + 1)..n {
-            let dot: f64 = (0..dim).map(|k| data.x[i * dim + k] * data.x[j * dim + k]).sum();
+            let dot: f64 = (0..dim)
+                .map(|k| data.x[i * dim + k] * data.x[j * dim + k])
+                .sum();
             let expected = dot.clamp(-1.0, 1.0).acos();
             let diff = (data.distances[i * n + j] - expected).abs();
             assert!(diff < 1e-10, "Distance mismatch at ({i},{j})");
@@ -338,8 +340,14 @@ fn test_hd_antipodal_clusters_separation() {
         }
     }
     // At kappa=5 in 10D the concentration is strong; expect >90% in correct hemisphere.
-    assert!(north_pos > 90, "North cluster not concentrated: {north_pos}/100");
-    assert!(south_neg > 90, "South cluster not concentrated: {south_neg}/100");
+    assert!(
+        north_pos > 90,
+        "North cluster not concentrated: {north_pos}/100"
+    );
+    assert!(
+        south_neg > 90,
+        "South cluster not concentrated: {south_neg}/100"
+    );
 }
 
 #[test]
@@ -357,8 +365,7 @@ fn test_hd_antipodal_clusters_labels_binary() {
 /// Check the hyperboloid constraint -x0^2 + x1^2 + ... + x(dim-1)^2 = -1
 fn check_on_hyperboloid(x: &[f64], n: usize, dim: usize, tol: f64) {
     for i in 0..n {
-        let lorentz = -x[i * dim].powi(2)
-            + (1..dim).map(|k| x[i * dim + k].powi(2)).sum::<f64>();
+        let lorentz = -x[i * dim].powi(2) + (1..dim).map(|k| x[i * dim + k].powi(2)).sum::<f64>();
         assert!(
             (lorentz + 1.0).abs() < tol,
             "Point {i} not on hyperboloid: lorentz={lorentz:.6}"
@@ -484,8 +491,14 @@ fn test_hd_hyperbolic_shells_radial_ordering() {
     let d0 = mean_dist(0);
     let d1 = mean_dist(1);
     let d2 = mean_dist(2);
-    assert!(d0 < d1, "Shell 0 should be closer than shell 1: {d0:.3} vs {d1:.3}");
-    assert!(d1 < d2, "Shell 1 should be closer than shell 2: {d1:.3} vs {d2:.3}");
+    assert!(
+        d0 < d1,
+        "Shell 0 should be closer than shell 1: {d0:.3} vs {d1:.3}"
+    );
+    assert!(
+        d1 < d2,
+        "Shell 1 should be closer than shell 2: {d1:.3} vs {d2:.3}"
+    );
 }
 
 #[test]
