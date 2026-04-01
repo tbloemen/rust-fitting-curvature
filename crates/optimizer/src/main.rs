@@ -100,7 +100,14 @@ struct TrialResult {
 }
 
 impl TrialResult {
-    fn new(config: &TrialConfig, dataset_name: &str, n_samples: usize, n_seeds: usize, curvature: f64, time_ms: u64) -> Self {
+    fn new(
+        config: &TrialConfig,
+        dataset_name: &str,
+        n_samples: usize,
+        n_seeds: usize,
+        curvature: f64,
+        time_ms: u64,
+    ) -> Self {
         Self {
             dataset_name: dataset_name.to_string(),
             n_samples,
@@ -178,7 +185,15 @@ fn eval_single_metric(
     pb_iters: &ProgressBar,
 ) -> (f64, f64) {
     let values: Vec<f64> = (0..n_seeds)
-        .map(|si| evaluator.evaluate_with_metric(config, curvature, metric, trial_seed(trial_idx, si), pb_iters))
+        .map(|si| {
+            evaluator.evaluate_with_metric(
+                config,
+                curvature,
+                metric,
+                trial_seed(trial_idx, si),
+                pb_iters,
+            )
+        })
         .collect();
     mean_std(&values)
 }
@@ -204,7 +219,9 @@ fn eval_all_metrics(
     pb_iters: &ProgressBar,
 ) -> AggregatedMetrics {
     let samples: Vec<AllMetrics> = (0..n_seeds)
-        .map(|si| evaluator.compute_all_metrics(config, curvature, trial_seed(trial_idx, si), pb_iters))
+        .map(|si| {
+            evaluator.compute_all_metrics(config, curvature, trial_seed(trial_idx, si), pb_iters)
+        })
         .collect();
 
     let avg = |f: fn(&AllMetrics) -> f64| -> f64 {
@@ -226,14 +243,25 @@ fn eval_all_metrics(
 
 fn make_progress_bar(mp: &MultiProgress, total: u64, template: &str) -> ProgressBar {
     let pb = mp.add(ProgressBar::new(total));
-    pb.set_style(ProgressStyle::with_template(template).unwrap().progress_chars("=>-"));
+    pb.set_style(
+        ProgressStyle::with_template(template)
+            .unwrap()
+            .progress_chars("=>-"),
+    );
     pb
 }
 
 // ─── Random search ────────────────────────────────────────────────────────────
 
-fn run_random(curvature: f64, dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &MultiProgress) {
-    let mut rng = fitting_core::synthetic_data::Rng::new(curvature.to_bits() ^ 0xdead_beef_cafe_1111);
+fn run_random(
+    curvature: f64,
+    dataset_name: &str,
+    args: &Args,
+    evaluator: Arc<Evaluator>,
+    mp: &MultiProgress,
+) {
+    let mut rng =
+        fitting_core::synthetic_data::Rng::new(curvature.to_bits() ^ 0xdead_beef_cafe_1111);
     let out_path = output_path(&args.output, dataset_name, curvature);
 
     let pb = make_progress_bar(
@@ -247,11 +275,25 @@ fn run_random(curvature: f64, dataset_name: &str, args: &Args, evaluator: Arc<Ev
     for trial_idx in 1..=args.n_trials {
         let start = std::time::Instant::now();
         let config = TrialConfig::random(&mut rng);
-        let agg = eval_all_metrics(&evaluator, &config, curvature, args.n_seeds, trial_idx, &pb_iters);
+        let agg = eval_all_metrics(
+            &evaluator,
+            &config,
+            curvature,
+            args.n_seeds,
+            trial_idx,
+            &pb_iters,
+        );
         let elapsed = start.elapsed().as_millis() as u64;
 
-        let result = TrialResult::new(&config, dataset_name, args.n_samples, args.n_seeds, curvature, elapsed)
-            .with_all_metrics(&agg);
+        let result = TrialResult::new(
+            &config,
+            dataset_name,
+            args.n_samples,
+            args.n_seeds,
+            curvature,
+            elapsed,
+        )
+        .with_all_metrics(&agg);
         write_result(&result, &out_path);
 
         pb.set_message(format!(
@@ -302,7 +344,11 @@ fn load_best_config_from_jsonl(path: &str, n_points: usize) -> Option<TrialConfi
 fn sweep_values(lo: f64, hi: f64, n: usize, log: bool) -> Vec<f64> {
     (0..n)
         .map(|i| {
-            let t = if n > 1 { i as f64 / (n - 1) as f64 } else { 0.0 };
+            let t = if n > 1 {
+                i as f64 / (n - 1) as f64
+            } else {
+                0.0
+            };
             if log {
                 (lo.ln() + t * (hi.ln() - lo.ln())).exp()
             } else {
@@ -325,7 +371,13 @@ fn apply_param(config: &mut TrialConfig, param: &str, val: f64) {
     }
 }
 
-fn run_scan(curvature: f64, dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &MultiProgress) {
+fn run_scan(
+    curvature: f64,
+    dataset_name: &str,
+    args: &Args,
+    evaluator: Arc<Evaluator>,
+    mp: &MultiProgress,
+) {
     let metric = args.metric.as_deref().unwrap();
     let n_points = evaluator.n_points();
 
@@ -342,8 +394,17 @@ fn run_scan(curvature: f64, dataset_name: &str, args: &Args, evaluator: Arc<Eval
     let base = if let Some(prefix) = &args.scan_from {
         let path = output_path(prefix, dataset_name, curvature);
         match load_best_config_from_jsonl(&path, n_points) {
-            Some(c) => { eprintln!("scan k={}: loaded base config from {}", curvature, path); c }
-            None => { eprintln!("scan k={}: could not load from {}, using default", curvature, path); default_config }
+            Some(c) => {
+                eprintln!("scan k={}: loaded base config from {}", curvature, path);
+                c
+            }
+            None => {
+                eprintln!(
+                    "scan k={}: could not load from {}, using default",
+                    curvature, path
+                );
+                default_config
+            }
         }
     } else {
         eprintln!("scan k={}: no --scan-from, using default config", curvature);
@@ -352,20 +413,28 @@ fn run_scan(curvature: f64, dataset_name: &str, args: &Args, evaluator: Arc<Eval
 
     let n = args.scan_steps;
     let params: Vec<(&str, Vec<f64>)> = vec![
-        ("learning_rate",     sweep_values(0.5, 50.0, n, true)),
-        ("perplexity_ratio",  sweep_values(0.0004, 0.03, n, true)),
-        ("momentum_main",     sweep_values(0.60, 1.0, n, false)),
-        ("scaling_loss",      vec![0.0, 1.0, 2.0, 3.0, 4.0]),
-        ("centering_weight",  sweep_values(0.0, 2.0, n, false)),
+        ("learning_rate", sweep_values(0.5, 50.0, n, true)),
+        ("perplexity_ratio", sweep_values(0.0004, 0.03, n, true)),
+        ("momentum_main", sweep_values(0.60, 1.0, n, false)),
+        ("scaling_loss", vec![0.0, 1.0, 2.0, 3.0, 4.0]),
+        ("centering_weight", sweep_values(0.0, 2.0, n, false)),
         ("global_loss_weight", sweep_values(0.0, 1.0, n, false)),
-        ("norm_loss_weight",  sweep_values(0.0, 0.02, n, false)),
+        ("norm_loss_weight", sweep_values(0.0, 0.02, n, false)),
     ];
 
     let total = params.iter().map(|(_, v)| v.len()).sum::<usize>() as u64;
-    let pb = make_progress_bar(mp, total, "{spinner:.green} scan k={msg} [{bar:35.cyan/blue}] {pos}/{len} {wide_msg}");
+    let pb = make_progress_bar(
+        mp,
+        total,
+        "{spinner:.green} scan k={msg} [{bar:35.cyan/blue}] {pos}/{len} {wide_msg}",
+    );
     pb.set_message(format!("{:+.1}", curvature));
 
-    let out_path = format!("{}_{}_k{:.1}_scan.jsonl", args.output, dataset_name, curvature).replace('.', "_");
+    let out_path = format!(
+        "{}_{}_k{:.1}_scan.jsonl",
+        args.output, dataset_name, curvature
+    )
+    .replace('.', "_");
     if Path::new(&out_path).exists() {
         std::fs::remove_file(&out_path).ok();
     }
@@ -380,14 +449,32 @@ fn run_scan(curvature: f64, dataset_name: &str, args: &Args, evaluator: Arc<Eval
             apply_param(&mut config, param_name, val);
 
             let start = std::time::Instant::now();
-            let (mean, std) = eval_single_metric(&evaluator, &config, curvature, metric, args.n_seeds, trial_idx, &pb_iters);
+            let (mean, std) = eval_single_metric(
+                &evaluator,
+                &config,
+                curvature,
+                metric,
+                args.n_seeds,
+                trial_idx,
+                &pb_iters,
+            );
             let elapsed = start.elapsed().as_millis() as u64;
 
-            let mut result = TrialResult::new(&config, dataset_name, args.n_samples, args.n_seeds, curvature, elapsed);
+            let mut result = TrialResult::new(
+                &config,
+                dataset_name,
+                args.n_samples,
+                args.n_seeds,
+                curvature,
+                elapsed,
+            );
             result.scan_param = Some(param_name.to_string());
             write_result(&result, &out_path);
 
-            pb.set_message(format!("{:+.1} | {}={:.4} → {:.4} ± {:.4}", curvature, param_name, val, mean, std));
+            pb.set_message(format!(
+                "{:+.1} | {}={:.4} → {:.4} ± {:.4}",
+                curvature, param_name, val, mean, std
+            ));
             pb.inc(1);
         }
     }
@@ -418,10 +505,10 @@ fn main() {
         std::process::exit(1);
     }
 
-    if let Some(parent) = Path::new(&args.output).parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).ok();
-        }
+    if let Some(parent) = Path::new(&args.output).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).ok();
     }
 
     let dataset_names = get_dataset_names(&args.dataset);
@@ -429,11 +516,15 @@ fn main() {
     match args.mode.as_str() {
         "random" => println!(
             "Starting random search: {} datasets × {} curvatures × {} trials, all metrics, seeds={}",
-            dataset_names.len(), args.curvatures.len(), args.n_trials, args.n_seeds
+            dataset_names.len(),
+            args.curvatures.len(),
+            args.n_trials,
+            args.n_seeds
         ),
         "scan" => println!(
             "Starting scan: {} datasets × {} curvatures × ~{} sweep points, metric={}, seeds={}",
-            dataset_names.len(), args.curvatures.len(),
+            dataset_names.len(),
+            args.curvatures.len(),
             args.scan_steps * 6 + 5,
             args.metric.as_deref().unwrap(),
             args.n_seeds
@@ -463,7 +554,10 @@ fn main() {
         } else {
             Dataset::load_synthetic(dataset_name, args.n_samples, 42)
         };
-        println!("Loaded {} samples with {} features", dataset.n_points, dataset.n_features);
+        println!(
+            "Loaded {} samples with {} features",
+            dataset.n_points, dataset.n_features
+        );
 
         let evaluator = Arc::new(Evaluator::new(dataset));
 
