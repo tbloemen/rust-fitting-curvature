@@ -101,12 +101,12 @@ impl TrialConfig {
         .exp()
         .clamp(PERP_RATIO_MIN, PERP_RATIO_MAX);
 
-        let momentum = rng.uniform() * 0.4 + 0.6; // [0.70, 0.95]
+        let momentum = rng.uniform() * 0.4 + 0.6; // [0.60, 1.00]
 
         let scaling_loss = (rng.uniform() * 5.0) as u8; // 0..=4
         let centering_weight = rng.uniform() * 2.0;
-        let global_loss_weight = rng.uniform() * 2.0; // narrowed from [0, 50]
-        let norm_loss_weight = rng.uniform() * 0.02; // narrowed from [0, 0.05]
+        let global_loss_weight = rng.uniform() * 2.0;
+        let norm_loss_weight = rng.uniform() * 0.02;
 
         Self {
             learning_rate: lr,
@@ -123,15 +123,15 @@ impl TrialConfig {
         let mut cfg = self.clone();
         if rng.uniform() < 0.3 {
             cfg.learning_rate =
-                (cfg.learning_rate * 2.0_f64.powf((rng.uniform() - 0.5) * 1.0)).clamp(0.5, 300.0);
+                (cfg.learning_rate * 2.0_f64.powf((rng.uniform() - 0.5) * 1.0)).clamp(0.5, 50.0);
         }
         if rng.uniform() < 0.3 {
             cfg.perplexity_ratio = (cfg.perplexity_ratio
                 * 2.0_f64.powf((rng.uniform() - 0.5) * 0.8))
-            .clamp(0.0004, 0.01);
+            .clamp(0.0004, 0.03);
         }
         if rng.uniform() < 0.3 {
-            cfg.momentum_main = (cfg.momentum_main + (rng.uniform() - 0.5) * 0.2).clamp(0.70, 0.95);
+            cfg.momentum_main = (cfg.momentum_main + (rng.uniform() - 0.5) * 0.2).clamp(0.60, 1.0);
         }
         if rng.uniform() < 0.2 {
             cfg.scaling_loss = (rng.uniform() * 5.0) as u8;
