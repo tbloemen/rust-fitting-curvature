@@ -1581,7 +1581,9 @@ def main() -> None:
         f"Loaded {len(records)} trials across {len({r['curvature'] for r in records})} curvatures."
     )
 
-    print(f"Metric: {metric or 'not specified — metric-specific plots will be skipped'}\n")
+    print(
+        f"Metric: {metric or 'not specified — metric-specific plots will be skipped'}\n"
+    )
 
     params = present_params(records)
     print(f"Parameters: {params}\n")
