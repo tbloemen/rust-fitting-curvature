@@ -6,9 +6,23 @@ use fitting_core::metrics::{
 };
 use fitting_core::visualisation::{SphericalProjection, project_to_2d};
 use indicatif::ProgressBar;
+use serde::Serialize;
 
 use crate::data::Dataset;
 use crate::search_space::TrialConfig;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AllMetrics {
+    pub trustworthiness: f64,
+    pub continuity: f64,
+    pub knn_overlap: f64,
+    pub geodesic_distortion_gu2019: f64,
+    pub geodesic_distortion_mse: f64,
+    pub davies_bouldin_ratio: f64,
+    pub dunn_index: f64,
+    pub class_density_measure: f64,
+    pub cluster_density_measure: f64,
+}
 
 pub struct Evaluator {
     dataset: Dataset,
@@ -29,6 +43,88 @@ impl Evaluator {
 
     pub fn n_points(&self) -> usize {
         self.n_samples
+    }
+
+    pub fn compute_all_metrics(
+        &self,
+        config: &TrialConfig,
+        curvature: f64,
+        seed: u64,
+        pb_iters: &ProgressBar,
+    ) -> AllMetrics {
+        let n = self.n_samples;
+        let training_config = config.to_training_config(n, curvature, seed);
+
+        pb_iters.reset();
+        pb_iters.set_length(training_config.n_iterations as u64);
+
+        let mut state =
+            EmbeddingState::new(&self.dataset.x, self.dataset.n_features, &training_config);
+        while !state.is_done() {
+            state.step();
+            pb_iters.inc(1);
+        }
+
+        let projected = project_to_2d(
+            &state.points,
+            n,
+            state.ambient_dim,
+            training_config.curvature,
+            SphericalProjection::AzimuthalEquidistant,
+        );
+
+        let k = (30_f64.min(n as f64 * 0.1)).round() as usize;
+
+        // Compute all metrics once using precomputed data.
+        let embedded_dist = compute_euclidean_distance_matrix(&projected.coords, n, 2);
+
+        AllMetrics {
+            trustworthiness: trustworthiness(&self.high_dim_dist, &embedded_dist, n, k),
+            continuity: continuity(&self.high_dim_dist, &embedded_dist, n, k),
+            knn_overlap: knn_overlap(&self.high_dim_dist, &embedded_dist, n, k),
+            geodesic_distortion_gu2019: geodesic_distortion_gu2019(
+                &self.high_dim_dist,
+                &embedded_dist,
+                n,
+            ),
+            geodesic_distortion_mse: geodesic_distortion_mse(
+                &self.high_dim_dist,
+                &embedded_dist,
+                n,
+            ),
+            davies_bouldin_ratio: davies_bouldin_ratio(
+                &self.high_dim_dist,
+                &projected.coords,
+                &self.dataset.labels,
+                n,
+            ),
+            dunn_index: dunn_index(&embedded_dist, &self.dataset.labels, n),
+            class_density_measure: class_density_measure(
+                &projected.coords,
+                &self.dataset.labels,
+                n,
+            ),
+            cluster_density_measure: cluster_density_measure(
+                &projected.coords,
+                &self.dataset.labels,
+                n,
+            ),
+        }
+    }
+
+    pub fn get_metric_value(&self, metrics: &AllMetrics, metric: &str) -> f64 {
+        match metric {
+            "trustworthiness" => metrics.trustworthiness,
+            "continuity" => metrics.continuity,
+            "knn_overlap" => metrics.knn_overlap,
+            "geodesic_distortion_gu2019" => metrics.geodesic_distortion_gu2019,
+            "geodesic_distortion_mse" => metrics.geodesic_distortion_mse,
+            "davies_bouldin_ratio" => metrics.davies_bouldin_ratio,
+            "dunn_index" => metrics.dunn_index,
+            "class_density_measure" => metrics.class_density_measure,
+            "cluster_density_measure" => metrics.cluster_density_measure,
+            _ => panic!("Unknown metric: {}", metric),
+        }
     }
 
     pub fn evaluate_with_metric(
