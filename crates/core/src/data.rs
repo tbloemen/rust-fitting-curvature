@@ -3,6 +3,7 @@
 //! Note: filesystem access is not available in WASM; these functions
 //! are only compiled for native targets.
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::synthetic_data::SyntheticData;
 
 #[cfg(not(target_arch = "wasm32"))]
