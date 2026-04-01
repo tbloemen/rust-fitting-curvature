@@ -1523,8 +1523,7 @@ def main() -> None:
     parser.add_argument(
         "--metric",
         default=None,
-        help="Metric column to analyze, e.g. 'davies_bouldin_ratio'. "
-        "Auto-detected from present columns if not set.",
+        help="Metric column to analyze, e.g. 'davies_bouldin_ratio'. Auto-detected from present columns if not set.",
     )
     parser.add_argument(
         "--top-pairs",
@@ -1536,7 +1535,7 @@ def main() -> None:
         "--top-pct",
         type=float,
         default=0.1,
-        help="Fraction of top runs used in the consensus plot, e.g. 0.1 = top 10%% (default: 0.1)",
+        help="Fraction of top runs used in the consensus plot, e.g. 0.1 = top 10% (default: 0.1)",
     )
     args = parser.parse_args()
 
@@ -1553,18 +1552,21 @@ def main() -> None:
         sweep_params = _scan_params_ordered(records)
         print(f"Loaded {len(records)} scan records across {n_curvatures} curvatures.")
         print(f"Parameters swept: {sweep_params}")
-        print(f"Metric: {metric or 'auto-detected'}\n")
+        print(f"Metric: {metric or 'not specified — scan plots will be skipped'}\n")
 
-        print("Generating scan plots:")
-        plot_scan_effects(
-            records, os.path.join(args.output, "scan_effects.svg"), metric
-        )
-        plot_scan_sensitivity(
-            records, os.path.join(args.output, "scan_sensitivity.svg"), metric
-        )
-        plot_scan_optimal(
-            records, os.path.join(args.output, "scan_optimal.svg"), metric
-        )
+        if metric is not None:
+            print("Generating scan plots:")
+            plot_scan_effects(
+                records, os.path.join(args.output, "scan_effects.svg"), metric
+            )
+            plot_scan_sensitivity(
+                records, os.path.join(args.output, "scan_sensitivity.svg"), metric
+            )
+            plot_scan_optimal(
+                records, os.path.join(args.output, "scan_optimal.svg"), metric
+            )
+        else:
+            print("No plots generated (pass --metric to enable scan plots).")
 
         print(f"\nDone. All plots saved to '{args.output}/'.")
         return
@@ -1579,43 +1581,13 @@ def main() -> None:
         f"Loaded {len(records)} trials across {len({r['curvature'] for r in records})} curvatures."
     )
 
-    # Auto-detect metric: prefer explicit --metric, then first present metric column.
-    if metric is None:
-        metric = next(
-            (m for m in ALL_METRICS if any(r.get(m) is not None for r in records)),
-            None,
-        )
-    print(f"Metric: {metric or 'auto-detected'}\n")
+    print(f"Metric: {metric or 'not specified — metric-specific plots will be skipped'}\n")
 
     params = present_params(records)
     print(f"Parameters: {params}\n")
 
-    correlations = compute_correlations(records, params, metric)
-    importance = mean_abs_rho(correlations, params)
-    top_params = sorted(importance, key=lambda p: importance[p], reverse=True)[
-        : args.top_pairs
-    ]
-
     print("Generating plots:")
-    plot_spearman_heatmap(
-        correlations, params, os.path.join(args.output, "spearman_heatmap.svg")
-    )
-    plot_param_importance(
-        correlations, params, os.path.join(args.output, "param_importance.svg")
-    )
-    plot_convergence(records, os.path.join(args.output, "convergence.svg"), metric)
-    plot_param_vs_metric(records, params, args.output, metric)
-
-    print(f"\nTop {args.top_pairs} for pairwise plot: {top_params}")
-    if not top_params:
-        print("  (skipped pairwise — not enough data for correlations)")
-    else:
-        plot_pairwise_interactions(
-            records,
-            top_params,
-            os.path.join(args.output, f"pairwise_top{args.top_pairs}.svg"),
-            metric,
-        )
+    # Metric-independent plots (always generated)
     plot_metric_correlation(
         records, os.path.join(args.output, "metric_correlation.svg")
     )
@@ -1628,20 +1600,48 @@ def main() -> None:
         os.path.join(args.output, "top_k_consensus.svg"),
         top_pct=args.top_pct,
     )
-    plot_marginal_effects(
-        records,
-        params,
-        os.path.join(args.output, "marginal_effects.svg"),
-        metric,
-    )
-    plot_good_regions(
-        records,
-        params,
-        os.path.join(args.output, "good_regions.svg"),
-        metric,
-        top_pct=args.top_pct,
-    )
-    print_good_regions(records, params, metric, args.top_pct)
+
+    if metric is not None:
+        # Metric-specific plots (skipped when --metric is not given)
+        correlations = compute_correlations(records, params, metric)
+        importance = mean_abs_rho(correlations, params)
+        top_params = sorted(importance, key=lambda p: importance[p], reverse=True)[
+            : args.top_pairs
+        ]
+
+        plot_spearman_heatmap(
+            correlations, params, os.path.join(args.output, "spearman_heatmap.svg")
+        )
+        plot_param_importance(
+            correlations, params, os.path.join(args.output, "param_importance.svg")
+        )
+        plot_convergence(records, os.path.join(args.output, "convergence.svg"), metric)
+        plot_param_vs_metric(records, params, args.output, metric)
+
+        print(f"\nTop {args.top_pairs} for pairwise plot: {top_params}")
+        if not top_params:
+            print("  (skipped pairwise — not enough data for correlations)")
+        else:
+            plot_pairwise_interactions(
+                records,
+                top_params,
+                os.path.join(args.output, f"pairwise_top{args.top_pairs}.svg"),
+                metric,
+            )
+        plot_marginal_effects(
+            records,
+            params,
+            os.path.join(args.output, "marginal_effects.svg"),
+            metric,
+        )
+        plot_good_regions(
+            records,
+            params,
+            os.path.join(args.output, "good_regions.svg"),
+            metric,
+            top_pct=args.top_pct,
+        )
+        print_good_regions(records, params, metric, args.top_pct)
 
     print(f"\nDone. All plots saved to '{args.output}/'.")
 
