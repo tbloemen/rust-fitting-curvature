@@ -5,7 +5,6 @@ Hyperparameter sensitivity analysis for fitting-curvature optimizer results.
   1. spearman_heatmap.svg         — Spearman ρ per (parameter × curvature)
   2. param_importance.svg         — Mean |ρ| across curvatures (bar chart)
   3. param_<name>_vs_metric.svg   — Per-parameter scatter vs metric, one series per curvature
-  5. pairwise_top<N>.svg          — Pairwise scatter for the top-N most important parameters
   6. metric_correlation.svg       — Metric–metric Spearman rank correlation (do metrics agree?)
   7. importance_heatmap.svg       — |ρ| for every (parameter × metric) pair, pooled across curvatures
   8. top_k_consensus.svg          — Hyperparameter profile of the top-k% runs per metric
@@ -355,174 +354,6 @@ def plot_param_vs_metric(
         fig.savefig(out_path, format="svg", bbox_inches="tight")
         plt.close(fig)
         print(f"  {out_path}")
-
-
-# ─── Plot 5: Pairwise interaction grid ────────────────────────────────────────
-
-
-def plot_pairwise_interactions(
-    records: list[dict],
-    top_params: list[str],
-    out_path: str,
-    metric: str | None = None,
-) -> None:
-    """
-    Grid of pairwise scatter plots for top_params.
-    Upper triangle: scatter colored by metric value.
-    Diagonal:       KDE / histogram of each parameter.
-    Lower triangle: scatter colored by curvature.
-    """
-    all_ks = sorted({r["curvature"] for r in records})
-    n = len(top_params)
-    metric_label = metric or "metric"
-
-    fig, axes = plt.subplots(n, n, figsize=(n * 2.3, n * 2.1))
-    if n == 1:
-        axes = np.array([[axes]])
-
-    metrics = np.array([get_metric_value(r, metric) or 0.0 for r in records])
-    norm_metric = mcolors.Normalize(
-        vmin=np.percentile(metrics, 5), vmax=np.percentile(metrics, 95)
-    )
-    cmap_metric = cm.plasma
-
-    def get_col(k):
-        return k_color(k, all_ks)
-
-    for i, pi in enumerate(top_params):
-        for j, pj in enumerate(top_params):
-            ax = axes[i, j]
-
-            xi = np.array(
-                [get_param_value(r, pi) if pi in r else np.nan for r in records],
-                dtype=float,
-            )
-            xj = np.array(
-                [get_param_value(r, pj) if pj in r else np.nan for r in records],
-                dtype=float,
-            )
-            m = np.array(
-                [get_metric_value(r, metric) or np.nan for r in records], dtype=float
-            )
-            k_vals = np.array([r["curvature"] for r in records])
-
-            if i == j:
-                # Diagonal: overlapping histograms per curvature
-                valid = xi[~np.isnan(xi)]
-                bins = 20
-                log = pi in LOG_SCALE_PARAMS
-                if log and (valid > 0).all():
-                    edges = np.exp(
-                        np.linspace(np.log(valid.min()), np.log(valid.max()), bins + 1)
-                    )
-                else:
-                    edges = np.linspace(np.nanmin(valid), np.nanmax(valid), bins + 1)
-                for k in all_ks:
-                    mask = (k_vals == k) & ~np.isnan(xi)
-                    if mask.sum() < 2:
-                        continue
-                    ax.hist(
-                        xi[mask],
-                        bins=edges,
-                        alpha=0.4,
-                        color=get_col(k),
-                        density=True,
-                        histtype="stepfilled",
-                    )
-                ax.set_xlabel(pi, fontsize=7)
-                if pi in LOG_SCALE_PARAMS:
-                    ax.set_xscale("log")
-
-            elif i < j:
-                # Upper triangle: colored by metric
-                mask = ~(np.isnan(xi) | np.isnan(xj))
-                ax.scatter(
-                    xj[mask],
-                    xi[mask],
-                    c=m[mask],
-                    cmap=cmap_metric,
-                    norm=norm_metric,
-                    s=6,
-                    alpha=0.6,
-                    linewidths=0,
-                )
-            else:
-                # Lower triangle: colored by curvature
-                for k in all_ks:
-                    mask = (k_vals == k) & ~np.isnan(xi) & ~np.isnan(xj)
-                    if mask.sum() < 2:
-                        continue
-                    ax.scatter(
-                        xj[mask],
-                        xi[mask],
-                        color=get_col(k),
-                        s=6,
-                        alpha=0.45,
-                        linewidths=0,
-                    )
-
-            # Axis labels only on edges
-            if j == 0 and i != j:
-                ax.set_ylabel(pi, fontsize=7)
-            else:
-                ax.set_ylabel("")
-            if i == n - 1 and i != j:
-                ax.set_xlabel(pj, fontsize=7)
-            else:
-                ax.set_xlabel("")
-            ax.tick_params(labelsize=6)
-
-            if pi in LOG_SCALE_PARAMS and i != j:
-                ax.set_yscale("log")
-            if pj in LOG_SCALE_PARAMS and i != j:
-                ax.set_xscale("log")
-
-    # Shared colorbar for metric (upper triangle) — placed in right margin
-    sm = cm.ScalarMappable(cmap=cmap_metric, norm=norm_metric)
-    sm.set_array([])
-
-    # Legend for curvature (lower triangle) — placed in bottom margin
-    handles = [
-        plt.Line2D(
-            [0],
-            [0],
-            marker="o",
-            color="w",
-            markerfacecolor=get_col(k),
-            markersize=5,
-            label=f"k={k:+.1f}",
-        )
-        for k in all_ks
-    ]
-
-    # Reserve right margin for colorbar and bottom margin for legend,
-    # then add both outside the grid so they don't overlap the cells.
-    fig.tight_layout(rect=[0, 0.08, 0.88, 1.0])
-
-    cbar_ax = fig.add_axes([0.90, 0.15, 0.015, 0.70])
-    cbar = fig.colorbar(sm, cax=cbar_ax)
-    cbar.set_label(f"{metric_label} (upper triangle)", fontsize=7)
-    cbar.ax.tick_params(labelsize=7)
-
-    fig.legend(
-        handles=handles,
-        fontsize=6,
-        loc="upper center",
-        bbox_to_anchor=(0.44, 0.07),
-        ncol=min(5, len(all_ks)),
-        title="curvature (lower triangle)",
-        title_fontsize=6,
-    )
-
-    fig.suptitle(
-        f"Pairwise interactions — top {n} parameters\n"
-        "upper: colored by metric | lower: colored by curvature | diagonal: distribution per k",
-        y=1.01,
-        fontsize=9,
-    )
-    fig.savefig(out_path, format="svg", bbox_inches="tight")
-    plt.close(fig)
-    print(f"  {out_path}")
 
 
 # ─── Plot 6: Metric–metric rank correlation ───────────────────────────────────
@@ -1475,10 +1306,6 @@ def main() -> None:
     if metric is not None:
         # Metric-specific plots (skipped when --metric is not given)
         correlations = compute_correlations(records, params, metric)
-        importance = mean_abs_rho(correlations, params)
-        top_params = sorted(importance, key=lambda p: importance[p], reverse=True)[
-            : args.top_pairs
-        ]
 
         plot_spearman_heatmap(
             correlations, params, os.path.join(args.output, "spearman_heatmap.svg")
@@ -1488,16 +1315,6 @@ def main() -> None:
         )
         plot_param_vs_metric(records, params, args.output, metric)
 
-        print(f"\nTop {args.top_pairs} for pairwise plot: {top_params}")
-        if not top_params:
-            print("  (skipped pairwise — not enough data for correlations)")
-        else:
-            plot_pairwise_interactions(
-                records,
-                top_params,
-                os.path.join(args.output, f"pairwise_top{args.top_pairs}.svg"),
-                metric,
-            )
         plot_marginal_effects(
             records,
             params,
