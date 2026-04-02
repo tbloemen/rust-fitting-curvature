@@ -1,5 +1,6 @@
 pub mod affinities;
 pub mod config;
+pub mod data;
 pub mod embedding;
 pub mod kernels;
 pub mod kl_divergence;

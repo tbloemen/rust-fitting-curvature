@@ -1,0 +1,10 @@
+[project]
+name = "rust-fitting-curvature"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "matplotlib>=3.10.8",
+    "scipy>=1.17.1",
+]
