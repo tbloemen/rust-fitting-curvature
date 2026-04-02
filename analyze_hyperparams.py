@@ -54,7 +54,6 @@ ALL_PARAMS = [
     "perplexity_ratio",  # new format
     "perplexity",  # old format (absolute)
     "momentum_main",
-    "scaling_loss",
     "centering_weight",
     "global_loss_weight",
     "norm_loss_weight",
@@ -63,19 +62,9 @@ ALL_PARAMS = [
 ]
 
 LOG_SCALE_PARAMS = {"learning_rate", "perplexity", "perplexity_ratio"}
-CATEGORICAL_PARAMS = {"scaling_loss"}
+CATEGORICAL_PARAMS: set[str] = set()
 # Metrics where lower is better (will be handled accordingly in plots).
 MINIMIZE_METRICS = {"geodesic_distortion_gu2019", "geodesic_distortion_mse"}
-
-# Scaling loss: string to numeric mapping for backward compatibility.
-SCALING_LOSS_NAMES = [
-    "none",
-    "hard_barrier",
-    "softplus_barrier",
-    "rms",
-    "mean_distance",
-]
-SCALING_LOSS_TO_NUM = {name: i for i, name in enumerate(SCALING_LOSS_NAMES)}
 
 ALL_METRICS = [
     "trustworthiness",
@@ -90,27 +79,6 @@ ALL_METRICS = [
 ]
 
 
-def scaling_loss_to_numeric(val: str | int) -> float:
-    """Convert a scaling_loss value (string or int) to a numeric value."""
-    if isinstance(val, str):
-        return float(SCALING_LOSS_TO_NUM.get(val, 0))
-    return float(val)
-
-
-def scaling_loss_label(val: str | int) -> str:
-    """Convert a scaling_loss value (string or int) to a human-readable label."""
-    if isinstance(val, str):
-        return val.replace("_", " ").title()
-    labels = {
-        0: "None",
-        1: "Hard Barrier",
-        2: "Softplus Barrier",
-        3: "Rms",
-        4: "Mean Distance",
-    }
-    return labels.get(int(val), str(val))
-
-
 def get_metric_value(record: dict, metric: str | None) -> float | None:
     """Extract the named metric value from a record, or None if absent."""
     if metric and metric in record:
@@ -119,12 +87,10 @@ def get_metric_value(record: dict, metric: str | None) -> float | None:
 
 
 def get_param_value(record: dict, param: str) -> float | None:
-    """Extract a parameter value, converting scaling_loss strings to numeric."""
+    """Extract a parameter value as float."""
     val = record.get(param)
     if val is None:
         return None
-    if param == "scaling_loss":
-        return scaling_loss_to_numeric(val)
     return float(val)
 
 
@@ -345,84 +311,42 @@ def plot_param_vs_metric(
 
     for param in params:
         is_log = param in LOG_SCALE_PARAMS
-        is_cat = param == "scaling_loss"
 
-        if is_cat:
-            fig, ax = plt.subplots(figsize=(8, 4.5))
-            # Box plot per category value, grouped by curvature
-            cat_vals = sorted(
-                {scaling_loss_to_numeric(r[param]) for r in records if param in r}
-            )
-            width = 0.8 / len(all_ks)
-            for ki, k in enumerate(all_ks):
-                group = [r for r in records if r["curvature"] == k and param in r]
-                positions = [
-                    ci + ki * width - 0.4 + width / 2 for ci in range(len(cat_vals))
-                ]
-                data = [
-                    [
-                        get_metric_value(r, metric)
-                        for r in group
-                        if scaling_loss_to_numeric(r[param]) == c
-                        and get_metric_value(r, metric) is not None
-                    ]
-                    for c in cat_vals
-                ]
-                data = [d for d in data if d]  # drop empty
-                if not data:
-                    continue
-                ax.boxplot(
-                    data,
-                    positions=[p for p, d in zip(positions, data) if d],
-                    widths=width * 0.8,
-                    patch_artist=True,
-                    medianprops=dict(color="black", linewidth=1.5),
-                    boxprops=dict(facecolor=(*k_color(k, all_ks)[:3], 0.6)),
-                    whiskerprops=dict(linewidth=0.8),
-                    capprops=dict(linewidth=0.8),
-                    flierprops=dict(marker=".", markersize=3, alpha=0.4),
+        fig, ax = plt.subplots(figsize=(7, 4.5))
+        for k in all_ks:
+            group = [
+                r
+                for r in records
+                if r["curvature"] == k
+                and param in r
+                and get_metric_value(r, metric) is not None
+            ]
+            if not group:
+                continue
+            col = k_color(k, all_ks)
+            xs = np.array([get_param_value(r, param) for r in group])
+            ys = np.array([get_metric_value(r, metric) for r in group])
+            ax.scatter(xs, ys, color=col, alpha=0.35, s=12, linewidths=0)
+            # Trend: sort by x, then moving average
+            order = np.argsort(xs)
+            xs_s, ys_s = xs[order], ys[order]
+            win = max(3, len(xs_s) // 8)
+            if len(xs_s) >= win * 2:
+                trend_y = _moving_average(ys_s, win)
+                trend_x = xs_s[win // 2 : win // 2 + len(trend_y)]
+                ax.plot(
+                    trend_x,
+                    trend_y,
+                    color=col,
+                    linewidth=1.8,
+                    label=f"k={k:+.1f}",
+                    alpha=0.9,
                 )
-            ax.set_xticks(range(len(cat_vals)))
-            ax.set_xticklabels(
-                [scaling_loss_label(SCALING_LOSS_NAMES[int(c)]) for c in cat_vals]
-            )
-            ax.set_xlabel("scaling_loss variant")
-        else:
-            fig, ax = plt.subplots(figsize=(7, 4.5))
-            for k in all_ks:
-                group = [
-                    r
-                    for r in records
-                    if r["curvature"] == k
-                    and param in r
-                    and get_metric_value(r, metric) is not None
-                ]
-                if not group:
-                    continue
-                col = k_color(k, all_ks)
-                xs = np.array([get_param_value(r, param) for r in group])
-                ys = np.array([get_metric_value(r, metric) for r in group])
-                ax.scatter(xs, ys, color=col, alpha=0.35, s=12, linewidths=0)
-                # Trend: sort by x, then moving average
-                order = np.argsort(xs)
-                xs_s, ys_s = xs[order], ys[order]
-                win = max(3, len(xs_s) // 8)
-                if len(xs_s) >= win * 2:
-                    trend_y = _moving_average(ys_s, win)
-                    trend_x = xs_s[win // 2 : win // 2 + len(trend_y)]
-                    ax.plot(
-                        trend_x,
-                        trend_y,
-                        color=col,
-                        linewidth=1.8,
-                        label=f"k={k:+.1f}",
-                        alpha=0.9,
-                    )
 
-            if is_log:
-                ax.set_xscale("log")
-            ax.set_xlabel(param + (" (log scale)" if is_log else ""))
-            ax.legend(fontsize=7, ncol=3, loc="best", markerscale=1.2)
+        if is_log:
+            ax.set_xscale("log")
+        ax.set_xlabel(param + (" (log scale)" if is_log else ""))
+        ax.legend(fontsize=7, ncol=3, loc="best", markerscale=1.2)
 
         ax.set_ylabel(metric_label)
         ax.set_title(f"Effect of {param} on {metric_label}")
@@ -1233,7 +1157,6 @@ def plot_scan_effects(
 
     for ax, param in zip(axes_flat, sweep_params):
         is_log = param in LOG_SCALE_PARAMS
-        is_cat = param == "scaling_loss"
 
         for k in all_ks:
             group = sorted(
@@ -1276,14 +1199,6 @@ def plot_scan_effects(
 
         if is_log:
             ax.set_xscale("log")
-        if is_cat:
-            ticks = list(range(len(SCALING_LOSS_NAMES)))
-            ax.set_xticks(ticks)
-            ax.set_xticklabels(
-                [scaling_loss_label(n) for n in SCALING_LOSS_NAMES],
-                fontsize=7,
-                rotation=20,
-            )
 
         ax.set_title(param, fontsize=9)
         ax.set_xlabel(param + (" (log)" if is_log else ""), fontsize=7)

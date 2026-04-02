@@ -9,7 +9,7 @@ use std::thread;
 
 use crate::data::Dataset;
 use crate::evaluate::{AllMetrics, Evaluator};
-use crate::search_space::{TrialConfig, scaling_loss_name};
+use crate::search_space::TrialConfig;
 
 mod data;
 mod evaluate;
@@ -78,7 +78,6 @@ struct TrialResult {
     learning_rate: f64,
     perplexity_ratio: f64,
     momentum_main: f64,
-    scaling_loss: String,
     centering_weight: f64,
     global_loss_weight: f64,
     norm_loss_weight: f64,
@@ -116,7 +115,6 @@ impl TrialResult {
             learning_rate: config.learning_rate,
             perplexity_ratio: config.perplexity_ratio,
             momentum_main: config.momentum_main,
-            scaling_loss: scaling_loss_name(config.scaling_loss).to_string(),
             centering_weight: config.centering_weight,
             global_loss_weight: config.global_loss_weight,
             norm_loss_weight: config.norm_loss_weight,
@@ -325,13 +323,6 @@ fn load_best_config_from_jsonl(path: &str, n_points: usize) -> Option<TrialConfi
                 learning_rate: v["learning_rate"].as_f64().unwrap_or(10.0),
                 perplexity_ratio,
                 momentum_main: v["momentum_main"].as_f64().unwrap_or(0.8),
-                scaling_loss: match v["scaling_loss"].as_str() {
-                    Some("hard_barrier") => 1,
-                    Some("softplus_barrier") => 2,
-                    Some("rms") => 3,
-                    Some("mean_distance") => 4,
-                    Some(_) | None => v["scaling_loss"].as_u64().unwrap_or(0) as u8,
-                },
                 centering_weight: v["centering_weight"].as_f64().unwrap_or(0.0),
                 global_loss_weight: v["global_loss_weight"].as_f64().unwrap_or(0.0),
                 norm_loss_weight: v["norm_loss_weight"].as_f64().unwrap_or(0.0),
@@ -363,7 +354,6 @@ fn apply_param(config: &mut TrialConfig, param: &str, val: f64) {
         "learning_rate" => config.learning_rate = val,
         "perplexity_ratio" => config.perplexity_ratio = val,
         "momentum_main" => config.momentum_main = val,
-        "scaling_loss" => config.scaling_loss = val as u8,
         "centering_weight" => config.centering_weight = val,
         "global_loss_weight" => config.global_loss_weight = val,
         "norm_loss_weight" => config.norm_loss_weight = val,
@@ -385,7 +375,6 @@ fn run_scan(
         learning_rate: 10.0,
         perplexity_ratio: 0.003,
         momentum_main: 0.85,
-        scaling_loss: 3,
         centering_weight: 0.5,
         global_loss_weight: 0.0,
         norm_loss_weight: 0.0,
@@ -416,7 +405,6 @@ fn run_scan(
         ("learning_rate", sweep_values(0.5, 50.0, n, true)),
         ("perplexity_ratio", sweep_values(0.0004, 0.03, n, true)),
         ("momentum_main", sweep_values(0.60, 1.0, n, false)),
-        ("scaling_loss", vec![0.0, 1.0, 2.0, 3.0, 4.0]),
         ("centering_weight", sweep_values(0.0, 2.0, n, false)),
         ("global_loss_weight", sweep_values(0.0, 1.0, n, false)),
         ("norm_loss_weight", sweep_values(0.0, 0.02, n, false)),
@@ -525,7 +513,7 @@ fn main() {
             "Starting scan: {} datasets × {} curvatures × ~{} sweep points, metric={}, seeds={}",
             dataset_names.len(),
             args.curvatures.len(),
-            args.scan_steps * 6 + 5,
+            args.scan_steps * 5,
             args.metric.as_deref().unwrap(),
             args.n_seeds
         ),
