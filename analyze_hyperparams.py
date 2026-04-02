@@ -5,7 +5,6 @@ Hyperparameter sensitivity analysis for fitting-curvature optimizer results.
   1. spearman_heatmap.svg         — Spearman ρ per (parameter × curvature)
   2. param_importance.svg         — Mean |ρ| across curvatures (bar chart)
   3. param_<name>_vs_metric.svg   — Per-parameter scatter vs metric, one series per curvature
-  4. convergence.svg              — Best metric found vs trial number per curvature
   5. pairwise_top<N>.svg          — Pairwise scatter for the top-N most important parameters
   6. metric_correlation.svg       — Metric–metric Spearman rank correlation (do metrics agree?)
   7. importance_heatmap.svg       — |ρ| for every (parameter × metric) pair, pooled across curvatures
@@ -356,51 +355,6 @@ def plot_param_vs_metric(
         fig.savefig(out_path, format="svg", bbox_inches="tight")
         plt.close(fig)
         print(f"  {out_path}")
-
-
-# ─── Plot 4: Optimizer convergence ────────────────────────────────────────────
-
-
-def plot_convergence(
-    records: list[dict], out_path: str, metric: str | None = None
-) -> None:
-    all_ks = sorted({r["curvature"] for r in records})
-    metric_label = metric or "metric"
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
-
-    for k in all_ks:
-        group = [
-            r
-            for r in records
-            if r["curvature"] == k and get_metric_value(r, metric) is not None
-        ]
-        if not group:
-            continue
-        col = k_color(k, all_ks)
-        trials = list(range(1, len(group) + 1))
-        metrics = [get_metric_value(r, metric) for r in group]
-        agg = min if metric in MINIMIZE_METRICS else max
-        best_so_far = [agg(metrics[: i + 1]) for i in range(len(metrics))]
-
-        axes[0].plot(trials, metrics, color=col, alpha=0.4, linewidth=0.8)
-        axes[0].scatter(trials, metrics, color=col, s=5, alpha=0.5)
-        axes[1].plot(trials, best_so_far, color=col, linewidth=1.8, label=f"k={k:+.1f}")
-
-    axes[0].set_title(f"{metric_label} per trial")
-    axes[0].set_xlabel("Trial")
-    axes[0].set_ylabel(metric_label)
-
-    axes[1].set_title(f"Best {metric_label} found so far")
-    axes[1].set_xlabel("Trial")
-    axes[1].set_ylabel(f"Best {metric_label}")
-    axes[1].legend(fontsize=7, ncol=2, loc="lower right")
-
-    fig.suptitle("Convergence by curvature", y=1.01)
-    fig.tight_layout()
-    fig.savefig(out_path, format="svg", bbox_inches="tight")
-    plt.close(fig)
-    print(f"  {out_path}")
 
 
 # ─── Plot 5: Pairwise interaction grid ────────────────────────────────────────
@@ -1532,7 +1486,6 @@ def main() -> None:
         plot_param_importance(
             correlations, params, os.path.join(args.output, "param_importance.svg")
         )
-        plot_convergence(records, os.path.join(args.output, "convergence.svg"), metric)
         plot_param_vs_metric(records, params, args.output, metric)
 
         print(f"\nTop {args.top_pairs} for pairwise plot: {top_params}")
