@@ -35,8 +35,6 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.cm as cm
-import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
@@ -93,7 +91,7 @@ def get_param_value(record: dict, param: str) -> float | None:
 
 
 # Curvature color map (tab10 via curvature index)
-_CMAP_K = plt.cm.tab10
+_CMAP_K = plt.cm.tab10  # type: ignore
 
 
 def k_color(k: float, all_ks: list[float]) -> tuple:
@@ -402,7 +400,7 @@ def plot_metric_correlation(records: list[dict], out_path: str) -> None:
                 v1 = tuple(s1 * x for x in v1)
                 v2 = tuple(s2 * x for x in v2)
                 rho, _ = stats.spearmanr(v1, v2)
-                matrix[i, j] = float(rho)
+                matrix[i, j] = float(rho)  # type: ignore
 
         im = ax.imshow(matrix, cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
         ax.set_xticks(range(n_m))
@@ -469,7 +467,7 @@ def plot_variable_importance_heatmap(
                 continue
             xs, ys = zip(*pairs)
             rho, _ = stats.spearmanr(xs, ys)
-            matrix[i, j] = abs(float(rho))
+            matrix[i, j] = abs(float(rho))  # type: ignore
 
     vmax = min(0.8, float(np.nanmax(matrix))) if not np.all(np.isnan(matrix)) else 0.8
     fig, ax = plt.subplots(figsize=(n_m * 0.95 + 2.5, n_p * 0.55 + 1.8))
@@ -753,14 +751,14 @@ def _good_region_data(
         ]
         if len(all_vals) < 2 or not top_vals:
             continue
-        lo, hi = float(min(all_vals)), float(max(all_vals))
+        lo, hi = float(min(all_vals)), float(max(all_vals))  # type: ignore
         if hi <= lo:
             continue
 
         def norm(v: float, _lo: float = lo, _hi: float = hi) -> float:
             return (float(v) - _lo) / (_hi - _lo)
 
-        p10, p50, p90 = np.percentile(top_vals, [10, 50, 90])
+        p10, p50, p90 = np.percentile(top_vals, [10, 50, 90])  # type: ignore
         result[param] = (norm(p10), norm(p50), norm(p90))
     return result
 
@@ -807,7 +805,7 @@ def print_good_regions(
             ]
             if not top_vals:
                 continue
-            p10, p50, p90 = np.percentile(top_vals, [10, 50, 90])
+            p10, p50, p90 = np.percentile(top_vals, [10, 50, 90])  # type: ignore
             print(f"  {param:<35} {p10:>10.4g} {p50:>10.4g} {p90:>10.4g}")
 
 
@@ -1124,7 +1122,7 @@ def plot_scan_optimal(
             xs = [get_param_value(r, param) or 0 for r in group]
             ys = [get_metric_value(r, metric) for r in group]
             best_idx = int(
-                np.argmin(ys) if metric in MINIMIZE_METRICS else np.argmax(ys)
+                np.argmin(ys) if metric in MINIMIZE_METRICS else np.argmax(ys)  # type: ignore
             )
             val_matrix[i, j] = ys[best_idx]
             # Normalise position: 0 = lowest x, 1 = highest x
