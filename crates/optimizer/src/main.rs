@@ -33,8 +33,8 @@ struct Args {
     #[arg(long, default_value = "1000")]
     n_samples: usize,
 
-    /// Output file prefix. Each session writes to <output>_<dataset>_k<curvature>.jsonl.
-    #[arg(long, default_value = "results/results")]
+    /// Output file. All results (all datasets, all curvatures) are appended here.
+    #[arg(long, default_value = "results/results.jsonl")]
     output: String,
 
     #[arg(long)]
@@ -60,7 +60,7 @@ struct Args {
     #[arg(long)]
     metric: Option<String>,
 
-    /// For --mode scan: path prefix of a previous run to load the best config from.
+    /// For --mode scan: results file of a previous run to load the best config from.
     #[arg(long)]
     scan_from: Option<String>,
 
@@ -68,12 +68,9 @@ struct Args {
     #[arg(long, default_value = "12")]
     scan_steps: usize,
 
-    /// For --mode bayes: path prefix of previous results to warm-start from
-    /// (e.g. "results/results"). The optimizer will load all trials from the
-    /// matching <prefix>_<dataset>_k<curvature>.jsonl file and use them as
-    /// initial observations before beginning active Bayesian search.
-    /// Must be different from --output to avoid overwriting the source file.
-    #[arg(long, default_value = "results/results")]
+    /// For --mode bayes: results file to warm-start from (e.g. "results/results.jsonl").
+    /// Trials matching the current dataset and curvature are loaded as initial observations.
+    #[arg(long, default_value = "results/results.jsonl")]
     warm_start: Option<String>,
 }
 
@@ -155,10 +152,6 @@ impl TrialResult {
         self.cluster_density_measure = Some(m.cluster_density_measure);
         self
     }
-}
-
-fn output_path(prefix: &str, dataset_name: &str, curvature: f64) -> String {
-    format!("{}_{}_k{:.1}.jsonl", prefix, dataset_name, curvature).replace('.', "_")
 }
 
 fn write_result(result: &TrialResult, out_path: &str) {
@@ -300,7 +293,7 @@ fn run_random(
 ) {
     let mut rng =
         fitting_core::synthetic_data::Rng::new(curvature.to_bits() ^ 0xdead_beef_cafe_1111);
-    let out_path = output_path(&args.output, dataset_name, curvature);
+    let out_path = &args.output;
 
     let pb = make_progress_bar(
         mp,
@@ -348,10 +341,15 @@ fn run_random(
 
 /// Load previous trial results from a JSONL file and return them as (config, metric) pairs.
 ///
-/// Each line is a JSON object with config fields and per-metric values.  Lines
-/// where the requested metric is null/missing or the config fields are incomplete
-/// are silently skipped, so this is safe to call on files from other run modes.
-fn load_warm_start_trials(path: &str, metric: &str) -> Vec<(TrialConfig, f64)> {
+/// Filters to rows matching both `dataset_name` and `curvature` so that the
+/// single shared results file can be warm-started correctly for each session.
+/// Lines missing the metric, scan-only records, or incomplete configs are skipped.
+fn load_warm_start_trials(
+    path: &str,
+    metric: &str,
+    dataset_name: &str,
+    curvature: f64,
+) -> Vec<(TrialConfig, f64)> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(_) => return vec![],
@@ -360,6 +358,13 @@ fn load_warm_start_trials(path: &str, metric: &str) -> Vec<(TrialConfig, f64)> {
         .lines()
         .filter_map(|line| {
             let v: serde_json::Value = serde_json::from_str(line).ok()?;
+            // Skip records for other datasets or curvatures.
+            if v["dataset_name"].as_str()? != dataset_name {
+                return None;
+            }
+            if (v["curvature"].as_f64()? - curvature).abs() > 1e-9 {
+                return None;
+            }
             let metric_val = v[metric].as_f64()?;
             if !metric_val.is_finite() {
                 return None;
@@ -391,9 +396,8 @@ fn run_bayes(
         fitting_core::synthetic_data::Rng::new(curvature.to_bits() ^ 0xdead_beef_cafe_0000);
 
     // Warm-start: seed the GP with previously collected trials (e.g. from random search).
-    let n_warm = if let Some(prefix) = &args.warm_start {
-        let warm_path = output_path(prefix, dataset_name, curvature);
-        let trials = load_warm_start_trials(&warm_path, metric);
+    let n_warm = if let Some(warm_file) = &args.warm_start {
+        let trials = load_warm_start_trials(warm_file, metric, dataset_name, curvature);
         let n = trials.len();
         for (config, metric_val) in trials {
             optimizer.observe(config, metric_val);
@@ -403,7 +407,7 @@ fn run_bayes(
         0
     };
 
-    let out_path = output_path(&args.output, dataset_name, curvature);
+    let out_path = &args.output;
 
     let pb = make_progress_bar(
         mp,
@@ -490,9 +494,13 @@ fn run_bayes(
     }
 
     // Write GP state for external plotting (analyze_hyperparams.py --mode gp).
-    // Note: output_path() replaces all dots, so the file ends in "_jsonl" not ".jsonl".
+    // One state file per (dataset, curvature) session, derived from the output path.
     if let Some(state) = optimizer.export_state() {
-        let state_path = format!("{}_gp_state.json", out_path.trim_end_matches("_jsonl"));
+        let stem = out_path
+            .trim_end_matches(".jsonl")
+            .trim_end_matches(".json");
+        let k_tag = format!("{:+.1}", curvature).replace('.', "_");
+        let state_path = format!("{}_gp_{}_{}.json", stem, dataset_name, k_tag);
         write_gp_state(&state, &state_path);
         pb.println(format!("GP state written to {}", state_path));
     }
@@ -511,13 +519,24 @@ fn write_gp_state(state: &GpState, path: &str) {
 
 // ─── Scan ─────────────────────────────────────────────────────────────────────
 
-fn load_best_config_from_jsonl(path: &str, n_points: usize) -> Option<TrialConfig> {
+fn load_best_config_from_jsonl(
+    path: &str,
+    n_points: usize,
+    dataset_name: &str,
+    curvature: f64,
+) -> Option<TrialConfig> {
     let content = std::fs::read_to_string(path).ok()?;
     let mut best_val = f64::NEG_INFINITY;
     let mut best: Option<TrialConfig> = None;
 
     for line in content.lines() {
         let v: serde_json::Value = serde_json::from_str(line).ok()?;
+        if v["dataset_name"].as_str().unwrap_or("") != dataset_name {
+            continue;
+        }
+        if v["curvature"].as_f64().map_or(true, |k| (k - curvature).abs() > 1e-9) {
+            continue;
+        }
         let metric = v["metric_mean"].as_f64().unwrap_or(f64::NEG_INFINITY);
         if metric > best_val {
             best_val = metric;
@@ -585,17 +604,16 @@ fn run_scan(
         norm_loss_weight: 0.0,
     };
 
-    let base = if let Some(prefix) = &args.scan_from {
-        let path = output_path(prefix, dataset_name, curvature);
-        match load_best_config_from_jsonl(&path, n_points) {
+    let base = if let Some(scan_file) = &args.scan_from {
+        match load_best_config_from_jsonl(scan_file, n_points, dataset_name, curvature) {
             Some(c) => {
-                eprintln!("scan k={}: loaded base config from {}", curvature, path);
+                eprintln!("scan k={}: loaded base config from {}", curvature, scan_file);
                 c
             }
             None => {
                 eprintln!(
                     "scan k={}: could not load from {}, using default",
-                    curvature, path
+                    curvature, scan_file
                 );
                 default_config
             }
@@ -623,11 +641,7 @@ fn run_scan(
     );
     pb.set_message(format!("{:+.1}", curvature));
 
-    let out_path = format!(
-        "{}_{}_k{:.1}_scan.jsonl",
-        args.output, dataset_name, curvature
-    )
-    .replace('.', "_");
+    let out_path = &args.output;
 
     let pb_iters = ProgressBar::hidden();
     let mut trial_idx = 0usize;
@@ -736,7 +750,7 @@ fn main() {
         }
     }
     println!("Curvatures: {:?}", args.curvatures);
-    println!("Output prefix: {}", args.output);
+    println!("Output file: {}", args.output);
 
     let mp = Arc::new(MultiProgress::new());
     let mut handles = Vec::new();

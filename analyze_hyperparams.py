@@ -119,18 +119,10 @@ def k_color(k: float, all_ks: list[float]) -> tuple:
 # ─── Data loading ─────────────────────────────────────────────────────────────
 
 
-def _rust_output_path(prefix: str, curvature: float, suffix: str = "") -> str:
-    """Replicate the Rust output_path() convention: dots replaced with underscores."""
-    return f"{prefix}_k{curvature:.1f}{suffix}.jsonl".replace(".", "_")
-
-
-def load_results(prefix: str) -> list[dict]:
-    """Load all JSONL result files matching the Rust output convention."""
+def _load_jsonl(path: str) -> list[dict]:
+    """Load all records from a single JSONL file."""
     records = []
-    for k in CURVATURES:
-        path = _rust_output_path(prefix, k)
-        if not Path(path).exists():
-            continue
+    try:
         with open(path) as f:
             for line in f:
                 line = line.strip()
@@ -139,7 +131,14 @@ def load_results(prefix: str) -> list[dict]:
                         records.append(json.loads(line))
                     except json.JSONDecodeError:
                         pass
+    except FileNotFoundError:
+        pass
     return records
+
+
+def load_results(path: str) -> list[dict]:
+    """Load non-scan trial results from a single JSONL file."""
+    return [r for r in _load_jsonl(path) if not r.get("scan_param")]
 
 
 def present_params(records: list[dict]) -> list[str]:
@@ -828,9 +827,10 @@ def load_gp_states(input_prefix: str) -> "dict[float, dict]":
     states: dict[float, dict] = {}
     prefix_path = Path(input_prefix)
     search_dir = prefix_path.parent
-    name_pattern = f"{prefix_path.name}*_gp_state.json"
+    # GP state files are named <output_stem>_gp_<dataset>_<curvature>.json
+    name_pattern = f"{prefix_path.stem}_gp_*.json"
     for path in sorted(search_dir.glob(name_pattern)):
-        m = re.search(r"_k(-?\d+_\d+)_gp_state$", path.stem)
+        m = re.search(r"_k(-?\d+_\d+)$", path.stem)
         if not m:
             continue
         k = float(m.group(1).replace("_", "."))
@@ -1313,22 +1313,9 @@ def plot_gp_ei(
 # ─── Scan data loading ────────────────────────────────────────────────────────
 
 
-def load_scan_results(prefix: str) -> list[dict]:
-    """Load all scan JSONL files matching the Rust scan output convention."""
-    records = []
-    for k in CURVATURES:
-        path = _rust_output_path(prefix, k, suffix="_scan")
-        if not Path(path).exists():
-            continue
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        records.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        pass
-    return records
+def load_scan_results(path: str) -> list[dict]:
+    """Load scan trial records from a single JSONL file (filtered by scan_param presence)."""
+    return [r for r in _load_jsonl(path) if r.get("scan_param")]
 
 
 def _scan_params_ordered(records: list[dict]) -> list[str]:
@@ -1648,8 +1635,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--input",
-        default="results/results_mnist",
-        help="JSONL file prefix (default: results/results_mnist)",
+        default="results/results.jsonl",
+        help="JSONL results file (default: results/results.jsonl)",
     )
     parser.add_argument(
         "--output",
@@ -1682,12 +1669,13 @@ def main() -> None:
         if not metric:
             print("Error: --metric is required for --mode gp")
             return
-        print(f"Loading GP states from '{args.input}*_gp_state.json' ...")
+        stem = Path(args.input).stem
+        print(f"Loading GP states matching '{stem}_gp_*.json' ...")
         states = load_gp_states(args.input)
         if not states:
             print(
                 "No GP state files found. Run the optimizer with --mode bayes first.\n"
-                f"Expected files matching: {args.input}*_gp_state.json"
+                f"Expected files matching: {stem}_gp_*.json"
             )
             return
         print(f"Loaded GP states for {len(states)} curvature(s): {sorted(states)}")
@@ -1699,7 +1687,7 @@ def main() -> None:
         return
 
     if args.mode == "scan":
-        print(f"Loading scan results from '{args.input}_k*_scan.jsonl' ...")
+        print(f"Loading scan results from '{args.input}' ...")
         records = load_scan_results(args.input)
         if not records:
             print("No scan results found. Run the optimizer with --mode scan first.")
@@ -1728,10 +1716,10 @@ def main() -> None:
         return
 
     # ── optimize mode ──────────────────────────────────────────────────────────
-    print(f"Loading results from '{args.input}_k*.jsonl' ...")
+    print(f"Loading results from '{args.input}' ...")
     records = load_results(args.input)
     if not records:
-        print("No results found. Check --input prefix.")
+        print("No results found. Check --input path.")
         return
     print(
         f"Loaded {len(records)} trials across {len({r['curvature'] for r in records})} curvatures."
