@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>GP Landscape — Curvature Embedding</title>
+    <link rel="stylesheet" href="style.css" />
+    <style>
+      .landscape-area {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: row;
+        padding: 16px;
+        gap: 12px;
+        align-items: stretch;
+      }
+      .heatmap-wrapper {
+        flex: 1;
+        min-width: 0;
+        min-height: 0;
+        position: relative;
+      }
+      #heatmap {
+        display: block;
+        background: #1a1a2e;
+        width: 100%;
+        height: 100%;
+      }
+      .colorbar-wrapper {
+        width: 52px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        /* top/bottom padding matches MARGIN.top / MARGIN.bottom in JS */
+        padding-top: 15px;
+        padding-bottom: 54px;
+      }
+      #colorbar {
+        width: 22px;
+        flex: 1;
+        min-height: 0;
+        display: block;
+      }
+      .cb-label {
+        font-size: 0.65rem;
+        color: #aaa;
+        font-family: monospace;
+        white-space: nowrap;
+      }
+      .nav-link {
+        display: inline-block;
+        margin-bottom: 14px;
+        font-size: 0.75rem;
+        color: #5dade2;
+        text-decoration: none;
+      }
+      .nav-link:hover {
+        color: #3498db;
+      }
+      .info-text {
+        margin-top: 8px;
+        font-size: 0.65rem;
+        color: #666;
+        word-break: break-word;
+        line-height: 1.4;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-content">
+        <a href="index.html" class="nav-link">← Embedding</a>
+        <h1>GP Landscape</h1>
+
+        <div class="section">
+          <div class="section-title">Data</div>
+          <div class="control-group">
+            <label for="ld-dataset">Dataset</label>
+            <select id="ld-dataset"></select>
+          </div>
+          <div class="control-group">
+            <label for="ld-curvature">Curvature</label>
+            <select id="ld-curvature"></select>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Axes</div>
+          <div class="control-group">
+            <label for="ld-x-param">X axis</label>
+            <select id="ld-x-param"></select>
+          </div>
+          <div class="control-group">
+            <label for="ld-y-param">Y axis</label>
+            <select id="ld-y-param"></select>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Metric</div>
+          <div class="control-group">
+            <label for="ld-metric">Metric</label>
+            <select id="ld-metric"></select>
+          </div>
+        </div>
+
+        <button id="ld-render-btn" class="primary" disabled>Render</button>
+        <p class="info-text" id="ld-status">Loading data…</p>
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="landscape-area">
+        <div class="heatmap-wrapper">
+          <canvas id="heatmap"></canvas>
+        </div>
+        <div class="colorbar-wrapper">
+          <span class="cb-label" id="cb-max"></span>
+          <canvas id="colorbar" width="22" height="1"></canvas>
+          <span class="cb-label" id="cb-min"></span>
+        </div>
+      </div>
+    </div>
+
+    <script src="./landscape.js" type="module"></script>
+  </body>
+</html>
