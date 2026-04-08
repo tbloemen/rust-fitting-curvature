@@ -765,7 +765,7 @@ mod tests {
         let ys: Vec<f64> = (0..8).map(|_| rng.uniform()).collect();
         let l = mle_length_scale(&xs, &ys);
         assert!(
-            l >= 0.05 && l <= 10.0,
+            (0.05..=10.0).contains(&l),
             "l={l} should be within grid [0.05, 10]"
         );
     }
