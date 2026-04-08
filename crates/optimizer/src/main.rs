@@ -9,7 +9,7 @@ use std::thread;
 
 use crate::data::Dataset;
 use crate::evaluate::{AllMetrics, Evaluator};
-use crate::gp::GpOptimizer;
+use crate::gp::{GpOptimizer, GpState};
 use crate::search_space::{OptimizeDirection, SearchSpace, TrialConfig};
 
 mod data;
@@ -73,7 +73,7 @@ struct Args {
     /// matching <prefix>_<dataset>_k<curvature>.jsonl file and use them as
     /// initial observations before beginning active Bayesian search.
     /// Must be different from --output to avoid overwriting the source file.
-    #[arg(long)]
+    #[arg(long, default_value = "results/results")]
     warm_start: Option<String>,
 }
 
@@ -260,6 +260,21 @@ fn make_progress_bar(mp: &MultiProgress, total: u64, template: &str) -> Progress
     pb
 }
 
+fn metric_value(m: &AggregatedMetrics, name: &str) -> f64 {
+    match name {
+        "trustworthiness" => m.trustworthiness,
+        "continuity" => m.continuity,
+        "knn_overlap" => m.knn_overlap,
+        "geodesic_distortion_gu2019" => m.geodesic_distortion_gu2019,
+        "geodesic_distortion_mse" => m.geodesic_distortion_mse,
+        "davies_bouldin_ratio" => m.davies_bouldin_ratio,
+        "dunn_index" => m.dunn_index,
+        "class_density_measure" => m.class_density_measure,
+        "cluster_density_measure" => m.cluster_density_measure,
+        _ => panic!("Unknown metric: '{}'. See --help for options.", name),
+    }
+}
+
 fn metric_direction(name: &str) -> OptimizeDirection {
     match name {
         "geodesic_distortion_gu2019" | "geodesic_distortion_mse" => OptimizeDirection::Minimize,
@@ -389,9 +404,6 @@ fn run_bayes(
     };
 
     let out_path = output_path(&args.output, dataset_name, curvature);
-    if Path::new(&out_path).exists() {
-        std::fs::remove_file(&out_path).ok();
-    }
 
     let pb = make_progress_bar(
         mp,
@@ -413,15 +425,15 @@ fn run_bayes(
     for trial_idx in 1..=args.n_trials {
         let start = std::time::Instant::now();
         let config = optimizer.suggest(&mut rng);
-        let (mean, _std) = eval_single_metric(
+        let all = eval_all_metrics(
             &evaluator,
             &config,
             curvature,
-            metric,
             args.n_seeds,
             trial_idx,
             &pb_iters,
         );
+        let mean = metric_value(&all, metric);
 
         optimizer.observe(config.clone(), mean);
         let elapsed = start.elapsed().as_millis() as u64;
@@ -433,7 +445,8 @@ fn run_bayes(
             args.n_seeds,
             curvature,
             elapsed,
-        );
+        )
+        .with_all_metrics(&all);
         write_result(&result, &out_path);
 
         let best = optimizer.best_trial();
@@ -474,6 +487,25 @@ fn run_bayes(
             best.global_loss_weight,
             best.norm_loss_weight,
         ));
+    }
+
+    // Write GP state for external plotting (analyze_hyperparams.py --mode gp).
+    // Note: output_path() replaces all dots, so the file ends in "_jsonl" not ".jsonl".
+    if let Some(state) = optimizer.export_state() {
+        let state_path = format!("{}_gp_state.json", out_path.trim_end_matches("_jsonl"));
+        write_gp_state(&state, &state_path);
+        pb.println(format!("GP state written to {}", state_path));
+    }
+}
+
+fn write_gp_state(state: &GpState, path: &str) {
+    match serde_json::to_string_pretty(state) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, json) {
+                eprintln!("Failed to write GP state to {}: {}", path, e);
+            }
+        }
+        Err(e) => eprintln!("Failed to serialise GP state: {}", e),
     }
 }
 
@@ -596,9 +628,6 @@ fn run_scan(
         args.output, dataset_name, curvature
     )
     .replace('.', "_");
-    if Path::new(&out_path).exists() {
-        std::fs::remove_file(&out_path).ok();
-    }
 
     let pb_iters = ProgressBar::hidden();
     let mut trial_idx = 0usize;

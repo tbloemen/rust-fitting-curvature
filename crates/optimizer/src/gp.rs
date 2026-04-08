@@ -13,6 +13,7 @@
 use std::f64::consts::PI;
 
 use fitting_core::synthetic_data::Rng;
+use serde::Serialize;
 
 use crate::search_space::{OptimizeDirection, SearchSpace, TrialConfig};
 
@@ -121,6 +122,16 @@ impl GpOptimizer {
         }
     }
 
+    /// Fit a final GP to all observed trials and return the serialisable state.
+    /// Returns `None` if fewer than 2 trials have been observed.
+    pub fn export_state(&self) -> Option<GpState> {
+        if self.trials.len() < 2 {
+            return None;
+        }
+        let gp = GpModel::fit(&self.trials, self.direction);
+        Some(gp.to_state(&self.trials, self.direction))
+    }
+
     fn local_search(&self, initial: TrialConfig, rng: &mut Rng, gp: &GpModel) -> TrialConfig {
         let mut current = initial;
         let mut current_ei = gp.ei(&current);
@@ -157,6 +168,8 @@ impl GpOptimizer {
 /// as recommended in Frazier §3 (citing Rasmussen & Williams 2006).
 struct GpModel {
     xs_norm: Vec<Vec<f64>>,
+    /// Raw (log-transformed, pre-standardisation) inputs — kept for export.
+    xs_encoded: Vec<Vec<f64>>,
     x_means: Vec<f64>,
     x_stds: Vec<f64>,
     /// Cholesky factor L such that (K + jitter·I) = L Lᵀ, flat row-major.
@@ -166,7 +179,58 @@ struct GpModel {
     /// f*_n: best standardised observed value (current incumbent).
     f_best_norm: f64,
     length_scale: f64,
+    /// Output standardisation parameters (applied after sign-flip for Minimize).
+    y_mean: f64,
+    y_std: f64,
     n: usize,
+}
+
+// ─── GP state export (for Python plotting) ───────────────────────────────────
+
+/// A single observation as stored in the GP state export file.
+#[derive(Serialize)]
+pub struct GpExportObs {
+    /// Original metric value (before any sign-flip).
+    pub metric: f64,
+    /// Log-transformed but not yet standardised input vector.
+    pub x_encoded: Vec<f64>,
+    /// Standardised input vector (what the GP kernel actually sees).
+    pub x_norm: Vec<f64>,
+}
+
+/// Everything Python needs to reproduce GP posterior predictions without
+/// re-implementing the fitting (MLE length-scale search, standardisation, etc.).
+///
+/// `alpha` (K⁻¹y) and the Cholesky factor are NOT stored — they can be
+/// recomputed from the observations in O(n³), which is fast for typical n.
+/// Python reconstruction:
+///   xs_norm  = [obs.x_norm for obs in observations]
+///   y_flipped = [-obs.metric if direction=="minimize" else obs.metric]
+///   y_norm   = (y_flipped - y_mean) / y_std
+///   K        = rbf(xs_norm, xs_norm, length_scale) + 1e-4 * I
+///   L        = cholesky(K)
+///   alpha    = L.T \ (L \ y_norm)
+///   k_star   = rbf(xs_norm, x_test_norm, length_scale)
+///   mu_norm  = k_star @ alpha
+///   v        = L \ k_star
+///   sigma_norm = sqrt(max(0, 1 - v @ v))
+#[derive(Serialize)]
+pub struct GpState {
+    /// Human-readable parameter names in the same order as x_encoded / x_norm.
+    pub param_names: Vec<String>,
+    /// Which params are log-transformed (Python needs this to encode test points).
+    pub log_scale_params: Vec<String>,
+    pub direction: String,
+    pub length_scale: f64,
+    pub x_means: Vec<f64>,
+    pub x_stds: Vec<f64>,
+    /// Output mean in the (sign-flipped for Minimize) metric space.
+    pub y_mean: f64,
+    /// Output std in the (sign-flipped for Minimize) metric space.
+    pub y_std: f64,
+    pub f_best_norm: f64,
+    pub n: usize,
+    pub observations: Vec<GpExportObs>,
 }
 
 /// Diagonal noise added to the kernel matrix for numerical stability.
@@ -216,12 +280,15 @@ impl GpModel {
 
         Self {
             xs_norm,
+            xs_encoded: raw_xs,
             x_means,
             x_stds,
             chol,
             alpha,
             f_best_norm,
             length_scale,
+            y_mean,
+            y_std,
             n,
         }
     }
@@ -247,6 +314,40 @@ impl GpModel {
         let sigma = (1.0 - v_sq).max(0.0).sqrt();
 
         (mu, sigma)
+    }
+
+    /// Serialise the fitted GP state for external plotting tools.
+    fn to_state(&self, trials: &[Trial], direction: OptimizeDirection) -> GpState {
+        let observations = trials
+            .iter()
+            .enumerate()
+            .map(|(i, t)| GpExportObs {
+                metric: t.metric,
+                x_encoded: self.xs_encoded[i].clone(),
+                x_norm: self.xs_norm[i].clone(),
+            })
+            .collect();
+
+        GpState {
+            param_names: vec![
+                "learning_rate".into(),
+                "perplexity_ratio".into(),
+                "momentum_main".into(),
+                "centering_weight".into(),
+                "global_loss_weight".into(),
+                "norm_loss_weight".into(),
+            ],
+            log_scale_params: vec!["learning_rate".into(), "perplexity_ratio".into()],
+            direction: direction.to_string(),
+            length_scale: self.length_scale,
+            x_means: self.x_means.clone(),
+            x_stds: self.x_stds.clone(),
+            y_mean: self.y_mean,
+            y_std: self.y_std,
+            f_best_norm: self.f_best_norm,
+            n: self.n,
+            observations,
+        }
     }
 
     /// Expected Improvement for a candidate config (Frazier Eq. 7 / Eq. 8).
