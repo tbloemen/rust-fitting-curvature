@@ -7,7 +7,6 @@ Hyperparameter sensitivity analysis for fitting-curvature optimizer results.
   3. param_<name>_vs_metric.svg   — Per-parameter scatter vs metric, one series per curvature
   6. metric_correlation.svg       — Metric–metric Spearman rank correlation (do metrics agree?)
   7. importance_heatmap.svg       — |ρ| for every (parameter × metric) pair, pooled across curvatures
-  8. top_k_consensus.svg          — Hyperparameter profile of the top-k% runs per metric
   9. marginal_effects.svg         — Binned mean ± 95% CI of metric per parameter (response curves)
   10. good_regions.svg            — p10–p90 intervals of top-k% runs, normalised to [0, 1]
 
@@ -493,95 +492,6 @@ def plot_variable_importance_heatmap(
     ax.set_title(
         "Variable importance: |Spearman ρ| per (parameter × metric)\n"
         "(pooled across all curvatures)",
-        pad=10,
-    )
-    fig.tight_layout()
-    fig.savefig(out_path, format="svg", bbox_inches="tight")
-    plt.close(fig)
-    print(f"  {out_path}")
-
-
-# ─── Plot 8: Top-k consensus ──────────────────────────────────────────────────
-
-
-def plot_top_k_consensus(
-    records: list[dict], params: list[str], out_path: str, top_pct: float = 0.1
-) -> None:
-    """
-    For each metric, select the top `top_pct` fraction of runs by that metric.
-    For each parameter, compute the mean percentile rank of the parameter values
-    in those top-k runs relative to all runs, then subtract 0.5 to centre at zero.
-
-      +0.5  → top runs always have the highest possible parameter value
-      -0.5  → top runs always have the lowest possible parameter value
-       0.0  → no preference; parameter value doesn't predict being in top-k
-
-    Rows with similar patterns mean those metrics agree on what optimal settings look like.
-    Rows that differ reveal metrics pulling in opposite directions.
-    """
-    present = [m for m in ALL_METRICS if any(r.get(m) is not None for r in records)]
-    continuous_params = [p for p in params if p not in CATEGORICAL_PARAMS]
-    if not present or not continuous_params:
-        print(f"  {out_path} (skipped — no data)")
-        return
-
-    n_m, n_p = len(present), len(continuous_params)
-    matrix = np.full((n_m, n_p), np.nan)
-
-    for i, metric in enumerate(present):
-        metric_records = [r for r in records if r.get(metric) is not None]
-        if not metric_records:
-            continue
-        n_top = max(1, int(len(metric_records) * top_pct))
-        sorted_indices = np.argsort([r[metric] for r in metric_records])
-        top_indices = set(
-            sorted_indices[:n_top]
-            if metric in MINIMIZE_METRICS
-            else sorted_indices[-n_top:]
-        )
-        top_records = [metric_records[idx] for idx in top_indices]
-
-        for j, param in enumerate(continuous_params):
-            all_vals = [get_param_value(r, param) for r in metric_records if param in r]
-            all_vals = [v for v in all_vals if v is not None]
-            top_vals = [get_param_value(r, param) for r in top_records if param in r]
-            top_vals = [v for v in top_vals if v is not None]
-            if not all_vals or not top_vals:
-                continue
-            all_arr = np.array(all_vals)
-            pct_ranks = [float(np.mean(all_arr <= v)) for v in top_vals]
-            matrix[i, j] = float(np.mean(pct_ranks)) - 0.5
-
-    fig, ax = plt.subplots(figsize=(n_p * 0.95 + 2.5, n_m * 0.6 + 2.2))
-    im = ax.imshow(matrix, cmap="RdBu_r", vmin=-0.5, vmax=0.5, aspect="auto")
-    ax.set_xticks(range(n_p))
-    ax.set_xticklabels(continuous_params, rotation=45, ha="right", fontsize=8)
-    ax.set_yticks(range(n_m))
-    ax.set_yticklabels(present, fontsize=8)
-    for i in range(n_m):
-        for j in range(n_p):
-            if not np.isnan(matrix[i, j]):
-                v = matrix[i, j]
-                ax.text(
-                    j,
-                    i,
-                    f"{v:+.2f}",
-                    ha="center",
-                    va="center",
-                    fontsize=7,
-                    color="white" if abs(v) > 0.3 else "black",
-                )
-    plt.colorbar(
-        im,
-        ax=ax,
-        label=f"mean percentile rank in top {int(top_pct * 100)}% runs − 0.5\n"
-        "(blue = prefer high, red = prefer low, white = no preference)",
-        fraction=0.03,
-        pad=0.02,
-    )
-    ax.set_title(
-        f"Top-{int(top_pct * 100)}% consensus: which hyperparameter settings do the best runs share?\n"
-        "Rows with similar colour patterns → those metrics agree on optimal settings",
         pad=10,
     )
     fig.tight_layout()
@@ -1293,12 +1203,6 @@ def main() -> None:
     )
     plot_variable_importance_heatmap(
         records, params, os.path.join(args.output, "importance_heatmap.svg")
-    )
-    plot_top_k_consensus(
-        records,
-        params,
-        os.path.join(args.output, "top_k_consensus.svg"),
-        top_pct=args.top_pct,
     )
 
     if metric is not None:
