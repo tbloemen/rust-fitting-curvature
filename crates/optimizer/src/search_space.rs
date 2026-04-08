@@ -1,5 +1,26 @@
 use fitting_core::config::{InitMethod, ScalingLossType, TrainingConfig};
 use fitting_core::matrices::get_default_init_scale;
+use std::fmt;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OptimizeDirection {
+    Maximize,
+    Minimize,
+}
+
+impl fmt::Display for OptimizeDirection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OptimizeDirection::Maximize => write!(f, "maximize"),
+            OptimizeDirection::Minimize => write!(f, "minimize"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchSpace {
+    pub direction: OptimizeDirection,
+}
 
 /// Fixed iteration counts — not tuned, set to high-quality defaults.
 pub const FIXED_N_ITERATIONS: usize = 800;
@@ -67,5 +88,36 @@ impl TrialConfig {
             global_loss_weight,
             norm_loss_weight,
         }
+    }
+
+    /// Perturb this config slightly, keeping all values within their valid ranges.
+    /// Used for local search when maximising the EI acquisition function.
+    pub fn mutate(&self, rng: &mut fitting_core::synthetic_data::Rng) -> Self {
+        let mut cfg = self.clone();
+        if rng.uniform() < 0.3 {
+            cfg.learning_rate =
+                (cfg.learning_rate * 2.0_f64.powf((rng.uniform() - 0.5) * 1.0)).clamp(0.5, 50.0);
+        }
+        if rng.uniform() < 0.3 {
+            cfg.perplexity_ratio = (cfg.perplexity_ratio
+                * 2.0_f64.powf((rng.uniform() - 0.5) * 0.8))
+            .clamp(0.0004, 0.03);
+        }
+        if rng.uniform() < 0.3 {
+            cfg.momentum_main = (cfg.momentum_main + (rng.uniform() - 0.5) * 0.2).clamp(0.60, 1.0);
+        }
+        if rng.uniform() < 0.3 {
+            cfg.centering_weight =
+                (cfg.centering_weight + (rng.uniform() - 0.5) * 0.5).clamp(0.0, 2.0);
+        }
+        if rng.uniform() < 0.3 {
+            cfg.global_loss_weight =
+                (cfg.global_loss_weight + (rng.uniform() - 0.5) * 0.8).clamp(0.0, 2.0);
+        }
+        if rng.uniform() < 0.3 {
+            cfg.norm_loss_weight =
+                (cfg.norm_loss_weight + (rng.uniform() - 0.5) * 0.008).clamp(0.0, 0.02);
+        }
+        cfg
     }
 }

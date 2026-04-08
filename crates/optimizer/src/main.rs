@@ -9,10 +9,12 @@ use std::thread;
 
 use crate::data::Dataset;
 use crate::evaluate::{AllMetrics, Evaluator};
-use crate::search_space::TrialConfig;
+use crate::gp::{GpOptimizer, GpState};
+use crate::search_space::{OptimizeDirection, SearchSpace, TrialConfig};
 
 mod data;
 mod evaluate;
+mod gp;
 mod search_space;
 
 #[derive(Parser, Debug, Clone)]
@@ -47,9 +49,10 @@ struct Args {
     )]
     curvatures: Vec<f64>,
 
-    /// Run mode: "random" (default) or "scan".
+    /// Run mode: "random" (default), "scan", or "bayes".
     /// random: sample random configs and compute all metrics.
     /// scan: sweep each parameter individually from a base config.
+    /// bayes: Bayesian optimisation with GP surrogate (requires --metric).
     #[arg(long, default_value = "random")]
     mode: String,
 
@@ -64,6 +67,14 @@ struct Args {
     /// For --mode scan: number of evenly-spaced values to sweep per continuous parameter.
     #[arg(long, default_value = "12")]
     scan_steps: usize,
+
+    /// For --mode bayes: path prefix of previous results to warm-start from
+    /// (e.g. "results/results"). The optimizer will load all trials from the
+    /// matching <prefix>_<dataset>_k<curvature>.jsonl file and use them as
+    /// initial observations before beginning active Bayesian search.
+    /// Must be different from --output to avoid overwriting the source file.
+    #[arg(long, default_value = "results/results")]
+    warm_start: Option<String>,
 }
 
 // ─── Trial result ─────────────────────────────────────────────────────────────
@@ -249,6 +260,35 @@ fn make_progress_bar(mp: &MultiProgress, total: u64, template: &str) -> Progress
     pb
 }
 
+fn metric_value(m: &AggregatedMetrics, name: &str) -> f64 {
+    match name {
+        "trustworthiness" => m.trustworthiness,
+        "continuity" => m.continuity,
+        "knn_overlap" => m.knn_overlap,
+        "geodesic_distortion_gu2019" => m.geodesic_distortion_gu2019,
+        "geodesic_distortion_mse" => m.geodesic_distortion_mse,
+        "davies_bouldin_ratio" => m.davies_bouldin_ratio,
+        "dunn_index" => m.dunn_index,
+        "class_density_measure" => m.class_density_measure,
+        "cluster_density_measure" => m.cluster_density_measure,
+        _ => panic!("Unknown metric: '{}'. See --help for options.", name),
+    }
+}
+
+fn metric_direction(name: &str) -> OptimizeDirection {
+    match name {
+        "geodesic_distortion_gu2019" | "geodesic_distortion_mse" => OptimizeDirection::Minimize,
+        "trustworthiness"
+        | "continuity"
+        | "knn_overlap"
+        | "davies_bouldin_ratio"
+        | "dunn_index"
+        | "class_density_measure"
+        | "cluster_density_measure" => OptimizeDirection::Maximize,
+        _ => panic!("Unknown metric: '{}'. See --help for options.", name),
+    }
+}
+
 // ─── Random search ────────────────────────────────────────────────────────────
 
 fn run_random(
@@ -302,6 +342,171 @@ fn run_random(
     }
 
     pb.finish_with_message(format!("k={:+.1} dataset={} done", curvature, dataset_name));
+}
+
+// ─── Bayesian optimisation (Algorithm 1, Frazier 2018) ───────────────────────
+
+/// Load previous trial results from a JSONL file and return them as (config, metric) pairs.
+///
+/// Each line is a JSON object with config fields and per-metric values.  Lines
+/// where the requested metric is null/missing or the config fields are incomplete
+/// are silently skipped, so this is safe to call on files from other run modes.
+fn load_warm_start_trials(path: &str, metric: &str) -> Vec<(TrialConfig, f64)> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    content
+        .lines()
+        .filter_map(|line| {
+            let v: serde_json::Value = serde_json::from_str(line).ok()?;
+            let metric_val = v[metric].as_f64()?;
+            if !metric_val.is_finite() {
+                return None;
+            }
+            let config = TrialConfig {
+                learning_rate: v["learning_rate"].as_f64()?,
+                perplexity_ratio: v["perplexity_ratio"].as_f64()?,
+                momentum_main: v["momentum_main"].as_f64()?,
+                centering_weight: v["centering_weight"].as_f64().unwrap_or(0.0),
+                global_loss_weight: v["global_loss_weight"].as_f64().unwrap_or(0.0),
+                norm_loss_weight: v["norm_loss_weight"].as_f64().unwrap_or(0.0),
+            };
+            Some((config, metric_val))
+        })
+        .collect()
+}
+
+fn run_bayes(
+    curvature: f64,
+    dataset_name: &str,
+    args: &Args,
+    evaluator: Arc<Evaluator>,
+    mp: &MultiProgress,
+) {
+    let metric = args.metric.as_deref().unwrap();
+    let direction = metric_direction(metric);
+    let mut optimizer = GpOptimizer::new(SearchSpace { direction });
+    let mut rng =
+        fitting_core::synthetic_data::Rng::new(curvature.to_bits() ^ 0xdead_beef_cafe_0000);
+
+    // Warm-start: seed the GP with previously collected trials (e.g. from random search).
+    let n_warm = if let Some(prefix) = &args.warm_start {
+        let warm_path = output_path(prefix, dataset_name, curvature);
+        let trials = load_warm_start_trials(&warm_path, metric);
+        let n = trials.len();
+        for (config, metric_val) in trials {
+            optimizer.observe(config, metric_val);
+        }
+        n
+    } else {
+        0
+    };
+
+    let out_path = output_path(&args.output, dataset_name, curvature);
+
+    let pb = make_progress_bar(
+        mp,
+        args.n_trials as u64,
+        "{spinner:.green} k={msg} [{bar:35.cyan/blue}] {pos}/{len} | best: {prefix}",
+    );
+    pb.set_message(format!("{:+.1}", curvature));
+    pb.set_prefix("n/a");
+    if n_warm > 0 {
+        pb.println(format!(
+            "k={:+.1} warm-started from {} prior trials ({})",
+            curvature,
+            n_warm,
+            args.warm_start.as_deref().unwrap()
+        ));
+    }
+    let pb_iters = ProgressBar::hidden();
+
+    for trial_idx in 1..=args.n_trials {
+        let start = std::time::Instant::now();
+        let config = optimizer.suggest(&mut rng);
+        let all = eval_all_metrics(
+            &evaluator,
+            &config,
+            curvature,
+            args.n_seeds,
+            trial_idx,
+            &pb_iters,
+        );
+        let mean = metric_value(&all, metric);
+
+        optimizer.observe(config.clone(), mean);
+        let elapsed = start.elapsed().as_millis() as u64;
+
+        let result = TrialResult::new(
+            &config,
+            dataset_name,
+            args.n_samples,
+            args.n_seeds,
+            curvature,
+            elapsed,
+        )
+        .with_all_metrics(&all);
+        write_result(&result, &out_path);
+
+        let best = optimizer.best_trial();
+        pb.set_prefix(format!("{:.4}", best));
+        pb.println(format!(
+            "k={:+.1} trial {:3} | {}={:.4} | best={:.4} | {}ms \
+             | lr={:.4} perp_ratio={:.4} momentum={:.3} cw={:.3} glw={:.3} nw={:.4}",
+            curvature,
+            trial_idx,
+            metric,
+            mean,
+            best,
+            elapsed,
+            config.learning_rate,
+            config.perplexity_ratio,
+            config.momentum_main,
+            config.centering_weight,
+            config.global_loss_weight,
+            config.norm_loss_weight,
+        ));
+        pb.inc(1);
+    }
+
+    pb.finish_with_message(format!("{:+.1} done", curvature));
+
+    if let Some(best) = optimizer.best_config() {
+        pb.println(format!(
+            "\n=== Best for k={:+.1} | {}={:.4} ===\n  \
+             lr={:.4}  perp_ratio={:.4}  momentum={:.4}\n  \
+             centering={:.3}  global_loss={:.3}  norm={:.4}",
+            curvature,
+            metric,
+            optimizer.best_trial(),
+            best.learning_rate,
+            best.perplexity_ratio,
+            best.momentum_main,
+            best.centering_weight,
+            best.global_loss_weight,
+            best.norm_loss_weight,
+        ));
+    }
+
+    // Write GP state for external plotting (analyze_hyperparams.py --mode gp).
+    // Note: output_path() replaces all dots, so the file ends in "_jsonl" not ".jsonl".
+    if let Some(state) = optimizer.export_state() {
+        let state_path = format!("{}_gp_state.json", out_path.trim_end_matches("_jsonl"));
+        write_gp_state(&state, &state_path);
+        pb.println(format!("GP state written to {}", state_path));
+    }
+}
+
+fn write_gp_state(state: &GpState, path: &str) {
+    match serde_json::to_string_pretty(state) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, json) {
+                eprintln!("Failed to write GP state to {}: {}", path, e);
+            }
+        }
+        Err(e) => eprintln!("Failed to serialise GP state: {}", e),
+    }
 }
 
 // ─── Scan ─────────────────────────────────────────────────────────────────────
@@ -423,9 +628,6 @@ fn run_scan(
         args.output, dataset_name, curvature
     )
     .replace('.', "_");
-    if Path::new(&out_path).exists() {
-        std::fs::remove_file(&out_path).ok();
-    }
 
     let pb_iters = ProgressBar::hidden();
     let mut trial_idx = 0usize;
@@ -488,8 +690,8 @@ fn get_dataset_names(dataset_arg: &Option<String>) -> Vec<String> {
 fn main() {
     let args = Args::parse();
 
-    if args.mode == "scan" && args.metric.is_none() {
-        eprintln!("Error: --metric is required for --mode scan");
+    if (args.mode == "scan" || args.mode == "bayes") && args.metric.is_none() {
+        eprintln!("Error: --metric is required for --mode {}", args.mode);
         std::process::exit(1);
     }
 
@@ -517,8 +719,19 @@ fn main() {
             args.metric.as_deref().unwrap(),
             args.n_seeds
         ),
+        "bayes" => println!(
+            "Starting Bayesian optimisation: {} datasets × {} curvatures × {} trials, metric={}, seeds={}",
+            dataset_names.len(),
+            args.curvatures.len(),
+            args.n_trials,
+            args.metric.as_deref().unwrap(),
+            args.n_seeds
+        ),
         other => {
-            eprintln!("Unknown --mode '{}'. Use 'random' or 'scan'.", other);
+            eprintln!(
+                "Unknown --mode '{}'. Use 'random', 'scan', or 'bayes'.",
+                other
+            );
             std::process::exit(1);
         }
     }
@@ -556,6 +769,7 @@ fn main() {
             let mp = Arc::clone(&mp);
             let h = thread::spawn(move || match args.mode.as_str() {
                 "scan" => run_scan(k, &dataset_name, &args, evaluator, &mp),
+                "bayes" => run_bayes(k, &dataset_name, &args, evaluator, &mp),
                 _ => run_random(k, &dataset_name, &args, evaluator, &mp),
             });
             handles.push(h);

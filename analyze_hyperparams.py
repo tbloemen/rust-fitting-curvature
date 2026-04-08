@@ -15,13 +15,30 @@ Hyperparameter sensitivity analysis for fitting-curvature optimizer results.
   2. scan_sensitivity.svg         — Heatmap of metric range (max−min) per (parameter × curvature)
   3. scan_optimal.svg             — Where in the sweep range the optimum sits per (param × curvature)
 
+--mode gp
+  Fits the same GP surrogate used by the Bayesian optimizer (Frazier 2018) to the
+  observed trial data and visualises the resulting loss landscape.  One GP is fitted
+  per curvature using MLE for the RBF length-scale (§3.2), zero-mean prior, and
+  Cholesky-based posterior inference (Eq. 3).
+
+  1. gp_slices.svg    — 1D marginal predictions: posterior mean ± 2σ per parameter,
+                        with raw observations overlaid.  Other parameters are held
+                        at their sample median in GP input space.
+  2. gp_landscape.svg — 2D posterior mean heatmap for learning_rate × perplexity_ratio,
+                        one panel per curvature.  White dashed contours show posterior σ.
+  3. gp_ei.svg        — 1D Expected Improvement curves (Frazier Eq. 7):
+                        EI = Δ·Φ(Δ/σ) + σ·φ(Δ/σ), where Δ = µ − f*.
+                        Peaks indicate where the optimizer would sample next.
+
+  Requires --metric.
+
 Use --metric to select which metric column to analyze (e.g. davies_bouldin_ratio).
 If omitted, the first metric column present in the data is used automatically.
 
 Usage:
     uv run analyze_hyperparams.py --metric davies_bouldin_ratio
-    uv run analyze_hyperparams.py --metric davies_bouldin_ratio
     uv run analyze_hyperparams.py --mode scan --input results/results --output plots/
+    uv run analyze_hyperparams.py --mode gp --metric knn_overlap --input results/results_mnist
     uv run analyze_hyperparams.py --input results/results_mnist --output plots/ --top-pairs 5
 """
 
@@ -29,6 +46,7 @@ import argparse
 import json
 import math
 import os
+import re
 from pathlib import Path
 
 import matplotlib
@@ -782,6 +800,516 @@ def plot_good_regions(
     print(f"  {out_path}")
 
 
+# ─── GP surrogate (--mode gp) ────────────────────────────────────────────────
+#
+# Python only does *forward prediction* using the GP state exported by the Rust
+# Bayesian optimizer (--mode bayes writes <output>_gp_state.json).
+# All fitting logic lives exclusively in gp.rs — MLE length-scale search,
+# Cholesky decomposition, and I/O standardisation are done in Rust, then
+# serialised to JSON.  Python reads the JSON and reconstructs predictions with
+# ~15 lines of numpy, avoiding any duplication of the GP implementation.
+#
+# Forward prediction (Frazier Eq. 3):
+#   k_star[i] = exp(−‖xs_norm[i] − x_norm‖² / (2·l²))
+#   µₙ(x)     = k_star ᵀ α           (α = K⁻¹ y_norm stored in state)
+#   v          = L⁻¹ k_star           (L = Cholesky factor stored in state)
+#   σₙ(x)     = √max(0, 1 − ‖v‖²)
+#   mu_orig    = µₙ · y_std + y_mean  (undo standardisation; undo sign-flip if minimize)
+
+
+def load_gp_states(input_prefix: str) -> "dict[float, dict]":
+    """
+    Load all GP state JSON files matching <input_prefix>*_gp_state.json.
+
+    The Rust optimizer writes one file per (dataset, curvature) pair; the
+    curvature is encoded in the filename as e.g. ``k-0_1`` (dots replaced by
+    underscores).  Returns a dict mapping float curvature → state dict.
+    """
+    states: dict[float, dict] = {}
+    prefix_path = Path(input_prefix)
+    search_dir = prefix_path.parent
+    name_pattern = f"{prefix_path.name}*_gp_state.json"
+    for path in sorted(search_dir.glob(name_pattern)):
+        m = re.search(r"_k(-?\d+_\d+)_gp_state$", path.stem)
+        if not m:
+            continue
+        k = float(m.group(1).replace("_", "."))
+        try:
+            with open(path) as f:
+                states[k] = json.load(f)
+        except Exception as e:
+            print(f"  Warning: could not load {path}: {e}")
+    return states
+
+
+def _prepare_gp_state(state: dict) -> dict:
+    """
+    Recompute L (Cholesky) and alpha (K⁻¹y) from the stored observations.
+
+    These are not persisted in the JSON (they grow as O(n²) / O(n)) but are
+    cheap to rebuild: O(n³) Cholesky, negligible for typical n < 1000.
+    The result is cached back into the state dict so repeated calls are free.
+    """
+    if "L" in state:
+        return state  # already prepared
+    obs = state["observations"]
+    xs_norm = np.array([o["x_norm"] for o in obs])
+    n = len(xs_norm)
+    l = state["length_scale"]
+
+    metrics = np.array([o["metric"] for o in obs])
+    if state["direction"] == "minimize":
+        metrics = -metrics
+    y_norm = (metrics - state["y_mean"]) / state["y_std"]
+
+    diffs = xs_norm[:, None, :] - xs_norm[None, :, :]
+    K = np.exp(-np.sum(diffs**2, axis=-1) / (2 * l**2)) + 1e-4 * np.eye(n)
+    L = np.linalg.cholesky(K)
+    alpha = np.linalg.solve(L.T, np.linalg.solve(L, y_norm))
+
+    state["L"] = L
+    state["alpha"] = alpha
+    return state
+
+
+def _best_x_enc(state: dict) -> "np.ndarray":
+    """Return the encoded input vector of the best observed trial."""
+    obs = state["observations"]
+    if state["direction"] == "maximize":
+        best = max(obs, key=lambda o: o["metric"])
+    else:
+        best = min(obs, key=lambda o: o["metric"])
+    return np.array(best["x_encoded"])
+
+
+def _gp_predict_batch(
+    state: dict, X_enc: "np.ndarray"
+) -> "tuple[np.ndarray, np.ndarray]":
+    """
+    Vectorized GP posterior mean and std from an exported Rust GP state.
+
+    Parameters
+    ----------
+    state : dict
+        GP state loaded from a ``*_gp_state.json`` file.
+    X_enc : (n_test, d) ndarray
+        Log-transformed (but not yet standardised) GP inputs, in the same
+        order as ``state["param_names"]``.
+
+    Returns
+    -------
+    mu, sigma : (n_test,) arrays in original (non-sign-flipped) metric units.
+    """
+    _prepare_gp_state(state)
+    x_means = np.array(state["x_means"])
+    x_stds = np.array(state["x_stds"])
+    X_norm = (X_enc - x_means) / x_stds
+
+    xs_norm = np.array([obs["x_norm"] for obs in state["observations"]])
+    l = state["length_scale"]
+    L, alpha = state["L"], state["alpha"]
+
+    # K_star[i, j] = k(X_norm[i], xs_norm[j])
+    diffs = X_norm[:, None, :] - xs_norm[None, :, :]
+    K_star = np.exp(-np.sum(diffs**2, axis=-1) / (2 * l**2))
+
+    mu_norm = K_star @ alpha  # (n_test,)
+    v = np.linalg.solve(L, K_star.T)  # (n_train, n_test)
+    sigma_norm = np.sqrt(np.maximum(1.0 - np.sum(v**2, axis=0), 0.0))
+
+    mu = mu_norm * state["y_std"] + state["y_mean"]
+    sigma = sigma_norm * state["y_std"]
+    if state["direction"] == "minimize":
+        mu = -mu  # undo the sign-flip applied during fitting
+    return mu, sigma
+
+
+def _gp_ei_batch(state: dict, X_enc: "np.ndarray") -> "np.ndarray":
+    """
+    Vectorized Expected Improvement from an exported Rust GP state (Frazier Eq. 7):
+      EI = max(Δ·Φ(Δ/σ) + σ·φ(Δ/σ), 0)  where Δ = µₙ(x) − f*ₙ
+
+    Operates in normalised space (matching gp.rs), then scales to metric units.
+    """
+    _prepare_gp_state(state)
+    x_means = np.array(state["x_means"])
+    x_stds = np.array(state["x_stds"])
+    X_norm = (X_enc - x_means) / x_stds
+
+    xs_norm = np.array([obs["x_norm"] for obs in state["observations"]])
+    l = state["length_scale"]
+    L, alpha = state["L"], state["alpha"]
+
+    diffs = X_norm[:, None, :] - xs_norm[None, :, :]
+    K_star = np.exp(-np.sum(diffs**2, axis=-1) / (2 * l**2))
+
+    mu_norm = K_star @ alpha
+    v = np.linalg.solve(L, K_star.T)
+    sigma_norm = np.sqrt(np.maximum(1.0 - np.sum(v**2, axis=0), 0.0))
+
+    delta = mu_norm - state["f_best_norm"]
+    z = np.where(sigma_norm > 1e-10, delta / sigma_norm, 0.0)
+    ei = delta * stats.norm.cdf(z) + sigma_norm * stats.norm.pdf(z)
+    return np.maximum(ei, 0.0) * state["y_std"]
+
+
+# ─── GP plot 1: 1D marginal prediction slices ─────────────────────────────────
+
+
+def plot_gp_slices(
+    states: dict[float, dict],
+    metric: str,
+    out_path: str,
+    n_grid: int = 120,
+) -> None:
+    """
+    For each hyperparameter, draw the GP's 1D marginal prediction curve:
+    posterior mean (solid) ± 2σ (shaded band), with raw observations as dots.
+
+    All parameters except the swept one are held at their sample median in
+    GP encoded space.  One curve per curvature, loaded from the Rust GP state.
+    """
+    if not states:
+        print(f"  {out_path} (skipped — no GP states found)")
+        return
+
+    first = next(iter(states.values()))
+    gp_params = first["param_names"]
+    log_params = set(first["log_scale_params"])
+    minimize = first["direction"] == "minimize"
+    all_ks = sorted(states.keys())
+    n_p = len(gp_params)
+    ncols = min(3, n_p)
+    nrows = math.ceil(n_p / ncols)
+
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(ncols * 4.5, nrows * 3.5), squeeze=False
+    )
+    axes_flat = axes.flatten()
+
+    for ax, sweep_param in zip(axes_flat, gp_params):
+        is_log = sweep_param in log_params
+        sweep_idx = gp_params.index(sweep_param)
+
+        for k in all_ks:
+            state = states.get(k)
+            if state is None:
+                continue
+            col = k_color(k, all_ks)
+            obs = state["observations"]
+
+            # Scatter: back-transform encoded value to original scale for the x-axis
+            obs_x = [
+                (
+                    np.exp(o["x_encoded"][sweep_idx])
+                    if is_log
+                    else o["x_encoded"][sweep_idx]
+                )
+                for o in obs
+            ]
+            obs_y = [o["metric"] for o in obs]
+            ax.scatter(obs_x, obs_y, color=col, alpha=0.15, s=8, linewidths=0, zorder=1)
+
+            # Build 1D test grid in encoded space across the observed range
+            X_enc_obs = np.array([o["x_encoded"] for o in obs])
+            enc_lo = X_enc_obs[:, sweep_idx].min()
+            enc_hi = X_enc_obs[:, sweep_idx].max()
+            enc_grid = np.linspace(enc_lo, enc_hi, n_grid)
+
+            # Hold all other params at the values of the best observed trial
+            X_test_enc = np.tile(_best_x_enc(state), (n_grid, 1))
+            X_test_enc[:, sweep_idx] = enc_grid
+
+            mu, sigma = _gp_predict_batch(state, X_test_enc)
+            x_plot = np.exp(enc_grid) if is_log else enc_grid
+
+            ax.plot(
+                x_plot,
+                mu,
+                color=col,
+                linewidth=1.8,
+                label=f"k={k:+.1f}",
+                zorder=3,
+                alpha=0.9,
+            )
+            ax.fill_between(
+                x_plot, mu - 2 * sigma, mu + 2 * sigma, color=col, alpha=0.12, zorder=2
+            )
+
+        if is_log:
+            ax.set_xscale("log")
+        ax.set_title(sweep_param, fontsize=9)
+        ax.set_xlabel(sweep_param + (" (log scale)" if is_log else ""), fontsize=7)
+        direction_note = " (lower=better)" if minimize else ""
+        ax.set_ylabel(metric + direction_note, fontsize=7)
+        ax.tick_params(labelsize=7)
+
+    for ax in axes_flat[n_p:]:
+        ax.set_visible(False)
+
+    handles, labels = axes_flat[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(
+            handles,
+            labels,
+            fontsize=7,
+            ncol=min(5, len(all_ks)),
+            loc="lower center",
+            bbox_to_anchor=(0.5, -0.01),
+        )
+
+    fig.suptitle(
+        f"GP surrogate — 1D marginal predictions  ·  metric: {metric}\n"
+        "solid line = posterior mean  |  band = ±2σ  |  dots = observations\n"
+        "(all other parameters held at the values of the best observed trial)",
+        fontsize=9,
+    )
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
+# ─── GP plot 2: 2D posterior mean landscape ───────────────────────────────────
+
+
+def plot_gp_landscape(
+    states: dict[float, dict],
+    metric: str,
+    out_path: str,
+    n_grid: int = 50,
+) -> None:
+    """
+    2D GP posterior mean heatmap for learning_rate × perplexity_ratio,
+    one subplot per curvature.
+
+    Colour encodes the GP posterior mean (viridis, shared scale across
+    curvatures).  White dashed contours show posterior σ (uncertainty).
+    White dots are observed data points.  All other parameters are held at
+    their sample median in GP encoded space.
+    """
+    if not states:
+        print(f"  {out_path} (skipped — no GP states found)")
+        return
+
+    first = next(iter(states.values()))
+    gp_params = first["param_names"]
+    log_params = set(first["log_scale_params"])
+    minimize = first["direction"] == "minimize"
+    all_ks = sorted(states.keys())
+
+    px, py = "learning_rate", "perplexity_ratio"
+    if px not in gp_params:
+        px = gp_params[0]
+    if py not in gp_params or py == px:
+        remaining = [p for p in gp_params if p != px]
+        py = remaining[0] if remaining else None
+    if py is None:
+        print(f"  {out_path} (skipped — need at least 2 GP params)")
+        return
+
+    xi = gp_params.index(px)
+    yi = gp_params.index(py)
+
+    # Pass 1: compute grids (needed for shared colour scale)
+    fitted: dict[float, tuple] = {}
+    for k in all_ks:
+        state = states.get(k)
+        if state is None:
+            continue
+        obs = state["observations"]
+        X_enc_obs = np.array([o["x_encoded"] for o in obs])
+
+        x_enc_grid = np.linspace(X_enc_obs[:, xi].min(), X_enc_obs[:, xi].max(), n_grid)
+        y_enc_grid = np.linspace(X_enc_obs[:, yi].min(), X_enc_obs[:, yi].max(), n_grid)
+        xx, yy = np.meshgrid(x_enc_grid, y_enc_grid)
+
+        X_test_enc = np.tile(_best_x_enc(state), (n_grid * n_grid, 1))
+        X_test_enc[:, xi] = xx.ravel()
+        X_test_enc[:, yi] = yy.ravel()
+
+        mu, sigma = _gp_predict_batch(state, X_test_enc)
+        mu_grid = mu.reshape(n_grid, n_grid)
+        sigma_grid = sigma.reshape(n_grid, n_grid)
+
+        x_plot = np.exp(x_enc_grid) if px in log_params else x_enc_grid
+        y_plot = np.exp(y_enc_grid) if py in log_params else y_enc_grid
+
+        fitted[k] = (state, X_enc_obs, obs, mu_grid, sigma_grid, x_plot, y_plot)
+
+    if not fitted:
+        print(f"  {out_path} (skipped — no data)")
+        return
+
+    all_mus = np.concatenate([v[3].ravel() for v in fitted.values()])
+    vmin, vmax = float(all_mus.min()), float(all_mus.max())
+    cmap = "viridis_r" if minimize else "viridis"
+
+    # Pass 2: draw
+    n_k = len(fitted)
+    ncols = min(3, n_k)
+    nrows = math.ceil(n_k / ncols)
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(ncols * 4.2, nrows * 3.8), squeeze=False
+    )
+    axes_flat = axes.flatten()
+
+    for ax, k in zip(axes_flat, all_ks):
+        if k not in fitted:
+            ax.set_visible(False)
+            continue
+
+        state, X_enc_obs, obs, mu_grid, sigma_grid, x_plot, y_plot = fitted[k]
+        mesh_x, mesh_y = np.meshgrid(x_plot, y_plot)
+
+        pcm = ax.pcolormesh(
+            mesh_x, mesh_y, mu_grid, cmap=cmap, vmin=vmin, vmax=vmax, shading="auto"
+        )
+        try:
+            ax.contour(
+                mesh_x,
+                mesh_y,
+                sigma_grid,
+                levels=4,
+                colors="white",
+                linewidths=0.6,
+                alpha=0.55,
+                linestyles="--",
+            )
+        except Exception:
+            pass
+
+        # Observed points in original scale
+        obs_x = [
+            np.exp(o["x_encoded"][xi]) if px in log_params else o["x_encoded"][xi]
+            for o in obs
+        ]
+        obs_y = [
+            np.exp(o["x_encoded"][yi]) if py in log_params else o["x_encoded"][yi]
+            for o in obs
+        ]
+        ax.scatter(obs_x, obs_y, c="white", s=6, alpha=0.35, linewidths=0, zorder=5)
+
+        if px in log_params:
+            ax.set_xscale("log")
+        if py in log_params:
+            ax.set_yscale("log")
+
+        ax.set_xlabel(px, fontsize=7)
+        ax.set_ylabel(py, fontsize=7)
+        ax.set_title(f"k={k:+.1f}  (l={state['length_scale']:.2f})", fontsize=8)
+        ax.tick_params(labelsize=6)
+        plt.colorbar(pcm, ax=ax, fraction=0.046, pad=0.04, shrink=0.85)
+
+    for ax in axes_flat[n_k:]:
+        ax.set_visible(False)
+
+    direction = " (lower=better)" if minimize else " (higher=better)"
+    fig.suptitle(
+        f"GP surrogate 2D landscape  ·  {px} × {py}  ·  metric: {metric}{direction}\n"
+        "colour = posterior mean  |  white dashed = posterior σ  |  dots = observations\n"
+        "(remaining parameters held at the values of the best observed trial; shared colour scale across curvatures)",
+        fontsize=9,
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
+# ─── GP plot 3: Expected Improvement curves ───────────────────────────────────
+
+
+def plot_gp_ei(
+    states: "dict[float, dict]",
+    metric: str,
+    out_path: str,
+    n_grid: int = 120,
+) -> None:
+    """
+    1D Expected Improvement curves for each hyperparameter (Frazier Eq. 7):
+      EI(x) = Δ·Φ(Δ/σ) + σ·φ(Δ/σ),  Δ = µₙ(x) − f*ₙ
+
+    Peaks indicate where the Bayesian optimizer would most want to sample next.
+    Y-axis is in original metric units.
+    """
+    if not states:
+        print(f"  {out_path} (skipped — no GP states found)")
+        return
+
+    first = next(iter(states.values()))
+    gp_params = first["param_names"]
+    log_params = set(first["log_scale_params"])
+    all_ks = sorted(states.keys())
+    n_p = len(gp_params)
+    ncols = min(3, n_p)
+    nrows = math.ceil(n_p / ncols)
+
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(ncols * 4.5, nrows * 3.0), squeeze=False
+    )
+    axes_flat = axes.flatten()
+
+    for ax, sweep_param in zip(axes_flat, gp_params):
+        is_log = sweep_param in log_params
+        sweep_idx = gp_params.index(sweep_param)
+
+        for k in all_ks:
+            state = states.get(k)
+            if state is None:
+                continue
+            col = k_color(k, all_ks)
+            obs = state["observations"]
+            X_enc_obs = np.array([o["x_encoded"] for o in obs])
+
+            enc_lo = X_enc_obs[:, sweep_idx].min()
+            enc_hi = X_enc_obs[:, sweep_idx].max()
+            enc_grid = np.linspace(enc_lo, enc_hi, n_grid)
+
+            X_test_enc = np.tile(_best_x_enc(state), (n_grid, 1))
+            X_test_enc[:, sweep_idx] = enc_grid
+
+            ei = _gp_ei_batch(state, X_test_enc)
+            x_plot = np.exp(enc_grid) if is_log else enc_grid
+
+            ax.plot(
+                x_plot, ei, color=col, linewidth=1.8, label=f"k={k:+.1f}", alpha=0.9
+            )
+
+        if is_log:
+            ax.set_xscale("log")
+        ax.set_title(sweep_param, fontsize=9)
+        ax.set_xlabel(sweep_param + (" (log scale)" if is_log else ""), fontsize=7)
+        ax.set_ylabel("Expected Improvement", fontsize=7)
+        ax.set_ylim(bottom=0)
+        ax.tick_params(labelsize=7)
+
+    for ax in axes_flat[n_p:]:
+        ax.set_visible(False)
+
+    handles, labels = axes_flat[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(
+            handles,
+            labels,
+            fontsize=7,
+            ncol=min(5, len(all_ks)),
+            loc="lower center",
+            bbox_to_anchor=(0.5, -0.01),
+        )
+
+    fig.suptitle(
+        f"GP surrogate — Expected Improvement (EI)  ·  metric: {metric}\n"
+        "EI = Δ·Φ(Δ/σ) + σ·φ(Δ/σ)  where  Δ = µₙ(x) − f*ₙ  (Frazier Eq. 7)\n"
+        "peaks = where the optimizer would sample next  |  (others held at best observed trial)",
+        fontsize=9,
+    )
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
 # ─── Scan data loading ────────────────────────────────────────────────────────
 
 
@@ -1115,8 +1643,8 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         default="optimize",
-        choices=["optimize", "scan"],
-        help="Analysis mode: 'optimize' (default) or 'scan'",
+        choices=["optimize", "scan", "gp"],
+        help="Analysis mode: 'optimize' (default), 'scan', or 'gp'",
     )
     parser.add_argument(
         "--input",
@@ -1149,6 +1677,26 @@ def main() -> None:
 
     os.makedirs(args.output, exist_ok=True)
     metric = args.metric
+
+    if args.mode == "gp":
+        if not metric:
+            print("Error: --metric is required for --mode gp")
+            return
+        print(f"Loading GP states from '{args.input}*_gp_state.json' ...")
+        states = load_gp_states(args.input)
+        if not states:
+            print(
+                "No GP state files found. Run the optimizer with --mode bayes first.\n"
+                f"Expected files matching: {args.input}*_gp_state.json"
+            )
+            return
+        print(f"Loaded GP states for {len(states)} curvature(s): {sorted(states)}")
+        print("Generating GP plots:")
+        plot_gp_slices(states, metric, os.path.join(args.output, "gp_slices.svg"))
+        plot_gp_landscape(states, metric, os.path.join(args.output, "gp_landscape.svg"))
+        plot_gp_ei(states, metric, os.path.join(args.output, "gp_ei.svg"))
+        print(f"\nDone. All plots saved to '{args.output}/'.")
+        return
 
     if args.mode == "scan":
         print(f"Loading scan results from '{args.input}_k*_scan.jsonl' ...")
