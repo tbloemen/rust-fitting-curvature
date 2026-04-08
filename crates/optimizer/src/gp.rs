@@ -66,8 +66,7 @@ impl GpOptimizer {
 
         for _ in 0..self.n_ei_candidates {
             let candidate = if rng.uniform() < 0.3 {
-                let idx = (rng.uniform() * self.trials.len() as f64) as usize
-                    % self.trials.len();
+                let idx = (rng.uniform() * self.trials.len() as f64) as usize % self.trials.len();
                 self.trials[idx].config.mutate(rng)
             } else {
                 TrialConfig::random(rng)
@@ -737,10 +736,7 @@ mod tests {
     fn test_lml_prefers_good_length_scale() {
         // Generate data from an RBF with l=1; LML should be higher near l=1 than l=10.
         let xs: Vec<Vec<f64>> = (0..10).map(|i| vec![i as f64 * 0.2]).collect();
-        let ys: Vec<f64> = xs
-            .iter()
-            .map(|x| (-(x[0] - 1.0).powi(2)).exp())
-            .collect();
+        let ys: Vec<f64> = xs.iter().map(|x| (-(x[0] - 1.0).powi(2)).exp()).collect();
         let lml_good = log_marginal_likelihood(&xs, &ys, 0.5);
         let lml_bad = log_marginal_likelihood(&xs, &ys, 10.0);
         assert!(
@@ -768,7 +764,10 @@ mod tests {
         let xs: Vec<Vec<f64>> = (0..8).map(|_| vec![rng.uniform()]).collect();
         let ys: Vec<f64> = (0..8).map(|_| rng.uniform()).collect();
         let l = mle_length_scale(&xs, &ys);
-        assert!(l >= 0.05 && l <= 10.0, "l={l} should be within grid [0.05, 10]");
+        assert!(
+            l >= 0.05 && l <= 10.0,
+            "l={l} should be within grid [0.05, 10]"
+        );
     }
 
     // ─── compute_normalization / standardize ──────────────────────────────────

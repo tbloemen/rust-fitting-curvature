@@ -99,13 +99,12 @@ impl TrialConfig {
                 (cfg.learning_rate * 2.0_f64.powf((rng.uniform() - 0.5) * 1.0)).clamp(0.5, 50.0);
         }
         if rng.uniform() < 0.3 {
-            cfg.perplexity_ratio =
-                (cfg.perplexity_ratio * 2.0_f64.powf((rng.uniform() - 0.5) * 0.8))
-                    .clamp(0.0004, 0.03);
+            cfg.perplexity_ratio = (cfg.perplexity_ratio
+                * 2.0_f64.powf((rng.uniform() - 0.5) * 0.8))
+            .clamp(0.0004, 0.03);
         }
         if rng.uniform() < 0.3 {
-            cfg.momentum_main =
-                (cfg.momentum_main + (rng.uniform() - 0.5) * 0.2).clamp(0.60, 1.0);
+            cfg.momentum_main = (cfg.momentum_main + (rng.uniform() - 0.5) * 0.2).clamp(0.60, 1.0);
         }
         if rng.uniform() < 0.3 {
             cfg.centering_weight =

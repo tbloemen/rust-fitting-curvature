@@ -699,7 +699,10 @@ fn main() {
             args.n_seeds
         ),
         other => {
-            eprintln!("Unknown --mode '{}'. Use 'random', 'scan', or 'bayes'.", other);
+            eprintln!(
+                "Unknown --mode '{}'. Use 'random', 'scan', or 'bayes'.",
+                other
+            );
             std::process::exit(1);
         }
     }
