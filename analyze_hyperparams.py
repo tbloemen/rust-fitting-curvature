@@ -830,7 +830,7 @@ def load_gp_states(input_prefix: str) -> "dict[float, dict]":
     # GP state files are named <output_stem>_gp_<dataset>_<curvature>.json
     name_pattern = f"{prefix_path.stem}_gp_*.json"
     for path in sorted(search_dir.glob(name_pattern)):
-        m = re.search(r"_k(-?\d+_\d+)$", path.stem)
+        m = re.search(r"_([+-]\d+_\d+)$", path.stem)
         if not m:
             continue
         k = float(m.group(1).replace("_", "."))
