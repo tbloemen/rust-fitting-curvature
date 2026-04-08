@@ -1,10 +1,11 @@
 use clap::Parser;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::data::Dataset;
@@ -72,6 +73,10 @@ struct Args {
     /// Trials matching the current dataset and curvature are loaded as initial observations.
     #[arg(long, default_value = "results/results.jsonl")]
     warm_start: Option<String>,
+
+    /// Number of worker threads. Defaults to the number of logical CPUs.
+    #[arg(long)]
+    threads: Option<usize>,
 }
 
 // ─── Trial result ─────────────────────────────────────────────────────────────
@@ -325,7 +330,7 @@ fn run_random(
             elapsed,
         )
         .with_all_metrics(&agg);
-        write_result(&result, &out_path);
+        write_result(&result, out_path);
 
         pb.set_message(format!(
             "k={:+.1} trial {:4} | db_ratio={:.4} | trust={:.4} | {}ms",
@@ -451,7 +456,7 @@ fn run_bayes(
             elapsed,
         )
         .with_all_metrics(&all);
-        write_result(&result, &out_path);
+        write_result(&result, out_path);
 
         let best = optimizer.best_trial();
         pb.set_prefix(format!("{:.4}", best));
@@ -534,7 +539,10 @@ fn load_best_config_from_jsonl(
         if v["dataset_name"].as_str().unwrap_or("") != dataset_name {
             continue;
         }
-        if v["curvature"].as_f64().map_or(true, |k| (k - curvature).abs() > 1e-9) {
+        if v["curvature"]
+            .as_f64()
+            .is_none_or(|k| (k - curvature).abs() > 1e-9)
+        {
             continue;
         }
         let metric = v["metric_mean"].as_f64().unwrap_or(f64::NEG_INFINITY);
@@ -607,7 +615,10 @@ fn run_scan(
     let base = if let Some(scan_file) = &args.scan_from {
         match load_best_config_from_jsonl(scan_file, n_points, dataset_name, curvature) {
             Some(c) => {
-                eprintln!("scan k={}: loaded base config from {}", curvature, scan_file);
+                eprintln!(
+                    "scan k={}: loaded base config from {}",
+                    curvature, scan_file
+                );
                 c
             }
             None => {
@@ -673,7 +684,7 @@ fn run_scan(
                 elapsed,
             );
             result.scan_param = Some(param_name.to_string());
-            write_result(&result, &out_path);
+            write_result(&result, out_path);
 
             pb.set_message(format!(
                 "{:+.1} | {}={:.4} → {:.4} ± {:.4}",
@@ -753,8 +764,9 @@ fn main() {
     println!("Output file: {}", args.output);
 
     let mp = Arc::new(MultiProgress::new());
-    let mut handles = Vec::new();
 
+    // Build work queue: all (dataset_name, evaluator, curvature) combinations.
+    let mut work: VecDeque<(String, Arc<Evaluator>, f64)> = VecDeque::new();
     for dataset_name in &dataset_names {
         println!("Loading dataset: {}...", dataset_name);
         let dataset = if dataset_name == "mnist" {
@@ -773,21 +785,44 @@ fn main() {
             "Loaded {} samples with {} features",
             dataset.n_points, dataset.n_features
         );
-
         let evaluator = Arc::new(Evaluator::new(dataset));
-
         for &k in &args.curvatures {
-            let args = args.clone();
-            let dataset_name = dataset_name.clone();
-            let evaluator = Arc::clone(&evaluator);
-            let mp = Arc::clone(&mp);
-            let h = thread::spawn(move || match args.mode.as_str() {
-                "scan" => run_scan(k, &dataset_name, &args, evaluator, &mp),
-                "bayes" => run_bayes(k, &dataset_name, &args, evaluator, &mp),
-                _ => run_random(k, &dataset_name, &args, evaluator, &mp),
-            });
-            handles.push(h);
+            work.push_back((dataset_name.clone(), Arc::clone(&evaluator), k));
         }
+    }
+
+    let n_threads = args.threads.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    });
+    println!(
+        "Using {} worker threads for {} jobs.",
+        n_threads,
+        work.len()
+    );
+
+    let queue = Arc::new(Mutex::new(work));
+    let mut handles = Vec::new();
+
+    for _ in 0..n_threads {
+        let queue = Arc::clone(&queue);
+        let args = args.clone();
+        let mp = Arc::clone(&mp);
+        let h = thread::spawn(move || {
+            loop {
+                let item = queue.lock().unwrap().pop_front();
+                match item {
+                    None => break,
+                    Some((dataset_name, evaluator, k)) => match args.mode.as_str() {
+                        "scan" => run_scan(k, &dataset_name, &args, evaluator, &mp),
+                        "bayes" => run_bayes(k, &dataset_name, &args, evaluator, &mp),
+                        _ => run_random(k, &dataset_name, &args, evaluator, &mp),
+                    },
+                }
+            }
+        });
+        handles.push(h);
     }
 
     for h in handles {
