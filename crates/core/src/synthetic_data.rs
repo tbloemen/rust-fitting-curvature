@@ -441,9 +441,12 @@ pub fn generate_antipodal_clusters(n_samples: usize, seed: u64) -> SyntheticData
 // ---------------------------------------------------------------------------
 
 /// Proper sinh-weighted radial sampling in Poincaré disk, labels by radius bins.
-pub fn generate_uniform_hyperbolic(n_samples: usize, seed: u64) -> SyntheticData {
+///
+/// `max_rho` controls the sampling radius in the hyperbolic metric.
+/// Use `max_rho = 3.0` for t-SNE embedding data; use `max_rho ≥ 5.0` for
+/// curvature detection, where longer distances make H² distinguishable from E².
+pub fn generate_uniform_hyperbolic(n_samples: usize, seed: u64, max_rho: f64) -> SyntheticData {
     let mut rng = Rng::new(seed);
-    let max_rho = 3.0_f64;
 
     let mut poincare = Vec::with_capacity(n_samples * 2);
     let mut labels = Vec::with_capacity(n_samples);
@@ -678,6 +681,191 @@ pub fn generate_hd_hyperbolic_shells(n_samples: usize, dim: usize, seed: u64) ->
 }
 
 // ---------------------------------------------------------------------------
+// Higher-dimensional generators (for curvature detection experiments)
+// ---------------------------------------------------------------------------
+
+/// Geodesic distances on the unit (d-1)-sphere embedded in R^d.
+/// `x` is flat row-major, shape n × d.
+fn sphere_distances(x: &[f64], n: usize, d: usize) -> Vec<f64> {
+    let mut dist = vec![0.0; n * n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let dot: f64 = (0..d).map(|k| x[i * d + k] * x[j * d + k]).sum();
+            let v = dot.clamp(-1.0, 1.0).acos();
+            dist[i * n + j] = v;
+            dist[j * n + i] = v;
+        }
+    }
+    dist
+}
+
+/// Geodesic distances on the hyperboloid model H^d in R^{d+1}.
+/// `x` is flat row-major, shape n × (d+1).
+/// Lorentzian inner product: −x₀y₀ + x₁y₁ + … + xᵈyᵈ.
+fn hyperboloid_distances_generic(x: &[f64], n: usize, ambient_dim: usize) -> Vec<f64> {
+    let mut dist = vec![0.0; n * n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let inner = -x[i * ambient_dim] * x[j * ambient_dim]
+                + (1..ambient_dim)
+                    .map(|k| x[i * ambient_dim + k] * x[j * ambient_dim + k])
+                    .sum::<f64>();
+            let v = (-inner).max(1.0).acosh();
+            dist[i * n + j] = v;
+            dist[j * n + i] = v;
+        }
+    }
+    dist
+}
+
+/// Convert d-dimensional Poincaré ball coordinates to hyperboloid model in R^{d+1}.
+/// `p` is flat row-major, shape n × d.
+fn poincare_to_hyperboloid_generic(p: &[f64], n: usize, d: usize) -> Vec<f64> {
+    let ambient = d + 1;
+    let mut x = Vec::with_capacity(n * ambient);
+    for i in 0..n {
+        let sq_norm: f64 = (0..d).map(|k| p[i * d + k].powi(2)).sum();
+        let denom = 1.0 - sq_norm;
+        x.push((1.0 + sq_norm) / denom);
+        for k in 0..d {
+            x.push(2.0 * p[i * d + k] / denom);
+        }
+    }
+    x
+}
+
+/// Uniform random samples inside a 2D ball of the given radius (Euclidean plane).
+///
+/// Use `radius ≈ 3` to match the natural scale of H² and S² generators,
+/// which is important for curvature detection based on the density profile.
+pub fn generate_uniform_ball_2d(n_samples: usize, seed: u64, radius: f64) -> SyntheticData {
+    let mut rng = Rng::new(seed);
+    let mut x = Vec::with_capacity(n_samples * 2);
+    let mut count = 0;
+    while count < n_samples {
+        let x0 = (rng.uniform() * 2.0 - 1.0) * radius;
+        let x1 = (rng.uniform() * 2.0 - 1.0) * radius;
+        if x0 * x0 + x1 * x1 <= radius * radius {
+            x.push(x0);
+            x.push(x1);
+            count += 1;
+        }
+    }
+    let distances = euclidean_distances(&x, n_samples, 2);
+    SyntheticData {
+        x,
+        n_points: n_samples,
+        ambient_dim: 2,
+        labels: vec![0; n_samples],
+        distances,
+    }
+}
+
+/// Uniform random samples inside a 3D ball of the given radius (Euclidean 3-space).
+///
+/// Use `radius ≈ 3` to match the natural scale of H³ and S³ generators.
+pub fn generate_uniform_ball_3d(n_samples: usize, seed: u64, radius: f64) -> SyntheticData {
+    let mut rng = Rng::new(seed);
+    let mut x = Vec::with_capacity(n_samples * 3);
+    let mut count = 0;
+    while count < n_samples {
+        let x0 = (rng.uniform() * 2.0 - 1.0) * radius;
+        let x1 = (rng.uniform() * 2.0 - 1.0) * radius;
+        let x2 = (rng.uniform() * 2.0 - 1.0) * radius;
+        if x0 * x0 + x1 * x1 + x2 * x2 <= radius * radius {
+            x.push(x0);
+            x.push(x1);
+            x.push(x2);
+            count += 1;
+        }
+    }
+    let distances = euclidean_distances(&x, n_samples, 3);
+    SyntheticData {
+        x,
+        n_points: n_samples,
+        ambient_dim: 3,
+        labels: vec![0; n_samples],
+        distances,
+    }
+}
+
+/// Uniform random samples on the unit 3-sphere S³ ⊂ R⁴.
+/// Distances are geodesic (great-circle) distances.
+pub fn generate_uniform_sphere3(n_samples: usize, seed: u64) -> SyntheticData {
+    let mut rng = Rng::new(seed);
+    let mut x = Vec::with_capacity(n_samples * 4);
+    for _ in 0..n_samples {
+        let components: [f64; 4] = [rng.normal(), rng.normal(), rng.normal(), rng.normal()];
+        let norm = components
+            .iter()
+            .map(|c| c * c)
+            .sum::<f64>()
+            .sqrt()
+            .max(1e-15);
+        for c in &components {
+            x.push(c / norm);
+        }
+    }
+    let distances = sphere_distances(&x, n_samples, 4);
+    SyntheticData {
+        x,
+        n_points: n_samples,
+        ambient_dim: 4,
+        labels: vec![0; n_samples],
+        distances,
+    }
+}
+
+/// Inverse-CDF for the radial distribution on H³: CDF ∝ sinh(r)cosh(r) − r.
+fn h3_inverse_cdf(u: f64, max_r: f64) -> f64 {
+    let cdf_max = max_r.sinh() * max_r.cosh() - max_r;
+    let target = u * cdf_max;
+    let mut lo = 0.0f64;
+    let mut hi = max_r;
+    for _ in 0..64 {
+        let mid = (lo + hi) / 2.0;
+        if mid.sinh() * mid.cosh() - mid < target {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (lo + hi) / 2.0
+}
+
+/// Uniform random samples in a hyperbolic ball of the given radius in H³.
+/// Stored in the hyperboloid model in R⁴; distances are geodesic.
+///
+/// Use `max_r ≥ 5.0` for curvature detection experiments.
+pub fn generate_uniform_hyperbolic3(n_samples: usize, seed: u64, max_r: f64) -> SyntheticData {
+    let mut rng = Rng::new(seed);
+
+    let mut poincare = Vec::with_capacity(n_samples * 3);
+
+    for _ in 0..n_samples {
+        let r = h3_inverse_cdf(rng.uniform(), max_r);
+        // Uniform direction on S²: cos θ uniform in [−1, 1]
+        let cos_theta = rng.uniform() * 2.0 - 1.0;
+        let sin_theta = (1.0 - cos_theta * cos_theta).max(0.0).sqrt();
+        let phi = rng.uniform() * 2.0 * PI;
+        let poincare_r = (r / 2.0).tanh();
+        poincare.push(poincare_r * sin_theta * phi.cos());
+        poincare.push(poincare_r * sin_theta * phi.sin());
+        poincare.push(poincare_r * cos_theta);
+    }
+
+    let x = poincare_to_hyperboloid_generic(&poincare, n_samples, 3);
+    let distances = hyperboloid_distances_generic(&x, n_samples, 4);
+    SyntheticData {
+        x,
+        n_points: n_samples,
+        ambient_dim: 4,
+        labels: vec![0; n_samples],
+        distances,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Dispatcher
 // ---------------------------------------------------------------------------
 
@@ -703,7 +891,7 @@ pub fn load_synthetic(name: &str, n_samples: usize, seed: u64) -> Result<Synthet
         "uniform_sphere" => Ok(generate_uniform_sphere(n_samples, seed)),
         "von_mises_fisher" => Ok(generate_von_mises_fisher(n_samples, seed)),
         "antipodal_clusters" => Ok(generate_antipodal_clusters(n_samples, seed)),
-        "uniform_hyperbolic" => Ok(generate_uniform_hyperbolic(n_samples, seed)),
+        "uniform_hyperbolic" => Ok(generate_uniform_hyperbolic(n_samples, seed, 3.0)),
         "tree_structured" => Ok(generate_tree_structured(n_samples, seed)),
         "hyperbolic_shells" => Ok(generate_hyperbolic_shells(n_samples, seed)),
         _ => Err(format!(
