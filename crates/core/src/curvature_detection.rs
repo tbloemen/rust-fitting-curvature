@@ -24,6 +24,8 @@
 //!    grows faster than any power law (the hallmark of exponential/sinh
 //!    growth).
 
+const GROMOV_THRESHOLD: f64 = 0.15;
+
 /// Result of fitting one geometry model.
 #[derive(Debug, Clone)]
 pub struct FitResult {
@@ -335,7 +337,7 @@ pub fn detect_geometry(
         && spherical.r_squared > hyperbolic.r_squared
     {
         "spherical"
-    } else if gromov < 0.15 {
+    } else if gromov < GROMOV_THRESHOLD {
         // Low Gromov δ → metric space is tree-like → hyperbolic.
         "hyperbolic"
     } else {
