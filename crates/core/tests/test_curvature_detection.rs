@@ -81,12 +81,32 @@ fn test_dimension_estimates() {
     // We check loose bounds (±1.5) because the boundary of the sampled ball
     // introduces bias, especially for the higher-dimensional cases.
     let cases = [
-        (generate_uniform_ball_2d(N, SEED, E_RADIUS).distances, "euclidean", 2.0_f64),
-        (generate_uniform_ball_3d(N, SEED, E_RADIUS).distances, "euclidean", 3.0),
+        (
+            generate_uniform_ball_2d(N, SEED, E_RADIUS).distances,
+            "euclidean",
+            2.0_f64,
+        ),
+        (
+            generate_uniform_ball_3d(N, SEED, E_RADIUS).distances,
+            "euclidean",
+            3.0,
+        ),
         (generate_uniform_sphere(N, SEED).distances, "spherical", 2.0),
-        (generate_uniform_sphere3(N, SEED).distances, "spherical", 3.0),
-        (generate_uniform_hyperbolic(N, SEED, H_MAX_RHO).distances, "hyperbolic", 2.0),
-        (generate_uniform_hyperbolic3(N, SEED, H_MAX_RHO).distances, "hyperbolic", 3.0),
+        (
+            generate_uniform_sphere3(N, SEED).distances,
+            "spherical",
+            3.0,
+        ),
+        (
+            generate_uniform_hyperbolic(N, SEED, H_MAX_RHO).distances,
+            "hyperbolic",
+            2.0,
+        ),
+        (
+            generate_uniform_hyperbolic3(N, SEED, H_MAX_RHO).distances,
+            "hyperbolic",
+            3.0,
+        ),
     ];
 
     for (distances, expected_geom, expected_dim) in &cases {

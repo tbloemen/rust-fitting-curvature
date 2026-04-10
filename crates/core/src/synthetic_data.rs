@@ -796,7 +796,12 @@ pub fn generate_uniform_sphere3(n_samples: usize, seed: u64) -> SyntheticData {
     let mut x = Vec::with_capacity(n_samples * 4);
     for _ in 0..n_samples {
         let components: [f64; 4] = [rng.normal(), rng.normal(), rng.normal(), rng.normal()];
-        let norm = components.iter().map(|c| c * c).sum::<f64>().sqrt().max(1e-15);
+        let norm = components
+            .iter()
+            .map(|c| c * c)
+            .sum::<f64>()
+            .sqrt()
+            .max(1e-15);
         for c in &components {
             x.push(c / norm);
         }
