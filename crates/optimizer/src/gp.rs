@@ -64,47 +64,51 @@ impl GpOptimizer {
         self.trials.push(Trial { config, metric });
     }
 
-    /// Suggest the next configuration to evaluate.
+    /// Suggest a batch of `n` promising configurations to evaluate in parallel.
     ///
-    /// Implements Algorithm 1 of Frazier (2018):
-    ///   1. Initial space-filling design (random) for the first N_INIT trials.
-    ///   2. After N_INIT observations: fit GP surrogate, then return
-    ///      argmax_x EI_n(x) solved via random candidates + local refinement (Eq. 9).
-    pub fn suggest(&self, rng: &mut Rng) -> TrialConfig {
+    /// Scores `n_ei_candidates` random/mutated candidates by Expected Improvement,
+    /// then returns the top-`n` by EI score, each refined by local hill-climbing.
+    /// Evaluating this batch in parallel keeps all workers busy while only requiring
+    /// one GP fit and one EI pass per batch — no inter-worker synchronisation needed.
+    ///
+    /// During the initial random phase (fewer than N_INIT real observations) the
+    /// full batch is filled with random configs instead.
+    pub fn suggest_batch(&self, n: usize, rng: &mut Rng) -> Vec<TrialConfig> {
         const N_INIT: usize = 5;
         if self.trials.len() < N_INIT {
-            return self.random_config(rng);
+            return (0..n).map(|_| self.random_config(rng)).collect();
         }
 
-        // Fit GP to all n observations (§3, Eq. 3).
         let gp = GpModel::fit(
             &self.trials,
             self.space.direction,
             self.space.optimize_curvature,
         );
 
-        // Maximise EI over random candidates (Eq. 9).
-        // We mix purely random points with perturbations of existing observations
-        // to balance exploration and exploitation in the candidate set.
-        let mut best_config = self.random_config(rng);
-        let mut best_ei = f64::MIN;
+        // Score all candidates, keeping track of the top-n by EI.
+        let mut scored: Vec<(f64, TrialConfig)> = (0..self.n_ei_candidates)
+            .map(|_| {
+                let candidate = if rng.uniform() < 0.3 {
+                    let idx =
+                        (rng.uniform() * self.trials.len() as f64) as usize % self.trials.len();
+                    self.mutate_config(&self.trials[idx].config, rng)
+                } else {
+                    self.random_config(rng)
+                };
+                let ei = gp.ei(&candidate);
+                (ei, candidate)
+            })
+            .collect();
 
-        for _ in 0..self.n_ei_candidates {
-            let candidate = if rng.uniform() < 0.3 {
-                let idx = (rng.uniform() * self.trials.len() as f64) as usize % self.trials.len();
-                self.mutate_config(&self.trials[idx].config, rng)
-            } else {
-                self.random_config(rng)
-            };
-            let ei = gp.ei(&candidate);
-            if ei > best_ei {
-                best_ei = ei;
-                best_config = candidate;
-            }
-        }
+        // Partial sort: descending EI, take top-n seeds.
+        scored.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Local refinement: greedy hill-climb on EI from the best candidate found.
-        self.local_search(best_config, rng, &gp)
+        // Refine each seed with local hill-climbing on EI.
+        scored
+            .into_iter()
+            .take(n)
+            .map(|(_, seed)| self.local_search(seed, rng, &gp))
+            .collect()
     }
 
     pub fn best_trial(&self) -> f64 {
@@ -1067,10 +1071,10 @@ mod tests {
         let mut opt = GpOptimizer::new(maximize_space());
         let mut rng = Rng::new(42);
         for _ in 0..4 {
-            let cfg = opt.suggest(&mut rng);
+            let cfg = opt.suggest_batch(1, &mut rng).remove(0);
             opt.observe(cfg, rng.uniform());
         }
-        let _ = opt.suggest(&mut rng);
+        let _ = opt.suggest_batch(1, &mut rng);
     }
 
     #[test]
@@ -1082,7 +1086,7 @@ mod tests {
             let cfg = TrialConfig::random(&mut rng);
             opt.observe(cfg, i as f64 * 0.1);
         }
-        let cfg = opt.suggest(&mut rng);
+        let cfg = opt.suggest_batch(1, &mut rng).remove(0);
         assert!(cfg.learning_rate > 0.0);
         assert!(cfg.perplexity_ratio >= 0.0004);
         assert!(cfg.momentum_main >= 0.60);

@@ -425,7 +425,18 @@ fn load_warm_start_trials(
 ///
 /// Geometry is resolved once via `--geometry` or auto-detection.  For non-Euclidean
 /// geometries the curvature magnitude is included as a 7th BO dimension.
-fn run_bayes(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &MultiProgress) {
+///
+/// Parallel evaluation uses a **round-based batch** strategy: each round the GP
+/// scores `n_ei_candidates` candidates and returns the top-`batch_size` by Expected
+/// Improvement, which are then evaluated in parallel via `thread::scope`.  After
+/// every round the GP is updated with all real results before the next suggest.
+fn run_bayes(
+    dataset_name: &str,
+    args: &Args,
+    evaluator: Arc<Evaluator>,
+    mp: &MultiProgress,
+    batch_size: usize,
+) {
     let metric = args.metric.as_deref().unwrap();
     let direction = metric_direction(metric);
 
@@ -473,62 +484,95 @@ fn run_bayes(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &Mu
             dataset_name, geometry, n_warm
         ));
     }
-    let pb_iters = ProgressBar::hidden();
+    pb.println(format!(
+        "bayes '{}' ({}) running with batch_size={}",
+        dataset_name, geometry, batch_size
+    ));
 
-    for trial_idx in 1..=args.n_trials {
-        let start = std::time::Instant::now();
-        let config = optimizer.suggest(&mut rng);
+    let mut completed = 0usize;
+    let mut remaining = args.n_trials;
 
-        // Resolve actual curvature: sign × magnitude (or 0 for Euclidean).
-        let actual_curvature = if optimize_curvature {
-            curvature_sign * config.curvature_magnitude
-        } else {
-            0.0
-        };
+    while remaining > 0 {
+        let this_batch = batch_size.min(remaining);
 
-        let all = eval_all_metrics(
-            &evaluator,
-            &config,
-            actual_curvature,
-            args.n_seeds,
-            trial_idx,
-            &pb_iters,
-        );
-        let mean = metric_value(&all, metric);
-        optimizer.observe(config.clone(), mean);
+        // Ask the GP for the top-`this_batch` promising configs in one shot.
+        let configs = optimizer.suggest_batch(this_batch, &mut rng);
 
-        let elapsed = start.elapsed().as_millis() as u64;
-        let mut result = TrialResult::new(
-            &config,
-            dataset_name,
-            args.n_samples,
-            args.n_seeds,
-            actual_curvature,
-            elapsed,
-        )
-        .with_all_metrics(&all);
-        result.geometry = Some(geometry.to_string());
-        if optimize_curvature {
-            result.curvature_magnitude = Some(config.curvature_magnitude);
+        // Evaluate all configs in this batch in parallel, then collect results.
+        let results: Vec<(f64, AggregatedMetrics, u64)> = thread::scope(|s| {
+            configs
+                .iter()
+                .enumerate()
+                .map(|(i, config)| {
+                    let evaluator = &*evaluator;
+                    let actual_curvature = if optimize_curvature {
+                        curvature_sign * config.curvature_magnitude
+                    } else {
+                        0.0
+                    };
+                    let trial_idx = completed + i + 1;
+                    s.spawn(move || {
+                        let pb_iters = ProgressBar::hidden();
+                        let start = std::time::Instant::now();
+                        let all = eval_all_metrics(
+                            evaluator,
+                            config,
+                            actual_curvature,
+                            args.n_seeds,
+                            trial_idx,
+                            &pb_iters,
+                        );
+                        let elapsed = start.elapsed().as_millis() as u64;
+                        (actual_curvature, all, elapsed)
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect()
+        });
+
+        // Observe all results and update the GP before the next round.
+        for (config, (actual_curvature, all, elapsed)) in configs.iter().zip(results.iter()) {
+            let mean = metric_value(all, metric);
+            optimizer.observe(config.clone(), mean);
+            completed += 1;
+
+            let mut result = TrialResult::new(
+                config,
+                dataset_name,
+                args.n_samples,
+                args.n_seeds,
+                *actual_curvature,
+                *elapsed,
+            )
+            .with_all_metrics(all);
+            result.geometry = Some(geometry.to_string());
+            if optimize_curvature {
+                result.curvature_magnitude = Some(config.curvature_magnitude);
+            }
+            write_result(&result, out_path);
+
+            let best = optimizer.best_trial();
+            pb.set_prefix(format!("{:.4}", best));
+            pb.println(format!(
+                "bayes '{}' trial {:3}/{} | {}={:.4} | best={:.4} | {}ms \
+                 | k={:.3} lr={:.4} perp={:.4}",
+                dataset_name,
+                completed,
+                args.n_trials,
+                metric,
+                mean,
+                best,
+                *elapsed,
+                actual_curvature,
+                config.learning_rate,
+                config.perplexity_ratio,
+            ));
+            pb.inc(1);
         }
-        write_result(&result, out_path);
 
-        let best = optimizer.best_trial();
-        pb.set_prefix(format!("{:.4}", best));
-        pb.println(format!(
-            "bayes '{}' trial {:3} | {}={:.4} | best={:.4} | {}ms \
-             | k={:.3} lr={:.4} perp={:.4}",
-            dataset_name,
-            trial_idx,
-            metric,
-            mean,
-            best,
-            elapsed,
-            actual_curvature,
-            config.learning_rate,
-            config.perplexity_ratio,
-        ));
-        pb.inc(1);
+        remaining -= this_batch;
     }
 
     pb.finish_with_message(format!("{} ({}) done", dataset_name, geometry));
@@ -873,17 +917,25 @@ fn main() {
                 .map(|n| n.get())
                 .unwrap_or(1)
         })
-        .min(work.len().max(1));
+        .max(1);
+
+    // The outer pool processes datasets in parallel (up to n_threads datasets at once).
+    // For `bayes`, each dataset job additionally spawns n_threads parallel evaluators
+    // per batch round — so with a single dataset all cores stay busy.
+    // With multiple datasets the outer and inner parallelism combine; on a typical
+    // single-dataset run this is always just n_threads total threads.
+    let n_outer = n_threads.min(work.len().max(1));
     println!(
-        "Using {} worker threads for {} jobs.",
+        "Using {} thread(s) ({} outer dataset worker(s), batch_size={} for bayes).",
         n_threads,
-        work.len()
+        n_outer,
+        n_threads,
     );
 
     let queue = Arc::new(Mutex::new(work));
     let mut handles = Vec::new();
 
-    for _ in 0..n_threads {
+    for _ in 0..n_outer {
         let queue = Arc::clone(&queue);
         let args = args.clone();
         let mp = Arc::clone(&mp);
@@ -894,7 +946,7 @@ fn main() {
                     None => break,
                     Some((dataset_name, evaluator)) => match args.mode.as_str() {
                         "scan" => run_scan(&dataset_name, &args, evaluator, &mp),
-                        "bayes" => run_bayes(&dataset_name, &args, evaluator, &mp),
+                        "bayes" => run_bayes(&dataset_name, &args, evaluator, &mp, n_threads),
                         _ => run_random(&dataset_name, &args, evaluator, &mp),
                     },
                 }
