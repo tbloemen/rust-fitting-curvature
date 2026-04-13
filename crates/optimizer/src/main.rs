@@ -927,9 +927,7 @@ fn main() {
     let n_outer = n_threads.min(work.len().max(1));
     println!(
         "Using {} thread(s) ({} outer dataset worker(s), batch_size={} for bayes).",
-        n_threads,
-        n_outer,
-        n_threads,
+        n_threads, n_outer, n_threads,
     );
 
     let queue = Arc::new(Mutex::new(work));
