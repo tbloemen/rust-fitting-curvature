@@ -58,7 +58,6 @@ from scipy import stats
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
-CURVATURES = [-2.0, -1.0, -0.5, -0.1, 0.0, 0.1, 0.5, 1.0, 2.0]
 
 # All possible parameter field names (union of old and new format).
 # Ordered by conceptual grouping.
@@ -107,13 +106,22 @@ def get_param_value(record: dict, param: str) -> float | None:
     return float(val)
 
 
-# Curvature color map (tab10 via curvature index)
-_CMAP_K = plt.cm.tab10  # type: ignore
+# Geometry color map — fixed colours so hyperbolic/euclidean/spherical are always the same hue.
+_GEO_COLORS: dict[str, str] = {
+    "hyperbolic": "#e6553a",  # orange-red
+    "euclidean": "#4c9be8",  # blue
+    "spherical": "#2db37a",  # green
+}
+_CMAP_K = plt.cm.tab10  # type: ignore (fallback for unknown keys)
 
 
-def k_color(k: float, all_ks: list[float]) -> tuple:
-    idx = sorted(all_ks).index(k)
-    return _CMAP_K(idx / max(len(all_ks) - 1, 1))
+def geo_color(geometry: str, all_geos: list[str]) -> tuple:
+    if geometry in _GEO_COLORS:
+        import matplotlib.colors as mcolors
+
+        return mcolors.to_rgba(_GEO_COLORS[geometry])
+    idx = all_geos.index(geometry)
+    return _CMAP_K(idx / max(len(all_geos) - 1, 1))
 
 
 # ─── Data loading ─────────────────────────────────────────────────────────────
@@ -156,19 +164,19 @@ def compute_correlations(
     records: list[dict],
     params: list[str],
     metric: str | None = None,
-) -> dict[str, dict[float, tuple[float, float]]]:
+) -> dict[str, dict[str, tuple[float, float]]]:
     """
-    Returns {param: {curvature: (rho, pval)}}.
+    Returns {param: {geometry: (rho, pval)}}.
     Only included where enough data exists (≥5 trials).
     """
-    by_k: dict[float, list[dict]] = {}
+    by_geo: dict[str, list[dict]] = {}
     for r in records:
-        by_k.setdefault(r["curvature"], []).append(r)
+        by_geo.setdefault(r.get("geometry", "unknown"), []).append(r)
 
-    result: dict[str, dict[float, tuple[float, float]]] = {}
+    result: dict[str, dict[str, tuple[float, float]]] = {}
     for param in params:
         result[param] = {}
-        for k, group in by_k.items():
+        for geo, group in by_geo.items():
             pairs = [
                 (get_param_value(r, param), get_metric_value(r, metric))
                 for r in group
@@ -179,7 +187,7 @@ def compute_correlations(
                 continue
             xs, ys = zip(*pairs)
             rho, pval = stats.spearmanr(xs, ys)
-            result[param][k] = (float(rho), float(pval))  # type: ignore
+            result[param][geo] = (float(rho), float(pval))  # type: ignore
     return result
 
 
@@ -195,15 +203,15 @@ def mean_abs_rho(correlations: dict, params: list[str]) -> dict[str, float]:
 
 
 def plot_spearman_heatmap(correlations: dict, params: list[str], out_path: str) -> None:
-    curvatures = sorted({k for p in correlations.values() for k in p})
-    n_p, n_k = len(params), len(curvatures)
+    geometries = sorted({geo for p in correlations.values() for geo in p})
+    n_p, n_k = len(params), len(geometries)
 
     matrix = np.full((n_p, n_k), np.nan)
     sig = np.zeros((n_p, n_k), dtype=bool)
 
     for i, param in enumerate(params):
-        for j, k in enumerate(curvatures):
-            entry = correlations.get(param, {}).get(k)
+        for j, geo in enumerate(geometries):
+            entry = correlations.get(param, {}).get(geo)
             if entry is not None:
                 rho, pval = entry
                 matrix[i, j] = rho
@@ -216,7 +224,7 @@ def plot_spearman_heatmap(correlations: dict, params: list[str], out_path: str) 
     im = ax.imshow(matrix, cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
 
     ax.set_xticks(range(n_k))
-    ax.set_xticklabels([f"k={k:+.1f}" for k in curvatures], rotation=45, ha="right")
+    ax.set_xticklabels(geometries, rotation=45, ha="right")
     ax.set_yticks(range(n_p))
     ax.set_yticklabels(params)
 
@@ -318,24 +326,24 @@ def plot_param_vs_metric(
     out_dir: str,
     metric: str | None = None,
 ) -> None:
-    all_ks = sorted({r["curvature"] for r in records})
+    all_geos = sorted({r.get("geometry", "unknown") for r in records})
     metric_label = metric or "metric"
 
     for param in params:
         is_log = param in LOG_SCALE_PARAMS
 
         fig, ax = plt.subplots(figsize=(7, 4.5))
-        for k in all_ks:
+        for geo in all_geos:
             group = [
                 r
                 for r in records
-                if r["curvature"] == k
+                if r.get("geometry", "unknown") == geo
                 and param in r
                 and get_metric_value(r, metric) is not None
             ]
             if not group:
                 continue
-            col = k_color(k, all_ks)
+            col = geo_color(geo, all_geos)
             xs = np.array([get_param_value(r, param) for r in group])
             ys = np.array([get_metric_value(r, metric) for r in group])
             ax.scatter(xs, ys, color=col, alpha=0.35, s=12, linewidths=0)
@@ -351,7 +359,7 @@ def plot_param_vs_metric(
                     trend_y,
                     color=col,
                     linewidth=1.8,
-                    label=f"k={k:+.1f}",
+                    label=geo,
                     alpha=0.9,
                 )
 
@@ -384,17 +392,16 @@ def plot_metric_correlation(records: list[dict], out_path: str) -> None:
         print(f"  {out_path} (skipped — fewer than 2 metrics present)")
         return
 
-    groups = [
-        (records, "All curvatures"),
-        ([r for r in records if r["curvature"] < 0], "Hyperbolic (k < 0)"),
-        ([r for r in records if r["curvature"] == 0.0], "Euclidean (k = 0)"),
-        ([r for r in records if r["curvature"] > 0], "Spherical (k > 0)"),
+    all_geos = sorted({r.get("geometry", "unknown") for r in records})
+    geo_groups: list[tuple[str, list[dict]]] = [("All geometries", records)] + [
+        (geo, [r for r in records if r.get("geometry") == geo]) for geo in all_geos
     ]
+    n_panels = len(geo_groups)
     n_m = len(present)
     panel = max(3.5, n_m * 0.55 + 1.0)
-    fig, axes = plt.subplots(1, 4, figsize=(panel * 4 + 1.0, panel + 0.5))
+    fig, axes = plt.subplots(1, n_panels, figsize=(panel * n_panels + 1.0, panel + 0.5))
 
-    for ax, (subset, title) in zip(axes, groups):
+    for ax, (title, subset) in zip(axes, geo_groups):
         matrix = np.full((n_m, n_m), np.nan)
         for i, m1 in enumerate(present):
             for j, m2 in enumerate(present):
@@ -445,6 +452,9 @@ def plot_metric_correlation(records: list[dict], out_path: str) -> None:
         "(minimisation metrics negated so sign is consistent)",
         fontsize=9,
     )
+    # Remove empty axes if n_panels < 4 (legacy layout)
+    for ax in axes[n_panels:]:
+        ax.set_visible(False)
     fig.tight_layout()
     fig.savefig(out_path, format="svg", bbox_inches="tight")
     plt.close(fig)
@@ -539,7 +549,7 @@ def plot_marginal_effects(
     if not continuous_params:
         print(f"  {out_path} (skipped — no continuous params)")
         return
-    all_ks = sorted({r["curvature"] for r in records})
+    all_geos = sorted({r.get("geometry", "unknown") for r in records})
     metric_label = metric or "metric"
 
     n_p = len(continuous_params)
@@ -550,17 +560,17 @@ def plot_marginal_effects(
 
     for ax, param in zip(axes_flat, continuous_params):
         is_log = param in LOG_SCALE_PARAMS
-        for k in all_ks:
+        for geo in all_geos:
             group = [
                 r
                 for r in records
-                if r["curvature"] == k
+                if r.get("geometry") == geo
                 and param in r
                 and get_metric_value(r, metric) is not None
             ]
             if len(group) < n_bins:
                 continue
-            col = k_color(k, all_ks)
+            col = geo_color(geo, all_geos)
             xs = np.array([get_param_value(r, param) for r in group], dtype=float)
             ys = np.array([get_metric_value(r, metric) for r in group], dtype=float)
 
@@ -598,7 +608,7 @@ def plot_marginal_effects(
                 my,
                 color=col,
                 linewidth=1.8,
-                label=f"k={k:+.1f}",
+                label=geo,
                 marker="o",
                 markersize=3.5,
             )
@@ -623,7 +633,7 @@ def plot_marginal_effects(
             handles,
             labels,
             fontsize=7,
-            ncol=min(5, len(all_ks)),
+            ncol=min(5, len(all_geos)),
             loc="lower center",
             bbox_to_anchor=(0.5, -0.02),
         )
@@ -701,11 +711,9 @@ def print_good_regions(
     runs, broken out by geometry group (All / Hyperbolic / Euclidean / Spherical).
     """
     continuous_params = [p for p in params if p not in CATEGORICAL_PARAMS]
-    groups = [
-        ("All", records),
-        ("Hyperbolic (k<0)", [r for r in records if r["curvature"] < 0]),
-        ("Euclidean  (k=0)", [r for r in records if r["curvature"] == 0.0]),
-        ("Spherical  (k>0)", [r for r in records if r["curvature"] > 0]),
+    all_geos = sorted({r.get("geometry", "unknown") for r in records})
+    groups = [("All", records)] + [
+        (geo, [r for r in records if r.get("geometry") == geo]) for geo in all_geos
     ]
     direction = "lower=better" if metric in MINIMIZE_METRICS else "higher=better"
     print(
@@ -757,15 +765,16 @@ def plot_good_regions(
         print(f"  {out_path} (skipped — no continuous params)")
         return
 
-    groups = [
-        ("All", records),
-        ("Hyperbolic\n(k < 0)", [r for r in records if r["curvature"] < 0]),
-        ("Euclidean\n(k = 0)", [r for r in records if r["curvature"] == 0.0]),
-        ("Spherical\n(k > 0)", [r for r in records if r["curvature"] > 0]),
+    all_geos = sorted({r.get("geometry", "unknown") for r in records})
+    groups = [("All", records)] + [
+        (geo, [r for r in records if r.get("geometry") == geo]) for geo in all_geos
     ]
+    n_panels = len(groups)
 
     n_p = len(continuous_params)
-    fig, axes = plt.subplots(1, 4, figsize=(16.0, n_p * 0.55 + 2.5), sharey=True)
+    fig, axes = plt.subplots(
+        1, n_panels, figsize=(n_panels * 4.0, n_p * 0.55 + 2.5), sharey=True
+    )
 
     for ax, (group_name, subset) in zip(axes, groups):
         regions = _good_region_data(records, params, metric, top_pct, subset)
@@ -816,30 +825,39 @@ def plot_good_regions(
 #   mu_orig    = µₙ · y_std + y_mean  (undo standardisation; undo sign-flip if minimize)
 
 
-def load_gp_states(input_prefix: str) -> "dict[float, dict]":
+def load_gp_states(input_prefix: str) -> dict[str, dict]:
     """
-    Load all GP state JSON files matching <input_prefix>*_gp_state.json.
+    Load all GP state JSON files matching ``<input_prefix>_gp_*.json``.
 
-    The Rust optimizer writes one file per (dataset, curvature) pair; the
-    curvature is encoded in the filename as e.g. ``k-0_1`` (dots replaced by
-    underscores).  Returns a dict mapping float curvature → state dict.
+    Only geometry-keyed files are supported:
+    ``<stem>_gp_<dataset>_<geometry>.json`` where geometry is one of
+    "euclidean", "spherical", "hyperbolic".
     """
-    states: dict[float, dict] = {}
+    states: dict[str, dict] = {}
     prefix_path = Path(input_prefix)
     search_dir = prefix_path.parent
-    # GP state files are named <output_stem>_gp_<dataset>_<curvature>.json
     name_pattern = f"{prefix_path.stem}_gp_*.json"
     for path in sorted(search_dir.glob(name_pattern)):
-        m = re.search(r"_([+-]\d+_\d+)$", path.stem)
+        m = re.search(r"_(euclidean|spherical|hyperbolic)$", path.stem)
         if not m:
             continue
-        k = float(m.group(1).replace("_", "."))
+        key = m.group(1)
         try:
             with open(path) as f:
-                states[k] = json.load(f)
+                states[key] = json.load(f)
         except Exception as e:
             print(f"  Warning: could not load {path}: {e}")
     return states
+
+
+def state_label(geometry: str) -> str:
+    """Human-readable label for a geometry key."""
+    return geometry
+
+
+def state_color(geometry: str, all_geos: list[str]) -> tuple:
+    """Consistent color for a geometry key."""
+    return geo_color(geometry, all_geos)
 
 
 def _prepare_gp_state(state: dict) -> dict:
@@ -872,7 +890,7 @@ def _prepare_gp_state(state: dict) -> dict:
     return state
 
 
-def _best_x_enc(state: dict) -> "np.ndarray":
+def _best_x_enc(state: dict) -> np.ndarray:
     """Return the encoded input vector of the best observed trial."""
     obs = state["observations"]
     if state["direction"] == "maximize":
@@ -882,9 +900,7 @@ def _best_x_enc(state: dict) -> "np.ndarray":
     return np.array(best["x_encoded"])
 
 
-def _gp_predict_batch(
-    state: dict, X_enc: "np.ndarray"
-) -> "tuple[np.ndarray, np.ndarray]":
+def _gp_predict_batch(state: dict, X_enc: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
     Vectorized GP posterior mean and std from an exported Rust GP state.
 
@@ -924,7 +940,7 @@ def _gp_predict_batch(
     return mu, sigma
 
 
-def _gp_ei_batch(state: dict, X_enc: "np.ndarray") -> "np.ndarray":
+def _gp_ei_batch(state: dict, X_enc: np.ndarray) -> np.ndarray:
     """
     Vectorized Expected Improvement from an exported Rust GP state (Frazier Eq. 7):
       EI = max(Δ·Φ(Δ/σ) + σ·φ(Δ/σ), 0)  where Δ = µₙ(x) − f*ₙ
@@ -957,7 +973,7 @@ def _gp_ei_batch(state: dict, X_enc: "np.ndarray") -> "np.ndarray":
 
 
 def plot_gp_slices(
-    states: dict[float, dict],
+    states: dict[str, dict],
     metric: str,
     out_path: str,
     n_grid: int = 120,
@@ -967,7 +983,7 @@ def plot_gp_slices(
     posterior mean (solid) ± 2σ (shaded band), with raw observations as dots.
 
     All parameters except the swept one are held at their sample median in
-    GP encoded space.  One curve per curvature, loaded from the Rust GP state.
+    GP encoded space.  One curve per geometry, loaded from the Rust GP state.
     """
     if not states:
         print(f"  {out_path} (skipped — no GP states found)")
@@ -977,7 +993,7 @@ def plot_gp_slices(
     gp_params = first["param_names"]
     log_params = set(first["log_scale_params"])
     minimize = first["direction"] == "minimize"
-    all_ks = sorted(states.keys())
+    all_geos = sorted(states.keys())
     n_p = len(gp_params)
     ncols = min(3, n_p)
     nrows = math.ceil(n_p / ncols)
@@ -991,11 +1007,11 @@ def plot_gp_slices(
         is_log = sweep_param in log_params
         sweep_idx = gp_params.index(sweep_param)
 
-        for k in all_ks:
-            state = states.get(k)
+        for geo in all_geos:
+            state = states.get(geo)
             if state is None:
                 continue
-            col = k_color(k, all_ks)
+            col = state_color(geo, all_geos)
             obs = state["observations"]
 
             # Scatter: back-transform encoded value to original scale for the x-axis
@@ -1028,7 +1044,7 @@ def plot_gp_slices(
                 mu,
                 color=col,
                 linewidth=1.8,
-                label=f"k={k:+.1f}",
+                label=state_label(geo),
                 zorder=3,
                 alpha=0.9,
             )
@@ -1053,7 +1069,7 @@ def plot_gp_slices(
             handles,
             labels,
             fontsize=7,
-            ncol=min(5, len(all_ks)),
+            ncol=min(5, len(all_geos)),
             loc="lower center",
             bbox_to_anchor=(0.5, -0.01),
         )
@@ -1074,17 +1090,17 @@ def plot_gp_slices(
 
 
 def plot_gp_landscape(
-    states: dict[float, dict],
+    states: dict[str, dict],
     metric: str,
     out_path: str,
     n_grid: int = 50,
 ) -> None:
     """
     2D GP posterior mean heatmap for learning_rate × perplexity_ratio,
-    one subplot per curvature.
+    one subplot per geometry.
 
     Colour encodes the GP posterior mean (viridis, shared scale across
-    curvatures).  White dashed contours show posterior σ (uncertainty).
+    geometries).  White dashed contours show posterior σ (uncertainty).
     White dots are observed data points.  All other parameters are held at
     their sample median in GP encoded space.
     """
@@ -1096,7 +1112,7 @@ def plot_gp_landscape(
     gp_params = first["param_names"]
     log_params = set(first["log_scale_params"])
     minimize = first["direction"] == "minimize"
-    all_ks = sorted(states.keys())
+    all_geos = sorted(states.keys())
 
     px, py = "learning_rate", "perplexity_ratio"
     if px not in gp_params:
@@ -1112,9 +1128,9 @@ def plot_gp_landscape(
     yi = gp_params.index(py)
 
     # Pass 1: compute grids (needed for shared colour scale)
-    fitted: dict[float, tuple] = {}
-    for k in all_ks:
-        state = states.get(k)
+    fitted: dict[str, tuple] = {}
+    for geo in all_geos:
+        state = states.get(geo)
         if state is None:
             continue
         obs = state["observations"]
@@ -1135,7 +1151,7 @@ def plot_gp_landscape(
         x_plot = np.exp(x_enc_grid) if px in log_params else x_enc_grid
         y_plot = np.exp(y_enc_grid) if py in log_params else y_enc_grid
 
-        fitted[k] = (state, X_enc_obs, obs, mu_grid, sigma_grid, x_plot, y_plot)
+        fitted[geo] = (state, X_enc_obs, obs, mu_grid, sigma_grid, x_plot, y_plot)
 
     if not fitted:
         print(f"  {out_path} (skipped — no data)")
@@ -1154,12 +1170,12 @@ def plot_gp_landscape(
     )
     axes_flat = axes.flatten()
 
-    for ax, k in zip(axes_flat, all_ks):
-        if k not in fitted:
+    for ax, geo in zip(axes_flat, all_geos):
+        if geo not in fitted:
             ax.set_visible(False)
             continue
 
-        state, X_enc_obs, obs, mu_grid, sigma_grid, x_plot, y_plot = fitted[k]
+        state, X_enc_obs, obs, mu_grid, sigma_grid, x_plot, y_plot = fitted[geo]
         mesh_x, mesh_y = np.meshgrid(x_plot, y_plot)
 
         pcm = ax.pcolormesh(
@@ -1197,7 +1213,7 @@ def plot_gp_landscape(
 
         ax.set_xlabel(px, fontsize=7)
         ax.set_ylabel(py, fontsize=7)
-        ax.set_title(f"k={k:+.1f}  (l={state['length_scale']:.2f})", fontsize=8)
+        ax.set_title(f"{state_label(geo)}  (l={state['length_scale']:.2f})", fontsize=8)
         ax.tick_params(labelsize=6)
         plt.colorbar(pcm, ax=ax, fraction=0.046, pad=0.04, shrink=0.85)
 
@@ -1208,7 +1224,7 @@ def plot_gp_landscape(
     fig.suptitle(
         f"GP surrogate 2D landscape  ·  {px} × {py}  ·  metric: {metric}{direction}\n"
         "colour = posterior mean  |  white dashed = posterior σ  |  dots = observations\n"
-        "(remaining parameters held at the values of the best observed trial; shared colour scale across curvatures)",
+        "(remaining parameters held at the values of the best observed trial; shared colour scale across geometries)",
         fontsize=9,
     )
     fig.tight_layout()
@@ -1221,7 +1237,7 @@ def plot_gp_landscape(
 
 
 def plot_gp_ei(
-    states: "dict[float, dict]",
+    states: dict[str, dict],
     metric: str,
     out_path: str,
     n_grid: int = 120,
@@ -1240,7 +1256,7 @@ def plot_gp_ei(
     first = next(iter(states.values()))
     gp_params = first["param_names"]
     log_params = set(first["log_scale_params"])
-    all_ks = sorted(states.keys())
+    all_geos = sorted(states.keys())
     n_p = len(gp_params)
     ncols = min(3, n_p)
     nrows = math.ceil(n_p / ncols)
@@ -1254,11 +1270,11 @@ def plot_gp_ei(
         is_log = sweep_param in log_params
         sweep_idx = gp_params.index(sweep_param)
 
-        for k in all_ks:
-            state = states.get(k)
+        for geo in all_geos:
+            state = states.get(geo)
             if state is None:
                 continue
-            col = k_color(k, all_ks)
+            col = state_color(geo, all_geos)
             obs = state["observations"]
             X_enc_obs = np.array([o["x_encoded"] for o in obs])
 
@@ -1273,7 +1289,7 @@ def plot_gp_ei(
             x_plot = np.exp(enc_grid) if is_log else enc_grid
 
             ax.plot(
-                x_plot, ei, color=col, linewidth=1.8, label=f"k={k:+.1f}", alpha=0.9
+                x_plot, ei, color=col, linewidth=1.8, label=state_label(geo), alpha=0.9
             )
 
         if is_log:
@@ -1293,7 +1309,7 @@ def plot_gp_ei(
             handles,
             labels,
             fontsize=7,
-            ncol=min(5, len(all_ks)),
+            ncol=min(5, len(all_geos)),
             loc="lower center",
             bbox_to_anchor=(0.5, -0.01),
         )
@@ -1328,13 +1344,13 @@ def _scan_params_ordered(records: list[dict]) -> list[str]:
     return seen
 
 
-def _base_config(records: list[dict], sweep_param: str, curvature: float) -> dict:
+def _base_config(records: list[dict], sweep_param: str, geometry: str) -> dict:
     """
-    Recover the base (fixed) config for a curvature by reading the non-swept
+    Recover the base (fixed) config for a geometry by reading the non-swept
     parameter values from any record where a *different* parameter is being swept.
     """
     for r in records:
-        if r["curvature"] == curvature and r.get("scan_param") != sweep_param:
+        if r.get("geometry") == geometry and r.get("scan_param") != sweep_param:
             return r
     return {}
 
@@ -1350,7 +1366,7 @@ def plot_scan_effects(
     value, one line per curvature. A vertical dashed line marks the base-config
     value for that parameter.
     """
-    all_ks = sorted({r["curvature"] for r in records})
+    all_geos = sorted({r.get("geometry", "unknown") for r in records})
     sweep_params = _scan_params_ordered(records)
     metric_label = metric or "metric"
     n_params = len(sweep_params)
@@ -1366,12 +1382,12 @@ def plot_scan_effects(
     for ax, param in zip(axes_flat, sweep_params):
         is_log = param in LOG_SCALE_PARAMS
 
-        for k in all_ks:
+        for geo in all_geos:
             group = sorted(
                 [
                     r
                     for r in records
-                    if r["curvature"] == k and r.get("scan_param") == param
+                    if r.get("geometry") == geo and r.get("scan_param") == param
                 ],
                 key=lambda r: get_param_value(r, param) or 0,
             )
@@ -1380,21 +1396,21 @@ def plot_scan_effects(
 
             xs = np.array([get_param_value(r, param) for r in group])
             ys = np.array([get_metric_value(r, metric) or 0.0 for r in group])
-            col = k_color(k, all_ks)
+            col = geo_color(geo, all_geos)
 
             ax.plot(
                 xs,
                 ys,
                 color=col,
                 linewidth=1.8,
-                label=f"k={k:+.1f}",
+                label=geo,
                 marker="o",
                 markersize=3.5,
                 zorder=3,
             )
 
         # Mark base-config value with a vertical dashed line.
-        base = _base_config(records, param, all_ks[0])
+        base = _base_config(records, param, all_geos[0] if all_geos else "")
         if param in base:
             ax.axvline(
                 get_param_value(base, param),
@@ -1423,7 +1439,7 @@ def plot_scan_effects(
         handles,
         labels,
         fontsize=7,
-        ncol=min(5, len(all_ks) + 1),
+        ncol=min(5, len(all_geos) + 1),
         loc="lower center",
         bbox_to_anchor=(0.5, -0.02),
     )
@@ -1446,21 +1462,21 @@ def plot_scan_sensitivity(
 ) -> None:
     """
     Heatmap of metric range (max − min) across the sweep, for each
-    (parameter × curvature). Larger range = more sensitive to that parameter.
+    (parameter × geometry). Larger range = more sensitive to that parameter.
     """
-    all_ks = sorted({r["curvature"] for r in records})
+    all_geos = sorted({r.get("geometry", "unknown") for r in records})
     sweep_params = _scan_params_ordered(records)
     metric_label = metric or "metric"
     if not sweep_params:
         return
 
-    matrix = np.full((len(sweep_params), len(all_ks)), np.nan)
+    matrix = np.full((len(sweep_params), len(all_geos)), np.nan)
     for i, param in enumerate(sweep_params):
-        for j, k in enumerate(all_ks):
+        for j, geo in enumerate(all_geos):
             group = [
                 r
                 for r in records
-                if r["curvature"] == k and r.get("scan_param") == param
+                if r.get("geometry") == geo and r.get("scan_param") == param
             ]
             if len(group) < 2:
                 continue
@@ -1471,19 +1487,19 @@ def plot_scan_sensitivity(
             matrix[i, j] = max(vals) - min(vals)
 
     fig, ax = plt.subplots(
-        figsize=(len(all_ks) * 0.95 + 2.0, len(sweep_params) * 0.55 + 1.8)
+        figsize=(len(all_geos) * 0.95 + 2.0, len(sweep_params) * 0.55 + 1.8)
     )
 
     vmax = np.nanmax(matrix) if not np.all(np.isnan(matrix)) else 1.0
     im = ax.imshow(matrix, cmap="YlOrRd", vmin=0, vmax=vmax, aspect="auto")
 
-    ax.set_xticks(range(len(all_ks)))
-    ax.set_xticklabels([f"k={k:+.1f}" for k in all_ks], rotation=45, ha="right")
+    ax.set_xticks(range(len(all_geos)))
+    ax.set_xticklabels(all_geos, rotation=45, ha="right")
     ax.set_yticks(range(len(sweep_params)))
     ax.set_yticklabels(sweep_params)
 
     for i in range(len(sweep_params)):
-        for j in range(len(all_ks)):
+        for j in range(len(all_geos)):
             if not np.isnan(matrix[i, j]):
                 color = "white" if matrix[i, j] > vmax * 0.6 else "black"
                 ax.text(
@@ -1498,7 +1514,7 @@ def plot_scan_sensitivity(
 
     plt.colorbar(im, ax=ax, label="metric range (max − min)", fraction=0.03, pad=0.02)
     ax.set_title(
-        f"Scan sensitivity: {metric_label} range per (parameter × curvature)\n"
+        f"Scan sensitivity: {metric_label} range per (parameter × geometry)\n"
         "larger = more impact when this parameter is varied",
         pad=10,
     )
@@ -1515,28 +1531,28 @@ def plot_scan_optimal(
     records: list[dict], out_path: str, metric: str | None = None
 ) -> None:
     """
-    For each (parameter × curvature), show where in the sweep range the optimum
+    For each (parameter × geometry), show where in the sweep range the optimum
     lies, normalised to [0, 1] (0 = low end of range, 1 = high end).
     Discrete parameters show the optimal category index.
     Helps answer: "is the optimum always near the boundary, or in the interior?"
     """
-    all_ks = sorted({r["curvature"] for r in records})
+    all_geos = sorted({r.get("geometry", "unknown") for r in records})
     sweep_params = _scan_params_ordered(records)
     metric_label = metric or "metric"
     if not sweep_params:
         return
 
     # Two matrices: normalised optimal position, and actual optimal value
-    pos_matrix = np.full((len(sweep_params), len(all_ks)), np.nan)
-    val_matrix = np.full((len(sweep_params), len(all_ks)), np.nan)
+    pos_matrix = np.full((len(sweep_params), len(all_geos)), np.nan)
+    val_matrix = np.full((len(sweep_params), len(all_geos)), np.nan)
 
     for i, param in enumerate(sweep_params):
-        for j, k in enumerate(all_ks):
+        for j, geo in enumerate(all_geos):
             group = sorted(
                 [
                     r
                     for r in records
-                    if r["curvature"] == k
+                    if r.get("geometry") == geo
                     and r.get("scan_param") == param
                     and get_metric_value(r, metric) is not None
                 ],
@@ -1558,18 +1574,18 @@ def plot_scan_optimal(
                 pos_matrix[i, j] = 0.5
 
     fig, axes = plt.subplots(
-        1, 2, figsize=(len(all_ks) * 1.6 + 2.5, len(sweep_params) * 0.6 + 2.2)
+        1, 2, figsize=(len(all_geos) * 1.6 + 2.5, len(sweep_params) * 0.6 + 2.2)
     )
 
     # Left: optimal position (0=low end, 1=high end)
     # Diverging colormap centred at 0.5 highlights boundary-sitting optima
     im0 = axes[0].imshow(pos_matrix, cmap="RdYlGn", vmin=0, vmax=1, aspect="auto")
-    axes[0].set_xticks(range(len(all_ks)))
-    axes[0].set_xticklabels([f"k={k:+.1f}" for k in all_ks], rotation=45, ha="right")
+    axes[0].set_xticks(range(len(all_geos)))
+    axes[0].set_xticklabels(all_geos, rotation=45, ha="right")
     axes[0].set_yticks(range(len(sweep_params)))
     axes[0].set_yticklabels(sweep_params)
     for i in range(len(sweep_params)):
-        for j in range(len(all_ks)):
+        for j in range(len(all_geos)):
             if not np.isnan(pos_matrix[i, j]):
                 v = pos_matrix[i, j]
                 color = "black" if 0.25 < v < 0.75 else "white"
@@ -1593,12 +1609,12 @@ def plot_scan_optimal(
     im1 = axes[1].imshow(
         val_matrix, cmap="Blues", vmin=vmin2, vmax=vmax2, aspect="auto"
     )
-    axes[1].set_xticks(range(len(all_ks)))
-    axes[1].set_xticklabels([f"k={k:+.1f}" for k in all_ks], rotation=45, ha="right")
+    axes[1].set_xticks(range(len(all_geos)))
+    axes[1].set_xticklabels(all_geos, rotation=45, ha="right")
     axes[1].set_yticks(range(len(sweep_params)))
     axes[1].set_yticklabels([""] * len(sweep_params))
     for i in range(len(sweep_params)):
-        for j in range(len(all_ks)):
+        for j in range(len(all_geos)):
             if not np.isnan(val_matrix[i, j]):
                 v = val_matrix[i, j]
                 color = "white" if v > vmin2 + (vmax2 - vmin2) * 0.6 else "black"
@@ -1611,7 +1627,7 @@ def plot_scan_optimal(
     axes[1].set_title(f"Best {metric_label} achieved\nat the optimal sweep point")
 
     fig.suptitle(
-        f"Scan: optimal sweep point per (parameter × curvature) — {metric_label}",
+        f"Scan: optimal sweep point per (parameter × geometry) — {metric_label}",
         fontsize=10,
     )
     fig.tight_layout()
@@ -1692,9 +1708,9 @@ def main() -> None:
         if not records:
             print("No scan results found. Run the optimizer with --mode scan first.")
             return
-        n_curvatures = len({r["curvature"] for r in records})
+        n_geometries = len({r.get("geometry", "unknown") for r in records})
         sweep_params = _scan_params_ordered(records)
-        print(f"Loaded {len(records)} scan records across {n_curvatures} curvatures.")
+        print(f"Loaded {len(records)} scan records across {n_geometries} geometries.")
         print(f"Parameters swept: {sweep_params}")
         print(f"Metric: {metric or 'not specified — scan plots will be skipped'}\n")
 

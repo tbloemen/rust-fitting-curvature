@@ -27,7 +27,7 @@ pub struct Trial {
 
 pub struct GpOptimizer {
     trials: Vec<Trial>,
-    direction: OptimizeDirection,
+    space: SearchSpace,
     n_ei_candidates: usize,
 }
 
@@ -35,9 +35,29 @@ impl GpOptimizer {
     pub fn new(space: SearchSpace) -> Self {
         Self {
             trials: Vec::new(),
-            direction: space.direction,
+            space,
             n_ei_candidates: 1000,
         }
+    }
+
+    /// Sample a random config, including curvature magnitude when enabled.
+    fn random_config(&self, rng: &mut Rng) -> TrialConfig {
+        let mut cfg = TrialConfig::random(rng);
+        if self.space.optimize_curvature {
+            cfg.curvature_magnitude = self.space.sample_curvature_magnitude(rng);
+        }
+        cfg
+    }
+
+    /// Perturb a config, including curvature magnitude when enabled.
+    fn mutate_config(&self, config: &TrialConfig, rng: &mut Rng) -> TrialConfig {
+        let mut cfg = config.mutate(rng);
+        if self.space.optimize_curvature && rng.uniform() < 0.3 {
+            cfg.curvature_magnitude = self
+                .space
+                .mutate_curvature_magnitude(cfg.curvature_magnitude, rng);
+        }
+        cfg
     }
 
     pub fn observe(&mut self, config: TrialConfig, metric: f64) {
@@ -53,24 +73,28 @@ impl GpOptimizer {
     pub fn suggest(&self, rng: &mut Rng) -> TrialConfig {
         const N_INIT: usize = 5;
         if self.trials.len() < N_INIT {
-            return TrialConfig::random(rng);
+            return self.random_config(rng);
         }
 
         // Fit GP to all n observations (§3, Eq. 3).
-        let gp = GpModel::fit(&self.trials, self.direction);
+        let gp = GpModel::fit(
+            &self.trials,
+            self.space.direction,
+            self.space.optimize_curvature,
+        );
 
         // Maximise EI over random candidates (Eq. 9).
         // We mix purely random points with perturbations of existing observations
         // to balance exploration and exploitation in the candidate set.
-        let mut best_config = TrialConfig::random(rng);
+        let mut best_config = self.random_config(rng);
         let mut best_ei = f64::MIN;
 
         for _ in 0..self.n_ei_candidates {
             let candidate = if rng.uniform() < 0.3 {
                 let idx = (rng.uniform() * self.trials.len() as f64) as usize % self.trials.len();
-                self.trials[idx].config.mutate(rng)
+                self.mutate_config(&self.trials[idx].config, rng)
             } else {
-                TrialConfig::random(rng)
+                self.random_config(rng)
             };
             let ei = gp.ei(&candidate);
             if ei > best_ei {
@@ -85,12 +109,12 @@ impl GpOptimizer {
 
     pub fn best_trial(&self) -> f64 {
         if self.trials.is_empty() {
-            return match self.direction {
+            return match self.space.direction {
                 OptimizeDirection::Maximize => f64::MIN,
                 OptimizeDirection::Minimize => f64::MAX,
             };
         }
-        match self.direction {
+        match self.space.direction {
             OptimizeDirection::Maximize => self
                 .trials
                 .iter()
@@ -108,7 +132,7 @@ impl GpOptimizer {
         if self.trials.is_empty() {
             return None;
         }
-        match self.direction {
+        match self.space.direction {
             OptimizeDirection::Maximize => self
                 .trials
                 .iter()
@@ -128,15 +152,19 @@ impl GpOptimizer {
         if self.trials.len() < 2 {
             return None;
         }
-        let gp = GpModel::fit(&self.trials, self.direction);
-        Some(gp.to_state(&self.trials, self.direction))
+        let gp = GpModel::fit(
+            &self.trials,
+            self.space.direction,
+            self.space.optimize_curvature,
+        );
+        Some(gp.to_state(&self.trials, self.space.direction))
     }
 
     fn local_search(&self, initial: TrialConfig, rng: &mut Rng, gp: &GpModel) -> TrialConfig {
         let mut current = initial;
         let mut current_ei = gp.ei(&current);
         for _ in 0..50 {
-            let mutated = current.mutate(rng);
+            let mutated = self.mutate_config(&current, rng);
             let ei = gp.ei(&mutated);
             if ei > current_ei {
                 current = mutated;
@@ -183,6 +211,7 @@ struct GpModel {
     y_mean: f64,
     y_std: f64,
     n: usize,
+    optimize_curvature: bool,
 }
 
 // ─── GP state export (for Python plotting) ───────────────────────────────────
@@ -238,11 +267,11 @@ pub struct GpState {
 const JITTER: f64 = 1e-4;
 
 impl GpModel {
-    fn fit(trials: &[Trial], direction: OptimizeDirection) -> Self {
+    fn fit(trials: &[Trial], direction: OptimizeDirection, optimize_curvature: bool) -> Self {
         // Encode configs as real-valued GP inputs (log-transform log-uniform params).
         let raw_xs: Vec<Vec<f64>> = trials
             .iter()
-            .map(|t| config_to_gp_input(&t.config))
+            .map(|t| config_to_gp_input(&t.config, optimize_curvature))
             .collect();
 
         // Internally always maximise; flip sign for minimisation objectives.
@@ -290,6 +319,7 @@ impl GpModel {
             y_mean,
             y_std,
             n,
+            optimize_curvature,
         }
     }
 
@@ -328,16 +358,24 @@ impl GpModel {
             })
             .collect();
 
+        let mut param_names = vec![
+            "learning_rate".to_string(),
+            "perplexity_ratio".to_string(),
+            "momentum_main".to_string(),
+            "centering_weight".to_string(),
+            "global_loss_weight".to_string(),
+            "norm_loss_weight".to_string(),
+        ];
+        let mut log_scale_params =
+            vec!["learning_rate".to_string(), "perplexity_ratio".to_string()];
+        if self.optimize_curvature {
+            param_names.push("curvature_magnitude".to_string());
+            log_scale_params.push("curvature_magnitude".to_string());
+        }
+
         GpState {
-            param_names: vec![
-                "learning_rate".into(),
-                "perplexity_ratio".into(),
-                "momentum_main".into(),
-                "centering_weight".into(),
-                "global_loss_weight".into(),
-                "norm_loss_weight".into(),
-            ],
-            log_scale_params: vec!["learning_rate".into(), "perplexity_ratio".into()],
+            param_names,
+            log_scale_params,
             direction: direction.to_string(),
             length_scale: self.length_scale,
             x_means: self.x_means.clone(),
@@ -352,7 +390,7 @@ impl GpModel {
 
     /// Expected Improvement for a candidate config (Frazier Eq. 7 / Eq. 8).
     fn ei(&self, config: &TrialConfig) -> f64 {
-        let x_raw = config_to_gp_input(config);
+        let x_raw = config_to_gp_input(config, self.optimize_curvature);
         let x_norm = standardize(&x_raw, &self.x_means, &self.x_stds);
         let (mu, sigma) = self.predict(&x_norm);
         expected_improvement(mu, sigma, self.f_best_norm)
@@ -413,15 +451,20 @@ fn log_marginal_likelihood(xs_norm: &[Vec<f64>], ys_norm: &[f64], length_scale: 
 /// Parameters that were sampled log-uniformly (learning_rate, perplexity_ratio)
 /// are log-transformed so that the GP sees an approximately uniform distribution
 /// over the input space — a standard preprocessing step for log-scale parameters.
-fn config_to_gp_input(config: &TrialConfig) -> Vec<f64> {
-    vec![
+/// When `optimize_curvature` is true, `curvature_magnitude` is appended (log-transformed).
+fn config_to_gp_input(config: &TrialConfig, optimize_curvature: bool) -> Vec<f64> {
+    let mut v = vec![
         config.learning_rate.ln(),
         config.perplexity_ratio.ln(),
         config.momentum_main,
         config.centering_weight,
         config.global_loss_weight,
         config.norm_loss_weight,
-    ]
+    ];
+    if optimize_curvature {
+        v.push(config.curvature_magnitude.ln());
+    }
+    v
 }
 
 // ─── Normalisation helpers ────────────────────────────────────────────────────
@@ -576,6 +619,9 @@ mod tests {
     fn maximize_space() -> SearchSpace {
         SearchSpace {
             direction: OptimizeDirection::Maximize,
+            optimize_curvature: false,
+            curvature_mag_min: 0.001,
+            curvature_mag_max: 5.0,
         }
     }
 
@@ -591,6 +637,7 @@ mod tests {
             centering_weight: 0.0,
             global_loss_weight: 0.0,
             norm_loss_weight: 0.0,
+            curvature_magnitude: 0.0,
         }
     }
 
@@ -912,7 +959,7 @@ mod tests {
     #[test]
     fn test_config_to_gp_input_log_transforms_lr_and_perp() {
         let cfg = make_config(1.0_f64.exp(), 2.0_f64.exp()); // lr = e, perp = e²
-        let v = config_to_gp_input(&cfg);
+        let v = config_to_gp_input(&cfg, false);
         assert!(close(v[0], 1.0, 1e-10)); // ln(e) = 1
         assert!(close(v[1], 2.0, 1e-10)); // ln(e²) = 2
     }
@@ -920,7 +967,7 @@ mod tests {
     #[test]
     fn test_config_to_gp_input_passthrough_fields() {
         let cfg = make_config(1.0, 10.0);
-        let v = config_to_gp_input(&cfg);
+        let v = config_to_gp_input(&cfg, false);
         assert!(close(v[2], cfg.momentum_main, 1e-15));
         assert!(close(v[3], cfg.centering_weight, 1e-15));
         assert!(close(v[4], cfg.global_loss_weight, 1e-15));
@@ -939,8 +986,8 @@ mod tests {
                 metric: rng.uniform(),
             })
             .collect();
-        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize);
-        let x_raw = config_to_gp_input(&trials[0].config);
+        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize, false);
+        let x_raw = config_to_gp_input(&trials[0].config, false);
         let x_norm = standardize(&x_raw, &gp.x_means, &gp.x_stds);
         let (_, sigma) = gp.predict(&x_norm);
         assert!(
@@ -958,9 +1005,9 @@ mod tests {
                 metric: rng.uniform(),
             })
             .collect();
-        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize);
+        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize, false);
         for _ in 0..20 {
-            let x_raw = config_to_gp_input(&TrialConfig::random(&mut rng));
+            let x_raw = config_to_gp_input(&TrialConfig::random(&mut rng), false);
             let x_norm = standardize(&x_raw, &gp.x_means, &gp.x_stds);
             let (mu, sigma) = gp.predict(&x_norm);
             assert!(mu.is_finite(), "mu should be finite");
@@ -980,7 +1027,7 @@ mod tests {
                 metric: rng.uniform(),
             })
             .collect();
-        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize);
+        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize, false);
         for _ in 0..30 {
             let cfg = TrialConfig::random(&mut rng);
             assert!(gp.ei(&cfg) >= 0.0, "EI must be non-negative");
@@ -1064,7 +1111,7 @@ mod tests {
                 metric,
             })
             .collect();
-        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize);
+        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize, false);
 
         let ei_winner = gp.ei(&make_config(10.0, 20.0));
         let ei_loser = gp.ei(&make_config(0.5, 80.0));

@@ -1,3 +1,4 @@
+use fitting_core::curvature_detection::{GeometryDetection, detect_geometry};
 use fitting_core::embedding::EmbeddingState;
 use fitting_core::matrices::compute_euclidean_distance_matrix;
 use fitting_core::metrics::{
@@ -43,6 +44,11 @@ impl Evaluator {
 
     pub fn n_points(&self) -> usize {
         self.n_samples
+    }
+
+    /// Detect the best-fitting geometry for this dataset using shell density profiles.
+    pub fn infer_geometry(&self) -> GeometryDetection {
+        detect_geometry(&self.high_dim_dist, self.n_samples, 40, 0)
     }
 
     pub fn compute_all_metrics(
