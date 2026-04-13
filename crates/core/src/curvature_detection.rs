@@ -24,7 +24,7 @@
 //!    grows faster than any power law (the hallmark of exponential/sinh
 //!    growth).
 
-const GROMOV_THRESHOLD: f64 = 0.15;
+pub const GROMOV_THRESHOLD: f64 = 0.15;
 
 /// Result of fitting one geometry model.
 #[derive(Debug, Clone)]
@@ -328,6 +328,7 @@ pub fn detect_geometry(
     // normalised δ is small (bounded), while in Euclidean/spherical
     // spaces it grows with the sample diameter.
     let gromov = gromov_hyperbolicity(distances, n_points, 5000);
+    println!("Gromov value: {}", gromov);
 
     let best_geometry = if hyperbolic.r_squared > euclidean.r_squared
         && hyperbolic.r_squared > spherical.r_squared
@@ -361,7 +362,7 @@ pub fn detect_geometry(
 /// Hyperbolic spaces have small normalised δ (bounded by log(2)/R for
 /// curvature −1 and typical distance R), while Euclidean/spherical
 /// spaces produce larger values.
-fn gromov_hyperbolicity(distances: &[f64], n: usize, n_samples: usize) -> f64 {
+pub fn gromov_hyperbolicity(distances: &[f64], n: usize, n_samples: usize) -> f64 {
     if n < 4 {
         return 0.0;
     }

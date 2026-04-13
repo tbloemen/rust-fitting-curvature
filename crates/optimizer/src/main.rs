@@ -41,36 +41,41 @@ struct Args {
     #[arg(long)]
     dataset: Option<String>,
 
-    /// Curvature values to run over (comma-separated).
-    #[arg(
-        long,
-        num_args = 1..,
-        value_delimiter = ',',
-        default_values = ["-2", "-1", "-0.5", "-0.1", "0", "0.1", "0.5", "1", "2"]
-    )]
-    curvatures: Vec<f64>,
-
-    /// Run mode: "random" (default), "scan", or "bayes".
-    /// random: sample random configs and compute all metrics.
-    /// scan: sweep each parameter individually from a base config.
-    /// bayes: Bayesian optimisation with GP surrogate (requires --metric).
+    /// Run mode: "random" (default), "bayes", or "scan".
+    /// random: sample random configs with continuous curvature, compute all metrics.
+    /// bayes: Bayesian optimisation over all 7 hyperparameters (including curvature magnitude).
+    ///        Geometry sign is detected automatically unless --geometry is given.
+    /// scan:  sweep each parameter individually from a base config (requires --metric).
     #[arg(long, default_value = "random")]
     mode: String,
 
-    /// For --mode scan: metric to evaluate (e.g. davies_bouldin_ratio).
+    /// Force a specific geometry for --mode bayes and --mode scan.
+    /// Values: "hyperbolic" (k<0), "euclidean" (k=0), "spherical" (k>0).
+    /// If omitted, the geometry is inferred automatically via curvature detection.
+    #[arg(long)]
+    geometry: Option<String>,
+
+    /// For --mode random: lower bound of the continuous curvature range.
+    #[arg(long, default_value = "-25.0")]
+    curvature_min: f64,
+
+    /// For --mode random: upper bound of the continuous curvature range.
+    #[arg(long, default_value = "25.0")]
+    curvature_max: f64,
+
+    /// For --mode bayes or scan: metric to optimise (e.g. trustworthiness).
     #[arg(long)]
     metric: Option<String>,
 
-    /// For --mode scan: results file of a previous run to load the best config from.
+    /// For --mode scan: results file to load the best prior config from as a base.
     #[arg(long)]
     scan_from: Option<String>,
 
-    /// For --mode scan: number of evenly-spaced values to sweep per continuous parameter.
+    /// For --mode scan: number of evenly-spaced values to sweep per parameter.
     #[arg(long, default_value = "12")]
     scan_steps: usize,
 
-    /// For --mode bayes: results file to warm-start from (e.g. "results/results.jsonl").
-    /// Trials matching the current dataset and curvature are loaded as initial observations.
+    /// For --mode bayes: results file to warm-start the GP from.
     #[arg(long, default_value = "results/results.jsonl")]
     warm_start: Option<String>,
 
@@ -87,6 +92,11 @@ struct TrialResult {
     n_samples: usize,
     n_seeds: usize,
     curvature: f64,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    geometry: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    curvature_magnitude: Option<f64>,
 
     learning_rate: f64,
     perplexity_ratio: f64,
@@ -125,6 +135,8 @@ impl TrialResult {
             n_samples,
             n_seeds,
             curvature,
+            geometry: None,
+            curvature_magnitude: None,
             learning_rate: config.learning_rate,
             perplexity_ratio: config.perplexity_ratio,
             momentum_main: config.momentum_main,
@@ -289,27 +301,24 @@ fn metric_direction(name: &str) -> OptimizeDirection {
 
 // ─── Random search ────────────────────────────────────────────────────────────
 
-fn run_random(
-    curvature: f64,
-    dataset_name: &str,
-    args: &Args,
-    evaluator: Arc<Evaluator>,
-    mp: &MultiProgress,
-) {
-    let mut rng =
-        fitting_core::synthetic_data::Rng::new(curvature.to_bits() ^ 0xdead_beef_cafe_1111);
+fn run_random(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &MultiProgress) {
+    let mut rng = fitting_core::synthetic_data::Rng::new(0xdead_beef_cafe_1111);
     let out_path = &args.output;
+    let k_lo = args.curvature_min;
+    let k_hi = args.curvature_max;
 
     let pb = make_progress_bar(
         mp,
         args.n_trials as u64,
         "{spinner:.green} {msg} [{bar:35.cyan/blue}] {pos}/{len} | {wide_msg}",
     );
-    pb.set_message(format!("k={:+.1} dataset={}", curvature, dataset_name));
+    pb.set_message(format!("dataset={}", dataset_name));
     let pb_iters = ProgressBar::hidden();
 
     for trial_idx in 1..=args.n_trials {
         let start = std::time::Instant::now();
+        // Sample curvature uniformly from [k_lo, k_hi] and config randomly.
+        let curvature = rng.uniform() * (k_hi - k_lo) + k_lo;
         let config = TrialConfig::random(&mut rng);
         let agg = eval_all_metrics(
             &evaluator,
@@ -333,27 +342,52 @@ fn run_random(
         write_result(&result, out_path);
 
         pb.set_message(format!(
-            "k={:+.1} trial {:4} | db_ratio={:.4} | trust={:.4} | {}ms",
-            curvature, trial_idx, agg.davies_bouldin_ratio, agg.trustworthiness, elapsed
+            "trial {:4} k={:+.2} | db={:.4} trust={:.4} | {}ms",
+            trial_idx, curvature, agg.davies_bouldin_ratio, agg.trustworthiness, elapsed
         ));
         pb.inc(1);
     }
 
-    pb.finish_with_message(format!("k={:+.1} dataset={} done", curvature, dataset_name));
+    pb.finish_with_message(format!("dataset={} done", dataset_name));
 }
 
 // ─── Bayesian optimisation (Algorithm 1, Frazier 2018) ───────────────────────
 
-/// Load previous trial results from a JSONL file and return them as (config, metric) pairs.
+/// Resolve the target geometry (name + curvature sign) from CLI args or auto-detection.
 ///
-/// Filters to rows matching both `dataset_name` and `curvature` so that the
-/// single shared results file can be warm-started correctly for each session.
-/// Lines missing the metric, scan-only records, or incomplete configs are skipped.
+/// `--geometry hyperbolic|spherical|euclidean` forces the choice; omitting it triggers
+/// shell-density-profile detection via `evaluator.infer_geometry()`.
+fn resolve_geometry(args: &Args, evaluator: &Evaluator) -> (&'static str, f64) {
+    if let Some(geo) = &args.geometry {
+        return match geo.as_str() {
+            "hyperbolic" => ("hyperbolic", -1.0),
+            "spherical" => ("spherical", 1.0),
+            _ => ("euclidean", 0.0),
+        };
+    }
+    let detection = evaluator.infer_geometry();
+    let g = detection.best_geometry;
+    eprintln!(
+        "Geometry auto-detected: {} (euclidean R²={:.3}, spherical R²={:.3}, hyperbolic R²={:.3})",
+        g,
+        detection.euclidean.r_squared,
+        detection.spherical.r_squared,
+        detection.hyperbolic.r_squared,
+    );
+    let sign: f64 = match g {
+        "hyperbolic" => -1.0,
+        "spherical" => 1.0,
+        _ => 0.0,
+    };
+    (g, sign)
+}
+
+/// Load warm-start trials from a JSONL file, filtering by dataset + geometry field.
 fn load_warm_start_trials(
     path: &str,
     metric: &str,
     dataset_name: &str,
-    curvature: f64,
+    geometry: &str,
 ) -> Vec<(TrialConfig, f64)> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
@@ -363,11 +397,10 @@ fn load_warm_start_trials(
         .lines()
         .filter_map(|line| {
             let v: serde_json::Value = serde_json::from_str(line).ok()?;
-            // Skip records for other datasets or curvatures.
             if v["dataset_name"].as_str()? != dataset_name {
                 return None;
             }
-            if (v["curvature"].as_f64()? - curvature).abs() > 1e-9 {
+            if v["geometry"].as_str()? != geometry {
                 return None;
             }
             let metric_val = v[metric].as_f64()?;
@@ -381,28 +414,53 @@ fn load_warm_start_trials(
                 centering_weight: v["centering_weight"].as_f64().unwrap_or(0.0),
                 global_loss_weight: v["global_loss_weight"].as_f64().unwrap_or(0.0),
                 norm_loss_weight: v["norm_loss_weight"].as_f64().unwrap_or(0.0),
+                curvature_magnitude: v["curvature_magnitude"].as_f64().unwrap_or(0.0),
             };
             Some((config, metric_val))
         })
         .collect()
 }
 
+/// Bayesian optimisation over 6 (or 7 with curvature magnitude) hyperparameters.
+///
+/// Geometry is resolved once via `--geometry` or auto-detection.  For non-Euclidean
+/// geometries the curvature magnitude is included as a 7th BO dimension.
+///
+/// Parallel evaluation uses a **round-based batch** strategy: each round the GP
+/// scores `n_ei_candidates` candidates and returns the top-`batch_size` by Expected
+/// Improvement, which are then evaluated in parallel via `thread::scope`.  After
+/// every round the GP is updated with all real results before the next suggest.
 fn run_bayes(
-    curvature: f64,
     dataset_name: &str,
     args: &Args,
     evaluator: Arc<Evaluator>,
     mp: &MultiProgress,
+    batch_size: usize,
 ) {
     let metric = args.metric.as_deref().unwrap();
     let direction = metric_direction(metric);
-    let mut optimizer = GpOptimizer::new(SearchSpace { direction });
-    let mut rng =
-        fitting_core::synthetic_data::Rng::new(curvature.to_bits() ^ 0xdead_beef_cafe_0000);
 
-    // Warm-start: seed the GP with previously collected trials (e.g. from random search).
+    let (geometry, curvature_sign) = resolve_geometry(args, &evaluator);
+    let optimize_curvature = curvature_sign != 0.0;
+
+    // Curvature magnitude bounds: take abs() of the signed range limits so that
+    // e.g. --curvature-min -5 --curvature-max 5 → magnitude [0.001, 5.0].
+    let curvature_mag_min = args
+        .curvature_min
+        .abs()
+        .max(crate::search_space::DEFAULT_CURVATURE_MAG_MIN);
+    let curvature_mag_max = args.curvature_max.abs().max(curvature_mag_min);
+    let mut optimizer = GpOptimizer::new(SearchSpace {
+        direction,
+        optimize_curvature,
+        curvature_mag_min,
+        curvature_mag_max,
+    });
+    let mut rng = fitting_core::synthetic_data::Rng::new(0xdead_beef_cafe_0000);
+
+    // Warm-start from prior results matching this dataset + geometry.
     let n_warm = if let Some(warm_file) = &args.warm_start {
-        let trials = load_warm_start_trials(warm_file, metric, dataset_name, curvature);
+        let trials = load_warm_start_trials(warm_file, metric, dataset_name, geometry);
         let n = trials.len();
         for (config, metric_val) in trials {
             optimizer.observe(config, metric_val);
@@ -413,82 +471,122 @@ fn run_bayes(
     };
 
     let out_path = &args.output;
-
     let pb = make_progress_bar(
         mp,
         args.n_trials as u64,
-        "{spinner:.green} k={msg} [{bar:35.cyan/blue}] {pos}/{len} | best: {prefix}",
+        "{spinner:.green} bayes={msg} [{bar:35.cyan/blue}] {pos}/{len} | best: {prefix}",
     );
-    pb.set_message(format!("{:+.1}", curvature));
+    pb.set_message(format!("{} (sign={:+.0})", geometry, curvature_sign));
     pb.set_prefix("n/a");
     if n_warm > 0 {
         pb.println(format!(
-            "k={:+.1} warm-started from {} prior trials ({})",
-            curvature,
-            n_warm,
-            args.warm_start.as_deref().unwrap()
+            "bayes '{}' ({}) warm-started from {} prior trials",
+            dataset_name, geometry, n_warm
         ));
     }
-    let pb_iters = ProgressBar::hidden();
+    pb.println(format!(
+        "bayes '{}' ({}) running with batch_size={}",
+        dataset_name, geometry, batch_size
+    ));
 
-    for trial_idx in 1..=args.n_trials {
-        let start = std::time::Instant::now();
-        let config = optimizer.suggest(&mut rng);
-        let all = eval_all_metrics(
-            &evaluator,
-            &config,
-            curvature,
-            args.n_seeds,
-            trial_idx,
-            &pb_iters,
-        );
-        let mean = metric_value(&all, metric);
+    let mut completed = 0usize;
+    let mut remaining = args.n_trials;
 
-        optimizer.observe(config.clone(), mean);
-        let elapsed = start.elapsed().as_millis() as u64;
+    while remaining > 0 {
+        let this_batch = batch_size.min(remaining);
 
-        let result = TrialResult::new(
-            &config,
-            dataset_name,
-            args.n_samples,
-            args.n_seeds,
-            curvature,
-            elapsed,
-        )
-        .with_all_metrics(&all);
-        write_result(&result, out_path);
+        // Ask the GP for the top-`this_batch` promising configs in one shot.
+        let configs = optimizer.suggest_batch(this_batch, &mut rng);
 
-        let best = optimizer.best_trial();
-        pb.set_prefix(format!("{:.4}", best));
-        pb.println(format!(
-            "k={:+.1} trial {:3} | {}={:.4} | best={:.4} | {}ms \
-             | lr={:.4} perp_ratio={:.4} momentum={:.3} cw={:.3} glw={:.3} nw={:.4}",
-            curvature,
-            trial_idx,
-            metric,
-            mean,
-            best,
-            elapsed,
-            config.learning_rate,
-            config.perplexity_ratio,
-            config.momentum_main,
-            config.centering_weight,
-            config.global_loss_weight,
-            config.norm_loss_weight,
-        ));
-        pb.inc(1);
+        // Evaluate all configs in this batch in parallel, then collect results.
+        let results: Vec<(f64, AggregatedMetrics, u64)> = thread::scope(|s| {
+            configs
+                .iter()
+                .enumerate()
+                .map(|(i, config)| {
+                    let evaluator = &*evaluator;
+                    let actual_curvature = if optimize_curvature {
+                        curvature_sign * config.curvature_magnitude
+                    } else {
+                        0.0
+                    };
+                    let trial_idx = completed + i + 1;
+                    s.spawn(move || {
+                        let pb_iters = ProgressBar::hidden();
+                        let start = std::time::Instant::now();
+                        let all = eval_all_metrics(
+                            evaluator,
+                            config,
+                            actual_curvature,
+                            args.n_seeds,
+                            trial_idx,
+                            &pb_iters,
+                        );
+                        let elapsed = start.elapsed().as_millis() as u64;
+                        (actual_curvature, all, elapsed)
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect()
+        });
+
+        // Observe all results and update the GP before the next round.
+        for (config, (actual_curvature, all, elapsed)) in configs.iter().zip(results.iter()) {
+            let mean = metric_value(all, metric);
+            optimizer.observe(config.clone(), mean);
+            completed += 1;
+
+            let mut result = TrialResult::new(
+                config,
+                dataset_name,
+                args.n_samples,
+                args.n_seeds,
+                *actual_curvature,
+                *elapsed,
+            )
+            .with_all_metrics(all);
+            result.geometry = Some(geometry.to_string());
+            if optimize_curvature {
+                result.curvature_magnitude = Some(config.curvature_magnitude);
+            }
+            write_result(&result, out_path);
+
+            let best = optimizer.best_trial();
+            pb.set_prefix(format!("{:.4}", best));
+            pb.println(format!(
+                "bayes '{}' trial {:3}/{} | {}={:.4} | best={:.4} | {}ms \
+                 | k={:.3} lr={:.4} perp={:.4}",
+                dataset_name,
+                completed,
+                args.n_trials,
+                metric,
+                mean,
+                best,
+                *elapsed,
+                actual_curvature,
+                config.learning_rate,
+                config.perplexity_ratio,
+            ));
+            pb.inc(1);
+        }
+
+        remaining -= this_batch;
     }
 
-    pb.finish_with_message(format!("{:+.1} done", curvature));
+    pb.finish_with_message(format!("{} ({}) done", dataset_name, geometry));
 
     if let Some(best) = optimizer.best_config() {
         pb.println(format!(
-            "\n=== Best for k={:+.1} | {}={:.4} ===\n  \
-             lr={:.4}  perp_ratio={:.4}  momentum={:.4}\n  \
+            "\n=== Best for '{}' ({}) | {}={:.4} ===\n  \
+             k={:.3}  lr={:.4}  perp_ratio={:.4}  momentum={:.4}\n  \
              centering={:.3}  global_loss={:.3}  norm={:.4}",
-            curvature,
+            dataset_name,
+            geometry,
             metric,
             optimizer.best_trial(),
+            curvature_sign * best.curvature_magnitude,
             best.learning_rate,
             best.perplexity_ratio,
             best.momentum_main,
@@ -499,13 +597,11 @@ fn run_bayes(
     }
 
     // Write GP state for external plotting (analyze_hyperparams.py --mode gp).
-    // One state file per (dataset, curvature) session, derived from the output path.
     if let Some(state) = optimizer.export_state() {
         let stem = out_path
             .trim_end_matches(".jsonl")
             .trim_end_matches(".json");
-        let k_tag = format!("{:+.1}", curvature).replace('.', "_");
-        let state_path = format!("{}_gp_{}_{}.json", stem, dataset_name, k_tag);
+        let state_path = format!("{}_gp_{}_{}.json", stem, dataset_name, geometry);
         write_gp_state(&state, &state_path);
         pb.println(format!("GP state written to {}", state_path));
     }
@@ -528,7 +624,7 @@ fn load_best_config_from_jsonl(
     path: &str,
     n_points: usize,
     dataset_name: &str,
-    curvature: f64,
+    geometry: &str,
 ) -> Option<TrialConfig> {
     let content = std::fs::read_to_string(path).ok()?;
     let mut best_val = f64::NEG_INFINITY;
@@ -539,10 +635,7 @@ fn load_best_config_from_jsonl(
         if v["dataset_name"].as_str().unwrap_or("") != dataset_name {
             continue;
         }
-        if v["curvature"]
-            .as_f64()
-            .is_none_or(|k| (k - curvature).abs() > 1e-9)
-        {
+        if v["geometry"].as_str().unwrap_or("") != geometry {
             continue;
         }
         let metric = v["metric_mean"].as_f64().unwrap_or(f64::NEG_INFINITY);
@@ -558,6 +651,7 @@ fn load_best_config_from_jsonl(
                 centering_weight: v["centering_weight"].as_f64().unwrap_or(0.0),
                 global_loss_weight: v["global_loss_weight"].as_f64().unwrap_or(0.0),
                 norm_loss_weight: v["norm_loss_weight"].as_f64().unwrap_or(0.0),
+                curvature_magnitude: v["curvature_magnitude"].as_f64().unwrap_or(0.0),
             });
         }
     }
@@ -589,19 +683,21 @@ fn apply_param(config: &mut TrialConfig, param: &str, val: f64) {
         "centering_weight" => config.centering_weight = val,
         "global_loss_weight" => config.global_loss_weight = val,
         "norm_loss_weight" => config.norm_loss_weight = val,
+        "curvature_magnitude" => config.curvature_magnitude = val,
         _ => unreachable!(),
     }
 }
 
-fn run_scan(
-    curvature: f64,
-    dataset_name: &str,
-    args: &Args,
-    evaluator: Arc<Evaluator>,
-    mp: &MultiProgress,
-) {
+/// Parameter sweep scan: each hyperparameter is swept individually from a base config.
+///
+/// Geometry is resolved once (via `--geometry` or auto-detection).  When the geometry
+/// is non-Euclidean, curvature magnitude is also swept as an additional parameter.
+fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &MultiProgress) {
     let metric = args.metric.as_deref().unwrap();
     let n_points = evaluator.n_points();
+
+    let (geometry, curvature_sign) = resolve_geometry(args, &evaluator);
+    let optimize_curvature = curvature_sign != 0.0;
 
     let default_config = TrialConfig {
         learning_rate: 10.0,
@@ -610,32 +706,41 @@ fn run_scan(
         centering_weight: 0.5,
         global_loss_weight: 0.0,
         norm_loss_weight: 0.0,
+        curvature_magnitude: if optimize_curvature { 1.0 } else { 0.0 },
     };
 
     let base = if let Some(scan_file) = &args.scan_from {
-        match load_best_config_from_jsonl(scan_file, n_points, dataset_name, curvature) {
+        match load_best_config_from_jsonl(scan_file, n_points, dataset_name, geometry) {
             Some(c) => {
                 eprintln!(
-                    "scan k={}: loaded base config from {}",
-                    curvature, scan_file
+                    "scan '{}' ({}): loaded base config from {}",
+                    dataset_name, geometry, scan_file
                 );
                 c
             }
             None => {
                 eprintln!(
-                    "scan k={}: could not load from {}, using default",
-                    curvature, scan_file
+                    "scan '{}' ({}): could not load from {}, using default",
+                    dataset_name, geometry, scan_file
                 );
                 default_config
             }
         }
     } else {
-        eprintln!("scan k={}: no --scan-from, using default config", curvature);
+        eprintln!(
+            "scan '{}' ({}): no --scan-from, using default config",
+            dataset_name, geometry
+        );
         default_config
     };
 
     let n = args.scan_steps;
-    let params: Vec<(&str, Vec<f64>)> = vec![
+    let curvature_mag_min = args
+        .curvature_min
+        .abs()
+        .max(crate::search_space::DEFAULT_CURVATURE_MAG_MIN);
+    let curvature_mag_max = args.curvature_max.abs().max(curvature_mag_min);
+    let mut params: Vec<(&str, Vec<f64>)> = vec![
         ("learning_rate", sweep_values(0.5, 50.0, n, true)),
         ("perplexity_ratio", sweep_values(0.0004, 0.03, n, true)),
         ("momentum_main", sweep_values(0.60, 1.0, n, false)),
@@ -643,17 +748,22 @@ fn run_scan(
         ("global_loss_weight", sweep_values(0.0, 1.0, n, false)),
         ("norm_loss_weight", sweep_values(0.0, 0.02, n, false)),
     ];
+    if optimize_curvature {
+        params.push((
+            "curvature_magnitude",
+            sweep_values(curvature_mag_min, curvature_mag_max, n, true),
+        ));
+    }
 
     let total = params.iter().map(|(_, v)| v.len()).sum::<usize>() as u64;
     let pb = make_progress_bar(
         mp,
         total,
-        "{spinner:.green} scan k={msg} [{bar:35.cyan/blue}] {pos}/{len} {wide_msg}",
+        "{spinner:.green} scan={msg} [{bar:35.cyan/blue}] {pos}/{len} {wide_msg}",
     );
-    pb.set_message(format!("{:+.1}", curvature));
+    pb.set_message(format!("{} ({})", dataset_name, geometry));
 
     let out_path = &args.output;
-
     let pb_iters = ProgressBar::hidden();
     let mut trial_idx = 0usize;
 
@@ -663,11 +773,18 @@ fn run_scan(
             let mut config = base.clone();
             apply_param(&mut config, param_name, val);
 
+            // Resolve actual curvature from config.
+            let actual_curvature = if optimize_curvature {
+                curvature_sign * config.curvature_magnitude
+            } else {
+                0.0
+            };
+
             let start = std::time::Instant::now();
             let (mean, std) = eval_single_metric(
                 &evaluator,
                 &config,
-                curvature,
+                actual_curvature,
                 metric,
                 args.n_seeds,
                 trial_idx,
@@ -680,21 +797,25 @@ fn run_scan(
                 dataset_name,
                 args.n_samples,
                 args.n_seeds,
-                curvature,
+                actual_curvature,
                 elapsed,
             );
+            result.geometry = Some(geometry.to_string());
+            if optimize_curvature {
+                result.curvature_magnitude = Some(config.curvature_magnitude);
+            }
             result.scan_param = Some(param_name.to_string());
             write_result(&result, out_path);
 
             pb.set_message(format!(
-                "{:+.1} | {}={:.4} → {:.4} ± {:.4}",
-                curvature, param_name, val, mean, std
+                "{} | {}={:.4} → {:.4} ± {:.4}",
+                geometry, param_name, val, mean, std
             ));
             pb.inc(1);
         }
     }
 
-    pb.finish_with_message(format!("{:+.1} scan done", curvature));
+    pb.finish_with_message(format!("{} ({}) scan done", dataset_name, geometry));
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -730,26 +851,27 @@ fn main() {
 
     match args.mode.as_str() {
         "random" => println!(
-            "Starting random search: {} datasets × {} curvatures × {} trials, all metrics, seeds={}",
+            "Starting random search: {} datasets × {} trials, curvature=[{},{}], all metrics, seeds={}",
             dataset_names.len(),
-            args.curvatures.len(),
             args.n_trials,
+            args.curvature_min,
+            args.curvature_max,
             args.n_seeds
         ),
         "scan" => println!(
-            "Starting scan: {} datasets × {} curvatures × ~{} sweep points, metric={}, seeds={}",
+            "Starting scan: {} datasets × ~{} sweep points, metric={}, geometry={}, seeds={}",
             dataset_names.len(),
-            args.curvatures.len(),
-            args.scan_steps * 5,
+            args.scan_steps * 7,
             args.metric.as_deref().unwrap(),
+            args.geometry.as_deref().unwrap_or("auto-detect"),
             args.n_seeds
         ),
         "bayes" => println!(
-            "Starting Bayesian optimisation: {} datasets × {} curvatures × {} trials, metric={}, seeds={}",
+            "Starting Bayesian optimisation: {} datasets × {} trials, metric={}, geometry={}, seeds={}",
             dataset_names.len(),
-            args.curvatures.len(),
             args.n_trials,
             args.metric.as_deref().unwrap(),
+            args.geometry.as_deref().unwrap_or("auto-detect"),
             args.n_seeds
         ),
         other => {
@@ -760,13 +882,12 @@ fn main() {
             std::process::exit(1);
         }
     }
-    println!("Curvatures: {:?}", args.curvatures);
     println!("Output file: {}", args.output);
 
     let mp = Arc::new(MultiProgress::new());
 
-    // Build work queue: all (dataset_name, evaluator, curvature) combinations.
-    let mut work: VecDeque<(String, Arc<Evaluator>, f64)> = VecDeque::new();
+    // Build unified per-dataset work queue.
+    let mut work: VecDeque<(String, Arc<Evaluator>)> = VecDeque::new();
     for dataset_name in &dataset_names {
         println!("Loading dataset: {}...", dataset_name);
         let dataset = if dataset_name == "mnist" {
@@ -786,26 +907,33 @@ fn main() {
             dataset.n_points, dataset.n_features
         );
         let evaluator = Arc::new(Evaluator::new(dataset));
-        for &k in &args.curvatures {
-            work.push_back((dataset_name.clone(), Arc::clone(&evaluator), k));
-        }
+        work.push_back((dataset_name.clone(), evaluator));
     }
 
-    let n_threads = args.threads.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    });
+    let n_threads = args
+        .threads
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+        })
+        .max(1);
+
+    // The outer pool processes datasets in parallel (up to n_threads datasets at once).
+    // For `bayes`, each dataset job additionally spawns n_threads parallel evaluators
+    // per batch round — so with a single dataset all cores stay busy.
+    // With multiple datasets the outer and inner parallelism combine; on a typical
+    // single-dataset run this is always just n_threads total threads.
+    let n_outer = n_threads.min(work.len().max(1));
     println!(
-        "Using {} worker threads for {} jobs.",
-        n_threads,
-        work.len()
+        "Using {} thread(s) ({} outer dataset worker(s), batch_size={} for bayes).",
+        n_threads, n_outer, n_threads,
     );
 
     let queue = Arc::new(Mutex::new(work));
     let mut handles = Vec::new();
 
-    for _ in 0..n_threads {
+    for _ in 0..n_outer {
         let queue = Arc::clone(&queue);
         let args = args.clone();
         let mp = Arc::clone(&mp);
@@ -814,10 +942,10 @@ fn main() {
                 let item = queue.lock().unwrap().pop_front();
                 match item {
                     None => break,
-                    Some((dataset_name, evaluator, k)) => match args.mode.as_str() {
-                        "scan" => run_scan(k, &dataset_name, &args, evaluator, &mp),
-                        "bayes" => run_bayes(k, &dataset_name, &args, evaluator, &mp),
-                        _ => run_random(k, &dataset_name, &args, evaluator, &mp),
+                    Some((dataset_name, evaluator)) => match args.mode.as_str() {
+                        "scan" => run_scan(&dataset_name, &args, evaluator, &mp),
+                        "bayes" => run_bayes(&dataset_name, &args, evaluator, &mp, n_threads),
+                        _ => run_random(&dataset_name, &args, evaluator, &mp),
                     },
                 }
             }

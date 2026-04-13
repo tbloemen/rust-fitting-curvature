@@ -1,5 +1,6 @@
 use fitting_core::config::{InitMethod, ScalingLossType, TrainingConfig};
 use fitting_core::matrices::get_default_init_scale;
+use fitting_core::synthetic_data::Rng;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -17,9 +18,37 @@ impl fmt::Display for OptimizeDirection {
     }
 }
 
+/// Minimum curvature magnitude — used as a floor when deriving GP bounds from CLI args.
+pub const DEFAULT_CURVATURE_MAG_MIN: f64 = 0.001;
+
 #[derive(Debug, Clone)]
 pub struct SearchSpace {
     pub direction: OptimizeDirection,
+    /// Whether to treat curvature magnitude as a 7th BO hyperparameter.
+    /// When true, `TrialConfig::curvature_magnitude` is sampled/mutated.
+    pub optimize_curvature: bool,
+    /// Inclusive lower bound for curvature magnitude sampling/mutation.
+    pub curvature_mag_min: f64,
+    /// Inclusive upper bound for curvature magnitude sampling/mutation.
+    pub curvature_mag_max: f64,
+}
+
+impl SearchSpace {
+    /// Sample curvature magnitude log-uniformly from `[curvature_mag_min, curvature_mag_max]`.
+    pub fn sample_curvature_magnitude(&self, rng: &mut Rng) -> f64 {
+        let lo = self.curvature_mag_min;
+        let hi = self.curvature_mag_max;
+        (rng.uniform() * (hi.ln() - lo.ln()) + lo.ln())
+            .exp()
+            .clamp(lo, hi)
+    }
+
+    /// Perturb a curvature magnitude by a multiplicative log-scale step.
+    pub fn mutate_curvature_magnitude(&self, current: f64, rng: &mut Rng) -> f64 {
+        let lo = self.curvature_mag_min;
+        let hi = self.curvature_mag_max;
+        (current * 2.0_f64.powf((rng.uniform() - 0.5) * 1.0)).clamp(lo, hi)
+    }
 }
 
 /// Fixed iteration counts — not tuned, set to high-quality defaults.
@@ -36,6 +65,9 @@ pub struct TrialConfig {
     pub centering_weight: f64,
     pub global_loss_weight: f64,
     pub norm_loss_weight: f64,
+    /// Curvature magnitude (> 0). Only used when SearchSpace::optimize_curvature = true;
+    /// set to 0.0 in fixed-curvature mode (the sign-assigned curvature is passed separately).
+    pub curvature_magnitude: f64,
 }
 
 impl TrialConfig {
@@ -87,6 +119,7 @@ impl TrialConfig {
             centering_weight,
             global_loss_weight,
             norm_loss_weight,
+            curvature_magnitude: 0.0,
         }
     }
 
