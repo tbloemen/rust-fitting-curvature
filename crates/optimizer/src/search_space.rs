@@ -51,6 +51,142 @@ impl SearchSpace {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fitting_core::synthetic_data::Rng;
+
+    fn test_space() -> SearchSpace {
+        SearchSpace {
+            direction: OptimizeDirection::Maximize,
+            optimize_curvature: true,
+            curvature_mag_min: 0.001,
+            curvature_mag_max: 25.0,
+        }
+    }
+
+    #[test]
+    fn sample_curvature_magnitude_is_within_bounds() {
+        let space = test_space();
+        let mut rng = Rng::new(42);
+        for _ in 0..1000 {
+            let v = space.sample_curvature_magnitude(&mut rng);
+            assert!(
+                v >= space.curvature_mag_min && v <= space.curvature_mag_max,
+                "sample {v} out of [{}, {}]",
+                space.curvature_mag_min,
+                space.curvature_mag_max
+            );
+        }
+    }
+
+    #[test]
+    fn sample_curvature_magnitude_is_varied() {
+        let space = test_space();
+        let mut rng = Rng::new(42);
+        let samples: Vec<f64> = (0..200).map(|_| space.sample_curvature_magnitude(&mut rng)).collect();
+        let min = samples.iter().cloned().fold(f64::MAX, f64::min);
+        let max = samples.iter().cloned().fold(f64::MIN, f64::max);
+        // With 200 log-uniform samples over [0.001, 25] we should see at least a 100x spread.
+        assert!(
+            max / min > 100.0,
+            "samples not varied enough: min={min:.4}, max={max:.4}, ratio={:.1}",
+            max / min
+        );
+        // Should not be stuck at the upper bound.
+        let at_max = samples.iter().filter(|&&v| v >= 24.9).count();
+        assert!(
+            at_max < 20,
+            "{at_max}/200 samples were at the upper bound (25.0) — sampling appears stuck"
+        );
+    }
+
+    #[test]
+    fn mutate_curvature_magnitude_is_within_bounds() {
+        let space = test_space();
+        let mut rng = Rng::new(99);
+        for start in [0.001, 0.1, 1.0, 10.0, 25.0] {
+            for _ in 0..200 {
+                let v = space.mutate_curvature_magnitude(start, &mut rng);
+                assert!(
+                    v >= space.curvature_mag_min && v <= space.curvature_mag_max,
+                    "mutate({start}) → {v} out of [{}, {}]",
+                    space.curvature_mag_min,
+                    space.curvature_mag_max
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mutate_curvature_magnitude_single_step_range() {
+        // A single mutation multiplies/divides by at most 2^0.5 ≈ 1.41.
+        // Verify this holds for a variety of starting values.
+        let space = test_space();
+        let mut rng = Rng::new(7);
+        for &start in &[0.01f64, 0.1, 1.0, 5.0, 10.0] {
+            for _ in 0..500 {
+                let v = space.mutate_curvature_magnitude(start, &mut rng);
+                let ratio = if v > start { v / start } else { start / v };
+                assert!(
+                    ratio <= 2.0_f64.sqrt() + 1e-9,
+                    "single step too large from {start}: {v}, ratio={ratio:.3}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mutate_curvature_magnitude_random_walk_explores_range() {
+        // Chain mutations like local_search does.  A 200-step multiplicative random
+        // walk (±0.5 bits per step) from the log-midpoint should span ≥ 10× range.
+        let space = test_space();
+        let mut rng = Rng::new(7);
+        let mut current = (space.curvature_mag_min * space.curvature_mag_max).sqrt();
+        let mut min_seen = current;
+        let mut max_seen = current;
+        for _ in 0..200 {
+            current = space.mutate_curvature_magnitude(current, &mut rng);
+            if current < min_seen { min_seen = current; }
+            if current > max_seen { max_seen = current; }
+        }
+        assert!(
+            max_seen / min_seen > 10.0,
+            "random walk not varied enough: min={min_seen:.4}, max={max_seen:.4}, ratio={:.1}",
+            max_seen / min_seen
+        );
+    }
+
+    #[test]
+    fn mutate_curvature_magnitude_can_decrease_from_upper_bound() {
+        // If local search starts at the upper bound (e.g. warm-start data all at 25.0),
+        // the walk must be able to move downward.
+        let space = test_space();
+        let mut rng = Rng::new(13);
+        let mut current = space.curvature_mag_max;
+        // After 50 steps, the walk should have gone below 20.
+        for _ in 0..50 {
+            current = space.mutate_curvature_magnitude(current, &mut rng);
+        }
+        assert!(
+            current < space.curvature_mag_max * 0.9,
+            "walk stuck at upper bound after 50 steps: {current:.3}"
+        );
+    }
+
+    #[test]
+    fn mutate_from_zero_does_not_panic_and_clamps_to_lo() {
+        // If a warm-started trial had curvature_magnitude=0.0 (from random-mode results),
+        // multiplicative mutation would yield 0*anything=0, which should clamp to lo.
+        let space = test_space();
+        let mut rng = Rng::new(1);
+        for _ in 0..50 {
+            let v = space.mutate_curvature_magnitude(0.0, &mut rng);
+            assert_eq!(v, space.curvature_mag_min, "mutate(0.0) should clamp to lo");
+        }
+    }
+}
+
 /// Fixed iteration counts — not tuned, set to high-quality defaults.
 pub const FIXED_N_ITERATIONS: usize = 800;
 pub const FIXED_EARLY_EXAG_ITERATIONS: usize = 250;

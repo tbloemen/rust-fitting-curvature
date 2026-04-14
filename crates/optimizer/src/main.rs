@@ -445,11 +445,12 @@ fn run_bayes(
 
     // Curvature magnitude bounds: take abs() of the signed range limits so that
     // e.g. --curvature-min -5 --curvature-max 5 → magnitude [0.001, 5.0].
-    let curvature_mag_min = args
-        .curvature_min
+    let curvature_mag_min = crate::search_space::DEFAULT_CURVATURE_MAG_MIN;
+    let curvature_mag_max = args
+        .curvature_max
         .abs()
-        .max(crate::search_space::DEFAULT_CURVATURE_MAG_MIN);
-    let curvature_mag_max = args.curvature_max.abs().max(curvature_mag_min);
+        .max(args.curvature_min.abs())
+        .max(curvature_mag_min);
     let mut optimizer = GpOptimizer::new(SearchSpace {
         direction,
         optimize_curvature,
@@ -890,17 +891,22 @@ fn main() {
     let mut work: VecDeque<(String, Arc<Evaluator>)> = VecDeque::new();
     for dataset_name in &dataset_names {
         println!("Loading dataset: {}...", dataset_name);
-        let dataset = if dataset_name == "mnist" {
-            match Dataset::load_mnist(&args.data_path, args.n_samples) {
-                Ok(d) => d,
-                Err(e) => {
-                    eprintln!("Error loading MNIST: {e}");
-                    eprintln!("Make sure you have MNIST files in: {}", args.data_path);
-                    std::process::exit(1);
-                }
+        let dp = &args.data_path;
+        let n = args.n_samples;
+        let result: Result<Dataset, String> = match dataset_name.as_str() {
+            "mnist" => Dataset::load_mnist(&format!("{dp}/mnist"), n),
+            "fashion_mnist" => Dataset::load_fashion_mnist(&format!("{dp}/fashion-mnist"), n),
+            "cifar10" => Dataset::load_cifar10(&format!("{dp}/cifar10"), n),
+            "wordnet_mammals" => Dataset::load_wordnet_mammals(&format!("{dp}/wordnet"), n),
+            "pbmc" => Dataset::load_pbmc(&format!("{dp}/pbmc"), n),
+            name => Ok(Dataset::load_synthetic(name, n, 42)),
+        };
+        let dataset = match result {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Error loading dataset '{dataset_name}': {e}");
+                std::process::exit(1);
             }
-        } else {
-            Dataset::load_synthetic(dataset_name, args.n_samples, 42)
         };
         println!(
             "Loaded {} samples with {} features",

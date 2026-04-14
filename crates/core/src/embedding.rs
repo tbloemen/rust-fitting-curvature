@@ -1,10 +1,10 @@
-use crate::affinities::compute_perplexity_affinities;
+use crate::affinities::{compute_perplexity_affinities, compute_perplexity_affinities_from_distances};
 use crate::config::{InitMethod, TrainingConfig};
 use crate::kernels::compute_q_matrix_with_distances;
 use crate::kl_divergence::{compute_global_similarities, kl_gradient, kl_loss, norm_loss_gradient};
 use crate::manifolds;
 use crate::manifolds::Manifold;
-use crate::matrices::{compute_euclidean_distance_matrix, pca};
+use crate::matrices::{compute_euclidean_distance_matrix, pca, pca_from_distances};
 use crate::optimizer::RiemannianSGDMomentum;
 use crate::scaling_loss;
 
@@ -83,6 +83,71 @@ impl EmbeddingState {
             p_hat,
             input_data: data.to_vec(),
             n_features,
+        }
+    }
+
+    /// Initialize embedding state from a pre-computed pairwise distance matrix.
+    ///
+    /// Uses `compute_perplexity_affinities_from_distances` so the t-SNE affinities
+    /// are driven by the provided distances (e.g. tree distances for WordNet) rather
+    /// than Euclidean distances in some feature space.
+    ///
+    /// `InitMethod::Pca` is handled via classical MDS (PCoA): the distance matrix is
+    /// double-centered to form a Gram matrix whose top eigenvectors give coordinates.
+    /// `norm_loss_weight` is ignored in this path (no input feature vectors exist).
+    pub fn from_distances(distances: &[f64], n_points: usize, config: &TrainingConfig) -> Self {
+        let manifold = manifolds::create_manifold(config.curvature);
+        let ambient_dim = manifold.ambient_dim(config.embed_dim);
+
+        let p_base =
+            compute_perplexity_affinities_from_distances(distances, n_points, config.perplexity);
+
+        let points = match config.init_method {
+            InitMethod::Pca => {
+                let coords = pca_from_distances(distances, n_points, config.embed_dim, config.seed);
+                lift_pca_to_manifold(
+                    &coords,
+                    n_points,
+                    config.embed_dim,
+                    ambient_dim,
+                    config.init_scale,
+                    config.curvature,
+                    manifold.radius(),
+                )
+            }
+            InitMethod::Random => {
+                manifold.init_points(n_points, config.embed_dim, config.init_scale, config.seed)
+            }
+        };
+
+        let optimizer = RiemannianSGDMomentum::new(
+            config.learning_rate,
+            config.momentum_early,
+            n_points,
+            ambient_dim,
+        );
+
+        // Global loss: use input distances directly for p̂.
+        let p_hat = if config.global_loss_weight > 0.0 {
+            compute_global_similarities(distances, n_points)
+        } else {
+            Vec::new()
+        };
+
+        Self {
+            points,
+            n_points,
+            ambient_dim,
+            iteration: 0,
+            loss: 0.0,
+            config: config.clone(),
+            manifold,
+            optimizer,
+            p_base,
+            p_hat,
+            // No input feature vectors in the distance-based path.
+            input_data: Vec::new(),
+            n_features: 0,
         }
     }
 
@@ -170,7 +235,8 @@ impl EmbeddingState {
 
         // Norm loss: penalizes mismatch between ||x_i||² and ||y_i||².
         // Gradient is in ambient coordinates; project to tangent space first.
-        if self.config.norm_loss_weight > 0.0 {
+        // Skipped when initialized from distances (no input feature vectors).
+        if self.config.norm_loss_weight > 0.0 && self.n_features > 0 {
             let (norm_loss, mut norm_grad) = norm_loss_gradient(
                 &self.input_data,
                 &self.points,

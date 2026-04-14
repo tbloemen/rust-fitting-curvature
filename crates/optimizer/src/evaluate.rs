@@ -34,7 +34,11 @@ pub struct Evaluator {
 impl Evaluator {
     pub fn new(dataset: Dataset) -> Self {
         let n = dataset.n_points;
-        let high_dim_dist = compute_euclidean_distance_matrix(&dataset.x, n, dataset.n_features);
+        let high_dim_dist = if dataset.precomputed_distances.is_empty() {
+            compute_euclidean_distance_matrix(&dataset.x, n, dataset.n_features)
+        } else {
+            dataset.precomputed_distances.clone()
+        };
         Self {
             n_samples: n,
             dataset,
@@ -64,8 +68,15 @@ impl Evaluator {
         pb_iters.reset();
         pb_iters.set_length(training_config.n_iterations as u64);
 
-        let mut state =
-            EmbeddingState::new(&self.dataset.x, self.dataset.n_features, &training_config);
+        let mut state = if self.dataset.precomputed_distances.is_empty() {
+            EmbeddingState::new(&self.dataset.x, self.dataset.n_features, &training_config)
+        } else {
+            EmbeddingState::from_distances(
+                &self.dataset.precomputed_distances,
+                n,
+                &training_config,
+            )
+        };
         while !state.is_done() {
             state.step();
             pb_iters.inc(1);
@@ -132,8 +143,15 @@ impl Evaluator {
         pb_iters.reset();
         pb_iters.set_length(training_config.n_iterations as u64);
 
-        let mut state =
-            EmbeddingState::new(&self.dataset.x, self.dataset.n_features, &training_config);
+        let mut state = if self.dataset.precomputed_distances.is_empty() {
+            EmbeddingState::new(&self.dataset.x, self.dataset.n_features, &training_config)
+        } else {
+            EmbeddingState::from_distances(
+                &self.dataset.precomputed_distances,
+                n,
+                &training_config,
+            )
+        };
         while !state.is_done() {
             state.step();
             pb_iters.inc(1);
