@@ -4,6 +4,34 @@
 use fitting_core::metrics::*;
 use fitting_core::synthetic_data::Rng;
 
+// ---------------------------------------------------------------------------
+// Helpers shared by multiple tests
+// ---------------------------------------------------------------------------
+
+/// Build 2D point clusters: `n_clusters` groups of `per_cluster` points,
+/// placed on a wide grid so clusters are well-separated.
+fn make_clustered_2d(n_clusters: usize, per_cluster: usize, spread: f64, seed: u64) -> (Vec<f64>, Vec<u32>) {
+    let mut rng = Rng::new(seed);
+    let n = n_clusters * per_cluster;
+    let mut pts = vec![0.0f64; n * 2];
+    let mut labels = vec![0u32; n];
+    for c in 0..n_clusters {
+        let cx = (c as f64) * 20.0;
+        for i in 0..per_cluster {
+            let idx = c * per_cluster + i;
+            pts[idx * 2] = cx + rng.normal() * spread;
+            pts[idx * 2 + 1] = rng.normal() * spread;
+            labels[idx] = c as u32;
+        }
+    }
+    (pts, labels)
+}
+
+/// Build a pairwise Euclidean distance matrix from 2D points.
+fn dist_from_2d(pts: &[f64], n: usize) -> Vec<f64> {
+    euclidean_dist_2d(pts, n)
+}
+
 fn make_distance_matrix(n: usize, seed: u64) -> Vec<f64> {
     let mut rng = Rng::new(seed);
     let mut d = vec![0.0; n * n];
@@ -175,6 +203,190 @@ fn test_dunn_index_well_separated() {
         di > 1.0,
         "Well-separated clusters should have Dunn > 1, got {di}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Normalized stress
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_normalized_stress_zero_for_identical() {
+    let d = make_distance_matrix(20, 42);
+    let stress = normalized_stress(&d, &d, 20);
+    assert!(
+        stress.abs() < 1e-10,
+        "Identical matrices should give 0 stress, got {stress}"
+    );
+}
+
+#[test]
+fn test_normalized_stress_positive_for_different() {
+    let d1 = make_distance_matrix(20, 42);
+    let d2 = make_distance_matrix(20, 99);
+    let stress = normalized_stress(&d1, &d2, 20);
+    assert!(stress > 0.0, "Different matrices should give positive stress");
+}
+
+#[test]
+fn test_normalized_stress_range() {
+    let d1 = make_distance_matrix(30, 1);
+    let d2 = make_distance_matrix(30, 2);
+    let stress = normalized_stress(&d1, &d2, 30);
+    assert!(
+        (0.0..=1.0).contains(&stress),
+        "Stress out of [0,1]: {stress}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Neighborhood hit
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_neighborhood_hit_perfect_separation() {
+    let (pts, labels) = make_clustered_2d(3, 20, 0.3, 42);
+    let n = pts.len() / 2;
+    let d = dist_from_2d(&pts, n);
+    let nh = neighborhood_hit(&d, &labels, n, 7);
+    assert!(
+        nh > 0.95,
+        "Well-separated clusters should have NH > 0.95, got {nh}"
+    );
+}
+
+#[test]
+fn test_neighborhood_hit_random_labels() {
+    // Random labels on random points: NH should be around 1/num_classes
+    let mut rng = Rng::new(42);
+    let n = 120;
+    let num_classes = 3usize;
+    let pts: Vec<f64> = (0..n * 2).map(|_| rng.normal()).collect();
+    let labels: Vec<u32> = (0..n).map(|i| (i % num_classes) as u32).collect();
+    let d = dist_from_2d(&pts, n);
+    let nh = neighborhood_hit(&d, &labels, n, 7);
+    // With random points + balanced labels, expected NH ≈ 1/3
+    assert!(
+        nh < 0.6,
+        "Random labels should give low NH, got {nh}"
+    );
+}
+
+#[test]
+fn test_neighborhood_hit_range() {
+    let (pts, labels) = make_clustered_2d(2, 15, 1.0, 7);
+    let n = pts.len() / 2;
+    let d = dist_from_2d(&pts, n);
+    let nh = neighborhood_hit(&d, &labels, n, 5);
+    assert!(
+        (0.0..=1.0).contains(&nh),
+        "Neighborhood hit out of [0,1]: {nh}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Shepard goodness
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_shepard_goodness_perfect() {
+    let d = make_distance_matrix(25, 42);
+    let sg = shepard_goodness(&d, &d, 25);
+    assert!(
+        (sg - 1.0).abs() < 1e-10,
+        "Identical matrices should give shepard_goodness = 1, got {sg}"
+    );
+}
+
+#[test]
+fn test_shepard_goodness_range() {
+    let d1 = make_distance_matrix(25, 42);
+    let d2 = make_distance_matrix(25, 99);
+    let sg = shepard_goodness(&d1, &d2, 25);
+    assert!(
+        (0.0..=1.0).contains(&sg),
+        "Shepard goodness out of [0,1]: {sg}"
+    );
+}
+
+#[test]
+fn test_shepard_goodness_lower_for_uncorrelated() {
+    // Reversed rank order should give poor Shepard goodness
+    let n = 20;
+    // Make d1 increasing, d2 decreasing (perfectly anti-correlated ranks)
+    let mut d1 = vec![0.0f64; n * n];
+    let mut d2 = vec![0.0f64; n * n];
+    let mut val = 1.0f64;
+    for i in 0..n {
+        for j in (i + 1)..n {
+            d1[i * n + j] = val;
+            d1[j * n + i] = val;
+            d2[i * n + j] = 1000.0 - val;
+            d2[j * n + i] = 1000.0 - val;
+            val += 1.0;
+        }
+    }
+    let sg = shepard_goodness(&d1, &d2, n);
+    // Anti-correlated ranks → raw Spearman ≈ -1, clipped to 0
+    assert!(sg < 0.1, "Anti-correlated distances should give low shepard goodness, got {sg}");
+}
+
+// ---------------------------------------------------------------------------
+// Before vs after projection distinction
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_euclidean_dist_2d_is_symmetric() {
+    let (pts, _) = make_clustered_2d(2, 10, 1.0, 42);
+    let n = pts.len() / 2;
+    let d = euclidean_dist_2d(&pts, n);
+    for i in 0..n {
+        for j in 0..n {
+            assert!(
+                (d[i * n + j] - d[j * n + i]).abs() < 1e-12,
+                "Distance matrix not symmetric at ({i},{j})"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_before_after_projection_differ() {
+    // Simulate before/after: use two different distance matrices for the
+    // same set of points (analogous to manifold geodesic vs. projected 2D).
+    // Metrics computed on them should generally differ, demonstrating that
+    // both variants are worth storing.
+    let (pts, labels) = make_clustered_2d(3, 15, 0.5, 42);
+    let n = pts.len() / 2;
+
+    // "before": distances in some ambient space (here: a scaled version)
+    let d_before = dist_from_2d(&pts, n);
+    // "after": distances in a distorted 2D space (simulate projection distortion)
+    let pts_distorted: Vec<f64> = pts
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| if i % 2 == 0 { v * 2.0 } else { v * 0.5 })
+        .collect();
+    let d_after = dist_from_2d(&pts_distorted, n);
+
+    let t_before = trustworthiness(&d_before, &d_before, n, 7);
+    let _t_after = trustworthiness(&d_before, &d_after, n, 7);
+    let nh_before = neighborhood_hit(&d_before, &labels, n, 7);
+    let nh_after = neighborhood_hit(&d_after, &labels, n, 7);
+    let sg_before = shepard_goodness(&d_before, &d_before, n);
+    let sg_after = shepard_goodness(&d_before, &d_after, n);
+
+    // Before (self-comparison) should be perfect / better
+    assert!(
+        (t_before - 1.0).abs() < 1e-10,
+        "Trustworthiness before should be 1.0, got {t_before}"
+    );
+    assert!(
+        sg_before > sg_after,
+        "Shepard goodness before ({sg_before}) should exceed after ({sg_after})"
+    );
+    // NH may be high in both cases since clusters are well-separated
+    let _ = nh_before;
+    let _ = nh_after;
 }
 
 #[test]

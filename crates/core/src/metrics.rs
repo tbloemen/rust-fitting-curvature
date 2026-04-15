@@ -46,7 +46,11 @@ fn knn_index_sets(dist: &[f64], n: usize, k: usize) -> Vec<Vec<usize>> {
 }
 
 /// Compute pairwise Euclidean distance matrix from 2D points (flat [x,y] pairs).
-fn euclidean_dist_2d(pts_2d: &[f64], n: usize) -> Vec<f64> {
+///
+/// Use this to obtain "after-projection" distances from the output of
+/// `visualisation::project_to_2d`, so that any metric can be evaluated on
+/// what the viewer actually sees rather than on the manifold geometry.
+pub fn euclidean_dist_2d(pts_2d: &[f64], n: usize) -> Vec<f64> {
     let mut dist = vec![0.0; n * n];
     for i in 0..n {
         for j in (i + 1)..n {
@@ -521,6 +525,133 @@ pub fn davies_bouldin_ratio(
         return 0.0;
     }
     db_high / db_proj
+}
+
+// ---------------------------------------------------------------------------
+// E. Distance-rank preservation
+// ---------------------------------------------------------------------------
+
+/// Assign 0-based ranks to `values` (rank 0 = smallest value).
+fn rank_vector(values: &[f64]) -> Vec<usize> {
+    let mut indices: Vec<usize> = (0..values.len()).collect();
+    indices.sort_by(|&a, &b| {
+        values[a]
+            .partial_cmp(&values[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut ranks = vec![0usize; values.len()];
+    for (rank, &idx) in indices.iter().enumerate() {
+        ranks[idx] = rank;
+    }
+    ranks
+}
+
+/// Normalized stress (Kruskal 1964).
+///
+/// Measures the global preservation of pairwise distances from the original
+/// space D to the projected space P(D):
+///
+/// `M_s = sqrt( sum_{i<j}(Δ_D(i,j) - Δ_P(i,j))² / sum_{i<j} Δ_D(i,j)² )`
+///
+/// Returns a value in [0, 1], with **0 being best** (perfect distance
+/// preservation).  Pass manifold geodesic distances as `embedded_distances`
+/// to measure embedding quality; pass `euclidean_dist_2d` output to measure
+/// final visualization quality.
+pub fn normalized_stress(
+    high_dim_distances: &[f64],
+    embedded_distances: &[f64],
+    n: usize,
+) -> f64 {
+    let mut numerator = 0.0;
+    let mut denominator = 0.0;
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let d_h = high_dim_distances[i * n + j];
+            let d_e = embedded_distances[i * n + j];
+            let diff = d_h - d_e;
+            numerator += diff * diff;
+            denominator += d_h * d_h;
+        }
+    }
+    if denominator < 1e-12 {
+        return 0.0;
+    }
+    (numerator / denominator).sqrt()
+}
+
+/// Neighborhood hit (van der Maaten 2009).
+///
+/// Measures how well the k-nearest-neighbor structure in the embedding aligns
+/// with class labels: for each point, the fraction of its k-NN in the
+/// embedding that share the same label, averaged over all points.
+///
+/// `M_NH = (1/N) * sum_i |{j ∈ kNN_embed(i) : label[j] = label[i]}| / k`
+///
+/// Returns a value in [0, 1], with **1 being best** (all k-NN same-class).
+/// Requires labeled data. Pass manifold geodesic or 2D Euclidean distances
+/// for the before/after projection distinction.
+pub fn neighborhood_hit(embedded_distances: &[f64], labels: &[u32], n: usize, k: usize) -> f64 {
+    let k = k.min(n - 1);
+    if k == 0 {
+        return 1.0;
+    }
+
+    let knn = knn_index_sets(embedded_distances, n, k);
+    let mut total = 0.0;
+    for i in 0..n {
+        let same = knn[i].iter().filter(|&&j| labels[j] == labels[i]).count();
+        total += same as f64 / k as f64;
+    }
+    total / n as f64
+}
+
+/// Shepard goodness (Spearman rank correlation of pairwise distances).
+///
+/// Computes the Spearman rank correlation between all N*(N-1)/2 upper-triangle
+/// pairwise distances in the original space and in the embedding, giving a
+/// scalar measure of how well the global rank-order of distances is preserved.
+///
+/// Returns a value in [0, 1], with **1 being best** (perfect rank order
+/// preservation).  The result is clipped to 0 from below since negative
+/// correlations are meaningless for projection quality.
+pub fn shepard_goodness(
+    high_dim_distances: &[f64],
+    embedded_distances: &[f64],
+    n: usize,
+) -> f64 {
+    let m = n * (n - 1) / 2;
+    if m < 2 {
+        return 1.0;
+    }
+
+    let mut d_high = Vec::with_capacity(m);
+    let mut d_embed = Vec::with_capacity(m);
+    for i in 0..n {
+        for j in (i + 1)..n {
+            d_high.push(high_dim_distances[i * n + j]);
+            d_embed.push(embedded_distances[i * n + j]);
+        }
+    }
+
+    let ranks_high = rank_vector(&d_high);
+    let ranks_embed = rank_vector(&d_embed);
+
+    // Spearman: r_s = 1 - 6 * sum(d_i^2) / (m * (m^2 - 1))
+    let sum_sq: f64 = ranks_high
+        .iter()
+        .zip(ranks_embed.iter())
+        .map(|(&rh, &re)| {
+            let diff = rh as f64 - re as f64;
+            diff * diff
+        })
+        .sum();
+
+    let denom = m as f64 * (m as f64 * m as f64 - 1.0);
+    if denom < 1e-12 {
+        return 1.0;
+    }
+
+    (1.0 - 6.0 * sum_sq / denom).max(0.0)
 }
 
 /// Dunn index: ratio of minimum inter-cluster distance to maximum intra-cluster diameter.
