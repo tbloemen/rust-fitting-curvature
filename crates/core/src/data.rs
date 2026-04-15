@@ -295,14 +295,13 @@ pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<DataPoints, 
         depth2_label
     };
 
-    // x = distance-matrix rows (n × n), same as dist_matrix.
-    let x = dist_matrix.clone();
-
     Ok(DataPoints {
-        x,
+        // No feature representation for graph data; the distance matrix drives
+        // affinities and evaluation via the `distances` field.
+        x: Vec::new(),
         labels,
         n_points: n,
-        ambient_dim: n,
+        ambient_dim: 0,
         distances: dist_matrix,
     })
 }
