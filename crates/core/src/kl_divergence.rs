@@ -75,6 +75,98 @@ pub fn norm_loss_gradient(
     (loss, grad)
 }
 
+/// Depth norm loss for distance-based (graph/tree) data.
+///
+/// Compares each embedding point's "depth" (distance from the embedding origin)
+/// to a pre-computed target depth derived from the point's graph distance to the
+/// root node.  This is the distance-based analogue of `norm_loss_gradient`, which
+/// requires feature vectors and is used for Euclidean input data.
+///
+/// For **hyperbolic** embeddings (k < 0) the depth of a point on the hyperboloid
+/// is measured as its Poincaré ball radius after stereographic projection:
+///   r = ||spatial|| / (t + R)
+/// where `t = y[0]` (time component) and `spatial = y[1..]`.
+/// The target Poincaré radius is `tanh(d_root / (2R))`, which maps hop-distances
+/// to the expected Poincaré radius under an ideal hyperbolic tree embedding.
+///
+/// For **Euclidean** embeddings (k = 0) the depth is the plain Euclidean norm
+/// and the target is the raw hop-distance (no scaling needed).
+///
+/// For **spherical** embeddings (k > 0) all points share the same radius, so
+/// depth is not meaningful; this function returns zero loss and gradient.
+///
+/// Returns `(loss, gradient_in_ambient_space)`. The gradient is in ambient
+/// coordinates; the caller must project it to the tangent space before use.
+pub fn depth_norm_loss_gradient(
+    points: &[f64],
+    target_norms: &[f64],
+    n_points: usize,
+    ambient_dim: usize,
+    curvature: f64,
+    radius: f64,
+) -> (f64, Vec<f64>) {
+    let mut loss = 0.0;
+    let mut grad = vec![0.0f64; n_points * ambient_dim];
+
+    for i in 0..n_points {
+        let oi = i * ambient_dim;
+        let target = target_norms[i];
+
+        if curvature < 0.0 {
+            // Hyperboloid: Poincaré radius r = ||spatial|| / (t + R)
+            let t = points[oi];
+            let norm_s = (1..ambient_dim)
+                .map(|d| points[oi + d] * points[oi + d])
+                .sum::<f64>()
+                .sqrt();
+
+            let denom = t + radius;
+            if denom < 1e-12 || norm_s < 1e-12 {
+                continue;
+            }
+            let r = norm_s / denom;
+            let diff = r - target;
+            loss += diff * diff;
+
+            let coeff = 2.0 * diff;
+            // ∂r/∂t = -norm_s / denom²
+            grad[oi] = coeff * (-norm_s / (denom * denom));
+            // ∂r/∂s_d = s_d / (norm_s * denom)
+            for d in 1..ambient_dim {
+                grad[oi + d] = coeff * points[oi + d] / (norm_s * denom);
+            }
+        } else if curvature == 0.0 {
+            // Euclidean: depth = ||y||, target = raw hop-distance
+            let norm_y = (0..ambient_dim)
+                .map(|d| points[oi + d] * points[oi + d])
+                .sum::<f64>()
+                .sqrt();
+            if norm_y < 1e-12 {
+                continue;
+            }
+            let diff = norm_y - target;
+            loss += diff * diff;
+            let coeff = 2.0 * diff / norm_y;
+            for d in 0..ambient_dim {
+                grad[oi + d] = coeff * points[oi + d];
+            }
+        }
+        // k > 0 (sphere): depth not meaningful, contribute zero.
+    }
+
+    // Intentionally NOT divided by m (unlike `norm_loss_gradient`).
+    //
+    // The KL gradient accumulates ~perplexity pairwise terms per point, giving
+    // it an effective scale of O(perplexity).  The depth-norm gradient has only
+    // one term per point and Poincaré residuals bounded in [0, 1], so dividing
+    // by m would make it O(1/n) — roughly perplexity × n times smaller than the
+    // KL gradient, forcing norm_loss_weight into the [10, 100] range to compensate.
+    //
+    // Using a sum (no /m) gives O(1) scale, making norm_loss_weight ≈ 0.01–1.0
+    // sufficient to balance the KL loss — consistent with CO-SNE's λ₂ = 0.01.
+    (loss, grad)
+}
+
 /// KL divergence loss: -sum(P * log(Q + eps)), excluding diagonal.
 pub fn kl_loss(q: &[f64], p: &[f64], n_points: usize) -> f64 {
     let eps = 1e-12;

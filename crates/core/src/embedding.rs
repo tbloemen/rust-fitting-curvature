@@ -3,7 +3,9 @@ use crate::affinities::{
 };
 use crate::config::{InitMethod, TrainingConfig};
 use crate::kernels::compute_q_matrix_with_distances;
-use crate::kl_divergence::{compute_global_similarities, kl_gradient, kl_loss, norm_loss_gradient};
+use crate::kl_divergence::{
+    compute_global_similarities, depth_norm_loss_gradient, kl_gradient, kl_loss, norm_loss_gradient,
+};
 use crate::manifolds;
 use crate::manifolds::Manifold;
 use crate::matrices::{compute_euclidean_distance_matrix, pca, pca_from_distances};
@@ -33,6 +35,12 @@ pub struct EmbeddingState {
     /// Pre-computed high-dimensional distance matrix.
     /// Set by `from_distances`; empty for feature-based construction.
     precomputed_distances: Vec<f64>,
+    /// Per-point target depth norms for the distance-based norm loss.
+    /// `target_norms[i] = tanh(dist_to_root[i] / (2R))` for k < 0,
+    /// `dist_to_root[i]` for k = 0.
+    /// Non-empty only for `from_distances` when `norm_loss_weight > 0`.
+    /// When non-empty, the depth norm loss is used instead of the feature norm loss.
+    target_norms: Vec<f64>,
 }
 
 impl EmbeddingState {
@@ -89,6 +97,7 @@ impl EmbeddingState {
             input_data: data.to_vec(),
             n_features,
             precomputed_distances: Vec::new(),
+            target_norms: Vec::new(),
         }
     }
 
@@ -140,6 +149,27 @@ impl EmbeddingState {
             Vec::new()
         };
 
+        // Precompute per-point target Poincaré/Euclidean radii from root distances.
+        // Node 0 is always the root (BFS convention).  The mapping is:
+        //   k < 0: tanh(d_root / (2R))  → Poincaré radius in [0, 1)
+        //   k = 0: d_root               → raw hop-distance (Euclidean)
+        //   k > 0: not meaningful       → empty (no depth loss on sphere)
+        let target_norms = if config.norm_loss_weight > 0.0 && config.curvature <= 0.0 {
+            let radius = manifold.radius();
+            (0..n_points)
+                .map(|i| {
+                    let d = distances[i * n_points]; // distance from node i to root (node 0)
+                    if config.curvature < 0.0 {
+                        (d / (2.0 * radius)).tanh()
+                    } else {
+                        d // Euclidean: use raw distance as target norm
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         Self {
             points,
             n_points,
@@ -155,6 +185,7 @@ impl EmbeddingState {
             input_data: Vec::new(),
             n_features: 0,
             precomputed_distances: distances.to_vec(),
+            target_norms,
         }
     }
 
@@ -240,7 +271,27 @@ impl EmbeddingState {
             self.loss += self.config.global_loss_weight * kl_loss(&q_hat, &self.p_hat, n_points);
         }
 
-        // Norm loss: penalizes mismatch between ||x_i||² and ||y_i||².
+        // Depth norm loss for graph/tree data: compares each point's depth from
+        // the embedding origin to a target depth derived from its root distance.
+        // Used when initialized from a pairwise distance matrix (no feature vectors).
+        if self.config.norm_loss_weight > 0.0 && !self.target_norms.is_empty() {
+            let (depth_loss, mut depth_grad) = depth_norm_loss_gradient(
+                &self.points,
+                &self.target_norms,
+                n_points,
+                ambient_dim,
+                self.config.curvature,
+                self.manifold.radius(),
+            );
+            self.manifold
+                .project_to_tangent(&self.points, &mut depth_grad, n_points, ambient_dim);
+            for k in 0..grad.len() {
+                grad[k] += self.config.norm_loss_weight * depth_grad[k];
+            }
+            self.loss += self.config.norm_loss_weight * depth_loss;
+        }
+
+        // Feature norm loss: penalizes mismatch between ||x_i||² and ||y_i||².
         // Gradient is in ambient coordinates; project to tangent space first.
         // Skipped when initialized from distances (no input feature vectors).
         if self.config.norm_loss_weight > 0.0 && self.n_features > 0 {
