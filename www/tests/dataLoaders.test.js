@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   parseIdxBuffers,
   subsampleIdx,
-  parseCifar10Buffer,
   detectSeparator,
   splitLine,
   parsePbmcText,
@@ -37,18 +36,6 @@ function makeIdxLabelBuf(labels) {
   view.setUint32(4, labels.length);
   const bytes = new Uint8Array(buf, headerSize);
   bytes.set(labels);
-  return buf;
-}
-
-/** Build a synthetic CIFAR-10 binary buffer with `n` records. */
-function makeCifar10Buf(n, labelValue = 3, pixelValue = 127) {
-  const RECORD = 3073;
-  const buf = new ArrayBuffer(n * RECORD);
-  const bytes = new Uint8Array(buf);
-  for (let i = 0; i < n; i++) {
-    bytes[i * RECORD] = labelValue;
-    bytes.fill(pixelValue, i * RECORD + 1, i * RECORD + RECORD);
-  }
   return buf;
 }
 
@@ -136,52 +123,6 @@ describe("subsampleIdx", () => {
     const raw = parseIdxBuffers(imgBuf, lblBuf);
     const { data } = subsampleIdx(raw, 1);
     expect(data[0]).toBe(0.0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// parseCifar10Buffer
-// ---------------------------------------------------------------------------
-
-describe("parseCifar10Buffer", () => {
-  it("parses a valid single-record buffer", () => {
-    const buf = makeCifar10Buf(1, 5, 200);
-    const result = parseCifar10Buffer(buf, 1);
-    expect(result.nPoints).toBe(1);
-    expect(result.nFeatures).toBe(3072);
-    expect(result.labels[0]).toBe(5);
-    expect(result.data[0]).toBeCloseTo(200 / 255, 5);
-  });
-
-  it("parses multiple records and returns requested nPoints", () => {
-    const buf = makeCifar10Buf(100, 3, 128);
-    const result = parseCifar10Buffer(buf, 20);
-    expect(result.nPoints).toBe(20);
-    expect(result.labels.every((l) => l === 3)).toBe(true);
-  });
-
-  it("caps nPoints at available records", () => {
-    const buf = makeCifar10Buf(5, 1, 0);
-    const result = parseCifar10Buffer(buf, 1000);
-    expect(result.nPoints).toBe(5);
-  });
-
-  it("throws when buffer is empty", () => {
-    expect(() => parseCifar10Buffer(new ArrayBuffer(0), 10)).toThrow(
-      /CIFAR-10 buffer too small/,
-    );
-  });
-
-  it("throws when buffer is smaller than one record (e.g., 404 HTML)", () => {
-    const tinyBuf = new ArrayBuffer(500); // < 3073
-    expect(() => parseCifar10Buffer(tinyBuf, 10)).toThrow(/CIFAR-10 buffer too small/);
-    expect(() => parseCifar10Buffer(tinyBuf, 10)).toThrow(/test_batch\.bin/);
-  });
-
-  it("normalizes pixels to [0, 1]", () => {
-    const buf = makeCifar10Buf(1, 7, 255);
-    const { data } = parseCifar10Buffer(buf, 1);
-    expect(data.every((v) => Math.abs(v - 1.0) < 1e-5)).toBe(true);
   });
 });
 

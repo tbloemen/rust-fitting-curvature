@@ -92,8 +92,6 @@ const DATASET_NOTES = {
   mnist: "Test set (10k images). Fetched from public/data/mnist/.",
   fashion_mnist:
     "Place IDX files in public/data/fashion-mnist/. Same format as MNIST.",
-  cifar10:
-    "Place test_batch.bin in public/data/cifar10/. Download from cs.toronto.edu/~kriz/.",
   wordnet_mammals:
     "Generate with: uv run python scripts/generate_wordnet_mammals.py. Place in public/data/wordnet/.",
   pbmc: "Place pbmc_pca.tsv (pre-processed PCA) in public/data/pbmc/.",
@@ -266,16 +264,6 @@ async function loadMnistLike(baseUrl, nPoints) {
   return subsampleIdx(rawDataCache[baseUrl], nPoints);
 }
 
-async function loadCifar10(nPoints) {
-  const cacheKey = "cifar10";
-  if (!rawDataCache[cacheKey]) {
-    const resp = await fetch("data/cifar10/test_batch.bin");
-    if (!resp.ok)
-      throw new Error(`Could not fetch CIFAR-10 test_batch.bin: ${resp.status}`);
-    rawDataCache[cacheKey] = await resp.arrayBuffer();
-  }
-  return parseCifar10Buffer(rawDataCache[cacheKey], nPoints);
-}
 
 async function loadWordnetMammals(nPoints) {
   const cacheKey = "wordnet_mammals";
@@ -504,13 +492,6 @@ async function createRunner() {
       );
     } else if (realDataset === "fashion_mnist") {
       const d = await loadMnistLike("data/fashion-mnist", nPoints);
-      runner = EmbeddingRunner.from_data_with_labels(
-        ...commonArgs.slice(0, 1),
-        d.data, d.labels, d.nPoints, d.nFeatures,
-        ...commonArgs.slice(1),
-      );
-    } else if (realDataset === "cifar10") {
-      const d = await loadCifar10(nPoints);
       runner = EmbeddingRunner.from_data_with_labels(
         ...commonArgs.slice(0, 1),
         d.data, d.labels, d.nPoints, d.nFeatures,

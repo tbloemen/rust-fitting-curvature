@@ -99,51 +99,6 @@ pub fn load_fashion_mnist(path: &str, n_samples: usize) -> Result<DataPoints, St
     load_mnist(path, n_samples)
 }
 
-/// Load CIFAR-10 training images and labels from the binary batch format.
-///
-/// `path` is the directory containing `data_batch_1.bin` … `data_batch_5.bin`.
-/// Each file holds 10,000 records of (1 label byte + 3072 pixel bytes).
-/// Pixel values are normalised to [0, 1]. Returns up to `n_samples` images.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn load_cifar10(path: &str, n_samples: usize) -> Result<DataPoints, String> {
-    const N_FEATURES: usize = 3072; // 32×32×3
-    const RECORD_SIZE: usize = 1 + N_FEATURES;
-    const RECORDS_PER_FILE: usize = 10_000;
-
-    let mut x: Vec<f64> = Vec::with_capacity(n_samples * N_FEATURES);
-    let mut labels: Vec<u32> = Vec::with_capacity(n_samples);
-
-    'outer: for batch in 1..=5 {
-        let batch_path = format!("{}/data_batch_{}.bin", path, batch);
-        let mut reader = BufReader::new(
-            File::open(&batch_path).map_err(|e| format!("Failed to open {batch_path}: {e}"))?,
-        );
-
-        let mut record = vec![0u8; RECORD_SIZE];
-        for _ in 0..RECORDS_PER_FILE {
-            reader
-                .read_exact(&mut record)
-                .map_err(|e| format!("Failed to read CIFAR-10 record: {e}"))?;
-            labels.push(record[0] as u32);
-            for &p in &record[1..] {
-                x.push(p as f64 / 255.0);
-            }
-            if labels.len() >= n_samples {
-                break 'outer;
-            }
-        }
-    }
-
-    let n_points = labels.len();
-    Ok(DataPoints {
-        x,
-        labels,
-        n_points,
-        ambient_dim: N_FEATURES,
-        distances: Vec::new(),
-    })
-}
-
 /// Load the WordNet mammal subtree from a pre-generated edge list.
 ///
 /// `path` is the directory containing:

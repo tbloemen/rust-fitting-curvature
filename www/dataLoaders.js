@@ -79,56 +79,6 @@ export function subsampleIdx({ imageBytes, labelBytes, nImages, nFeatures }, nPo
 }
 
 // ---------------------------------------------------------------------------
-// CIFAR-10
-// ---------------------------------------------------------------------------
-
-const CIFAR10_N_FEATURES = 3072; // 32×32×3
-const CIFAR10_RECORD_SIZE = 1 + CIFAR10_N_FEATURES; // 1 label + 3072 pixels = 3073
-
-/**
- * Parse a CIFAR-10 binary batch buffer (test_batch.bin or data_batch_N.bin).
- *
- * The CIFAR-10 binary format has no file header: each record is exactly 3073
- * bytes (1 label byte followed by 3072 pixel bytes in R-G-B plane order).
- *
- * Throws a descriptive error if the buffer is smaller than one record, which
- * indicates the file is missing or a 404 HTML error page was fetched instead.
- *
- * @param {ArrayBuffer} buf
- * @param {number} nPoints  Maximum number of samples to return.
- * @returns {{ data: Float64Array, labels: Uint32Array, nPoints: number, nFeatures: number }}
- */
-export function parseCifar10Buffer(buf, nPoints) {
-  const bytes = new Uint8Array(buf);
-
-  if (bytes.length < CIFAR10_RECORD_SIZE) {
-    throw new Error(
-      `CIFAR-10 buffer too small (${bytes.length} bytes, need at least ${CIFAR10_RECORD_SIZE}). ` +
-        `Place test_batch.bin (~30 MB) in www/public/data/cifar10/. ` +
-        `Download the binary version from cs.toronto.edu/~kriz/cifar-10-binary.tar.gz.`,
-    );
-  }
-
-  const totalRecords = Math.floor(bytes.length / CIFAR10_RECORD_SIZE);
-  const nSamples = Math.min(nPoints, totalRecords);
-  const step = Math.max(1, Math.floor(totalRecords / nSamples));
-
-  const data = new Float64Array(nSamples * CIFAR10_N_FEATURES);
-  const labels = new Uint32Array(nSamples);
-
-  for (let i = 0; i < nSamples; i++) {
-    const srcRecord = i * step;
-    const srcOff = srcRecord * CIFAR10_RECORD_SIZE;
-    labels[i] = bytes[srcOff];
-    const dstOff = i * CIFAR10_N_FEATURES;
-    for (let j = 0; j < CIFAR10_N_FEATURES; j++) {
-      data[dstOff + j] = bytes[srcOff + 1 + j] / 255.0;
-    }
-  }
-  return { data, labels, nPoints: nSamples, nFeatures: CIFAR10_N_FEATURES };
-}
-
-// ---------------------------------------------------------------------------
 // PBMC PCA (TSV / CSV / whitespace-separated)
 // ---------------------------------------------------------------------------
 

@@ -896,7 +896,6 @@ fn main() {
         let result: Result<Dataset, String> = match dataset_name.as_str() {
             "mnist" => Dataset::load_mnist(&format!("{dp}/mnist"), n),
             "fashion_mnist" => Dataset::load_fashion_mnist(&format!("{dp}/fashion-mnist"), n),
-            "cifar10" => Dataset::load_cifar10(&format!("{dp}/cifar10"), n),
             "wordnet_mammals" => Dataset::load_wordnet_mammals(&format!("{dp}/wordnet"), n),
             "pbmc" => Dataset::load_pbmc(&format!("{dp}/pbmc"), n),
             name => Ok(Dataset::load_synthetic(name, n, 42)),

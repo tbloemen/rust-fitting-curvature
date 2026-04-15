@@ -47,10 +47,6 @@ impl Dataset {
         fitting_core::data::load_fashion_mnist(path, n_samples).map(|sd| sd.into())
     }
 
-    pub fn load_cifar10(path: &str, n_samples: usize) -> Result<Self, String> {
-        fitting_core::data::load_cifar10(path, n_samples).map(|sd| sd.into())
-    }
-
     pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<Self, String> {
         fitting_core::data::load_wordnet_mammals(path, n_samples).map(|sd| sd.into())
     }
