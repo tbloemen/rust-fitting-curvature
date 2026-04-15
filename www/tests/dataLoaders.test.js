@@ -383,4 +383,26 @@ describe("parseWordnetEdges", () => {
     const result = parseWordnetEdges(edges, null, null, 100);
     expect(result.nPoints).toBe(3);
   });
+
+  it("returns deduplicated edges with i < j", () => {
+    // Tree: 0-1-2, 0-3  →  3 edges
+    const { edges } = parseWordnetEdges(EDGES, null, null, 100);
+    expect(edges.length).toBe(3);
+    // Every edge should have src < dst (no duplicates)
+    for (const [a, b] of edges) {
+      expect(a).toBeLessThan(b);
+    }
+    // All indices are within bounds
+    const { nPoints } = parseWordnetEdges(EDGES, null, null, 100);
+    for (const [a, b] of edges) {
+      expect(a).toBeGreaterThanOrEqual(0);
+      expect(b).toBeLessThan(nPoints);
+    }
+  });
+
+  it("edges only include nodes within the BFS-limited subgraph", () => {
+    // With nPoints=2 only root (0) and one child are included; only 1 edge
+    const { edges } = parseWordnetEdges(EDGES, null, null, 2);
+    expect(edges.length).toBe(1);
+  });
 });

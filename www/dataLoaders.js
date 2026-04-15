@@ -353,5 +353,13 @@ export function parseWordnetEdges(edgesText, labelsText, namesText, nPoints) {
     names = Array(nActual).fill("");
   }
 
-  return { distances, labels, names, nPoints: nActual };
+  // Collect deduplicated edges in compact index space (i < j to avoid duplicates)
+  const compactEdges = [];
+  for (let i = 0; i < nActual; i++) {
+    for (const j of compactAdj[i]) {
+      if (i < j) compactEdges.push([i, j]);
+    }
+  }
+
+  return { distances, labels, names, edges: compactEdges, nPoints: nActual };
 }

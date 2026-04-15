@@ -19,6 +19,8 @@ let animationId = null;
 // Node names for datasets that render text labels (e.g., WordNet).
 // Array of strings in the same order as embedding points, or null.
 let pointNames = null;
+// Edges as [[src, dst], ...] in compact point-index space, or null.
+let pointEdges = null;
 
 // Cache of raw fetched data keyed by dataset name
 const rawDataCache = {};
@@ -318,21 +320,21 @@ async function loadPbmc(nPoints) {
 // ---------------------------------------------------------------------------
 
 /**
- * Draw node names directly on the canvas using the 2D API, layered on top
- * of the plotters render.  Uses the viewport state exposed by `runner.get_viewport()`
- * and the projected 2D coordinates from `runner.get_projected_coords()`.
+ * Draw tree edges and node name labels on top of the plotters render.
  *
- * The chart margins inside the plotters canvas (from plot.rs) are:
- *   left = y_label_area(20) + margin(5) = 25
- *   right = margin(5) = 5
- *   top = margin(5) = 5
- *   bottom = x_label_area(20) + margin(5) = 25
+ * Edges are always drawn (thin, semi-transparent).
+ * Labels are drawn with greedy bounding-box occupancy culling: a label is
+ * skipped if it would overlap any already-committed label, preventing
+ * unreadable pileups when points are dense.
+ *
+ * Chart margins in plot.rs: left=25, right=5, top=5, bottom=25 (px).
  */
 function drawNameOverlay() {
-  if (!pointNames || !runner) return;
+  if (!runner) return;
+  if (!pointNames && !pointEdges) return;
 
   const coords = runner.get_projected_coords(); // [x0,y0,x1,y1,...]
-  const vp = runner.get_viewport(); // [cx, cy, half, auto_half]
+  const vp = runner.get_viewport();             // [cx, cy, half, auto_half]
   const [vpCx, vpCy, vpHalf] = vp;
 
   const w = canvas.width;
@@ -352,26 +354,88 @@ function drawNameOverlay() {
   const yMin = vpCy - vpHalf;
   const yMax = vpCy + vpHalf;
 
+  /** Convert a plot-space point to canvas device pixels. */
+  function toCanvas(px, py) {
+    return [
+      MARGIN_LEFT + ((px - xMin) / (xMax - xMin)) * plotW,
+      h - MARGIN_BOTTOM - ((py - yMin) / (yMax - yMin)) * plotH,
+    ];
+  }
+
   const ctx = canvas.getContext("2d");
   const dpr = window.devicePixelRatio || 1;
-  const fontSize = Math.max(9, Math.round(10 * dpr));
-  ctx.font = `${fontSize}px sans-serif`;
-  ctx.fillStyle = "rgba(20, 20, 20, 0.85)";
-  ctx.textBaseline = "bottom";
-
   const n = coords.length / 2;
-  for (let i = 0; i < n; i++) {
-    const px = coords[i * 2];
-    const py = coords[i * 2 + 1];
-    if (!isFinite(px) || !isFinite(py)) continue;
-    // Skip points outside the current viewport
-    if (px < xMin || px > xMax || py < yMin || py > yMax) continue;
 
-    const cx = MARGIN_LEFT + ((px - xMin) / (xMax - xMin)) * plotW;
-    const cy = h - MARGIN_BOTTOM - ((py - yMin) / (yMax - yMin)) * plotH;
+  // --- Edges ---
+  if (pointEdges) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(100, 100, 100, 0.35)";
+    ctx.lineWidth = dpr;
+    ctx.beginPath();
+    for (const [a, b] of pointEdges) {
+      const ax = coords[a * 2], ay = coords[a * 2 + 1];
+      const bx = coords[b * 2], by = coords[b * 2 + 1];
+      if (!isFinite(ax) || !isFinite(ay) || !isFinite(bx) || !isFinite(by)) continue;
+      // Skip edges entirely outside the viewport
+      if (ax < xMin && bx < xMin) continue;
+      if (ax > xMax && bx > xMax) continue;
+      if (ay < yMin && by < yMin) continue;
+      if (ay > yMax && by > yMax) continue;
+      const [cax, cay] = toCanvas(ax, ay);
+      const [cbx, cby] = toCanvas(bx, by);
+      ctx.moveTo(cax, cay);
+      ctx.lineTo(cbx, cby);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
 
-    const name = pointNames[i] || "";
-    if (name) ctx.fillText(name, cx + 3 * dpr, cy - 1 * dpr);
+  // --- Labels with occupancy culling ---
+  if (pointNames) {
+    const fontSize = Math.max(9, Math.round(10 * dpr));
+    ctx.save();
+    ctx.font = `${fontSize}px sans-serif`;
+    ctx.fillStyle = "rgba(20, 20, 20, 0.85)";
+    ctx.textBaseline = "bottom";
+
+    const offsetX = 4 * dpr;
+    const offsetY = 1 * dpr;
+    const padding = 2 * dpr;
+
+    // Committed label bounding boxes for overlap detection
+    const occupied = [];
+
+    function overlaps(r) {
+      for (const o of occupied) {
+        if (r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y)
+          return true;
+      }
+      return false;
+    }
+
+    for (let i = 0; i < n; i++) {
+      const name = pointNames[i];
+      if (!name) continue;
+      const px = coords[i * 2], py = coords[i * 2 + 1];
+      if (!isFinite(px) || !isFinite(py)) continue;
+      if (px < xMin || px > xMax || py < yMin || py > yMax) continue;
+
+      const [cx, cy] = toCanvas(px, py);
+      const tw = ctx.measureText(name).width;
+      const rect = {
+        x: cx + offsetX - padding,
+        y: cy - fontSize - offsetY - padding,
+        w: tw + padding * 2,
+        h: fontSize + padding * 2,
+      };
+
+      if (!overlaps(rect)) {
+        ctx.fillText(name, cx + offsetX, cy - offsetY);
+        occupied.push(rect);
+      }
+    }
+
+    ctx.restore();
   }
 }
 
@@ -407,6 +471,7 @@ async function createRunner() {
     runner = null;
   }
   pointNames = null;
+  pointEdges = null;
 
   const p = getParams();
   updateTitle(p.curvature, p.projection);
@@ -459,6 +524,7 @@ async function createRunner() {
         ...commonArgs.slice(1),
       );
       pointNames = d.names && d.names.some((n) => n) ? d.names : null;
+      pointEdges = d.edges && d.edges.length > 0 ? d.edges : null;
     } else if (realDataset === "pbmc") {
       const d = await loadPbmc(nPoints);
       runner = EmbeddingRunner.from_data_with_labels(
