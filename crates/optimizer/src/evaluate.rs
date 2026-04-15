@@ -71,11 +71,7 @@ impl Evaluator {
         let mut state = if self.dataset.precomputed_distances.is_empty() {
             EmbeddingState::new(&self.dataset.x, self.dataset.n_features, &training_config)
         } else {
-            EmbeddingState::from_distances(
-                &self.dataset.precomputed_distances,
-                n,
-                &training_config,
-            )
+            EmbeddingState::from_distances(&self.dataset.precomputed_distances, n, &training_config)
         };
         while !state.is_done() {
             state.step();
@@ -146,11 +142,7 @@ impl Evaluator {
         let mut state = if self.dataset.precomputed_distances.is_empty() {
             EmbeddingState::new(&self.dataset.x, self.dataset.n_features, &training_config)
         } else {
-            EmbeddingState::from_distances(
-                &self.dataset.precomputed_distances,
-                n,
-                &training_config,
-            )
+            EmbeddingState::from_distances(&self.dataset.precomputed_distances, n, &training_config)
         };
         while !state.is_done() {
             state.step();

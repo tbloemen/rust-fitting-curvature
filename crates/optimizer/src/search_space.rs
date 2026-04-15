@@ -84,7 +84,9 @@ mod tests {
     fn sample_curvature_magnitude_is_varied() {
         let space = test_space();
         let mut rng = Rng::new(42);
-        let samples: Vec<f64> = (0..200).map(|_| space.sample_curvature_magnitude(&mut rng)).collect();
+        let samples: Vec<f64> = (0..200)
+            .map(|_| space.sample_curvature_magnitude(&mut rng))
+            .collect();
         let min = samples.iter().cloned().fold(f64::MAX, f64::min);
         let max = samples.iter().cloned().fold(f64::MIN, f64::max);
         // With 200 log-uniform samples over [0.001, 25] we should see at least a 100x spread.
@@ -147,8 +149,12 @@ mod tests {
         let mut max_seen = current;
         for _ in 0..200 {
             current = space.mutate_curvature_magnitude(current, &mut rng);
-            if current < min_seen { min_seen = current; }
-            if current > max_seen { max_seen = current; }
+            if current < min_seen {
+                min_seen = current;
+            }
+            if current > max_seen {
+                max_seen = current;
+            }
         }
         assert!(
             max_seen / min_seen > 10.0,

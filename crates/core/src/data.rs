@@ -116,8 +116,7 @@ pub fn load_cifar10(path: &str, n_samples: usize) -> Result<DataPoints, String> 
     'outer: for batch in 1..=5 {
         let batch_path = format!("{}/data_batch_{}.bin", path, batch);
         let mut reader = BufReader::new(
-            File::open(&batch_path)
-                .map_err(|e| format!("Failed to open {batch_path}: {e}"))?,
+            File::open(&batch_path).map_err(|e| format!("Failed to open {batch_path}: {e}"))?,
         );
 
         let mut record = vec![0u8; RECORD_SIZE];
@@ -161,8 +160,8 @@ pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<DataPoints, 
 
     // --- Parse edge list ---
     let edges_path = format!("{}/mammals_edges.tsv", path);
-    let edges_file = File::open(&edges_path)
-        .map_err(|e| format!("Failed to open {edges_path}: {e}"))?;
+    let edges_file =
+        File::open(&edges_path).map_err(|e| format!("Failed to open {edges_path}: {e}"))?;
     let mut edges: Vec<(usize, usize)> = Vec::new();
     let mut max_id = 0usize;
     for (line_no, line) in BufReader::new(edges_file).lines().enumerate() {
@@ -259,7 +258,7 @@ pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<DataPoints, 
         // Load from file; one label per line in original node order; remap via bfs_order.
         let raw: Vec<u32> = BufReader::new(file)
             .lines()
-            .filter_map(|l| l.ok())
+            .map_while(Result::ok)
             .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
             .filter_map(|l| l.trim().parse::<u32>().ok())
             .collect();
@@ -324,12 +323,11 @@ pub fn load_pbmc(path: &str, n_samples: usize) -> Result<DataPoints, String> {
     use std::io::{BufRead, BufReader};
 
     let file_path = format!("{}/pbmc_pca.tsv", path);
-    let file = File::open(&file_path)
-        .map_err(|e| format!("Failed to open {file_path}: {e}"))?;
+    let file = File::open(&file_path).map_err(|e| format!("Failed to open {file_path}: {e}"))?;
 
     let mut data_lines: Vec<String> = BufReader::new(file)
         .lines()
-        .filter_map(|l| l.ok())
+        .map_while(Result::ok)
         .filter(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
         .collect();
 
@@ -349,9 +347,12 @@ pub fn load_pbmc(path: &str, n_samples: usize) -> Result<DataPoints, String> {
     }
 
     // Detect label column: if the first field of any row is non-numeric, treat col 0 as labels.
-    let has_label_col = data_lines
-        .iter()
-        .any(|l| l.split('\t').next().map(|f| f.parse::<f64>().is_err()).unwrap_or(false));
+    let has_label_col = data_lines.iter().any(|l| {
+        l.split('\t')
+            .next()
+            .map(|f| f.parse::<f64>().is_err())
+            .unwrap_or(false)
+    });
 
     let mut raw_labels: Vec<String> = Vec::new();
     let mut x: Vec<f64> = Vec::new();

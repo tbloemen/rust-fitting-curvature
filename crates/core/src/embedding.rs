@@ -1,4 +1,6 @@
-use crate::affinities::{compute_perplexity_affinities, compute_perplexity_affinities_from_distances};
+use crate::affinities::{
+    compute_perplexity_affinities, compute_perplexity_affinities_from_distances,
+};
 use crate::config::{InitMethod, TrainingConfig};
 use crate::kernels::compute_q_matrix_with_distances;
 use crate::kl_divergence::{compute_global_similarities, kl_gradient, kl_loss, norm_loss_gradient};
