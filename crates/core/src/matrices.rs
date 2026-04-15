@@ -130,6 +130,95 @@ pub fn pca(
     result
 }
 
+/// Classical multidimensional scaling (PCoA) — PCA from a pairwise distance matrix.
+///
+/// Given a flat n × n distance matrix, returns a flat `n_points × n_components`
+/// row-major array of coordinates that preserve inter-point distances as well as
+/// possible in the low-dimensional space.
+///
+/// Algorithm: double-center the squared distance matrix to obtain the Gram matrix B,
+/// then extract the top `n_components` eigenvectors via power iteration with deflation.
+pub fn pca_from_distances(
+    distances: &[f64],
+    n_points: usize,
+    n_components: usize,
+    seed: u64,
+) -> Vec<f64> {
+    // Step 1: squared distances.
+    let mut d2 = vec![0.0f64; n_points * n_points];
+    for i in 0..n_points {
+        for j in 0..n_points {
+            let d = distances[i * n_points + j];
+            d2[i * n_points + j] = d * d;
+        }
+    }
+
+    // Step 2: double-center → Gram matrix B.
+    // B[i,j] = -½ (d²[i,j] - row_mean[i] - col_mean[j] + grand_mean)
+    let row_means: Vec<f64> = (0..n_points)
+        .map(|i| (0..n_points).map(|j| d2[i * n_points + j]).sum::<f64>() / n_points as f64)
+        .collect();
+    let grand_mean = row_means.iter().sum::<f64>() / n_points as f64;
+
+    let mut b = vec![0.0f64; n_points * n_points];
+    for i in 0..n_points {
+        for j in 0..n_points {
+            b[i * n_points + j] =
+                -0.5 * (d2[i * n_points + j] - row_means[i] - row_means[j] + grand_mean);
+        }
+    }
+
+    // Step 3: power iteration with deflation to extract top eigenpairs of B.
+    let mut rng = Rng::new(seed);
+    let mut components: Vec<Vec<f64>> = Vec::with_capacity(n_components);
+    let mut eigenvalues: Vec<f64> = Vec::with_capacity(n_components);
+
+    for _ in 0..n_components {
+        let mut v: Vec<f64> = (0..n_points).map(|_| rng.normal()).collect();
+        vec_normalize(&mut v);
+
+        let mut eigenvalue = 0.0f64;
+        for _ in 0..300 {
+            // w = B v
+            let mut w = vec![0.0f64; n_points];
+            for i in 0..n_points {
+                for j in 0..n_points {
+                    w[i] += b[i * n_points + j] * v[j];
+                }
+            }
+
+            // Deflate: remove contribution of already-found components.
+            for prev in &components {
+                let dot: f64 = w.iter().zip(prev).map(|(a, b)| a * b).sum();
+                for (wi, pi) in w.iter_mut().zip(prev) {
+                    *wi -= dot * pi;
+                }
+            }
+
+            eigenvalue = w.iter().map(|x| x * x).sum::<f64>().sqrt();
+            vec_normalize(&mut w);
+
+            let change: f64 = v.iter().zip(&w).map(|(a, b)| (a - b).abs()).sum();
+            v = w;
+            if change < 1e-9 {
+                break;
+            }
+        }
+        components.push(v);
+        eigenvalues.push(eigenvalue);
+    }
+
+    // Step 4: coordinates[i, k] = eigenvec[k][i] * sqrt(max(0, eigenvalue[k]))
+    let mut result = vec![0.0f64; n_points * n_components];
+    for k in 0..n_components {
+        let scale = eigenvalues[k].max(0.0).sqrt();
+        for i in 0..n_points {
+            result[i * n_components + k] = components[k][i] * scale;
+        }
+    }
+    result
+}
+
 fn vec_normalize(v: &mut [f64]) {
     let norm: f64 = v.iter().map(|x| x * x).sum::<f64>().sqrt();
     if norm > 1e-12 {

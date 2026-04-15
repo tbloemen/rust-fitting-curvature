@@ -9,13 +9,49 @@
     <div class="sidebar" id="sidebar">
       <div class="sidebar-content">
         <h1>Constant Curvature Embedding</h1>
-        <a href="landscape.html" style="display:inline-block;margin-bottom:12px;font-size:0.75rem;color:#5dade2;text-decoration:none;">GP Landscape →</a>
+        <a
+          href="landscape.html"
+          style="
+            display: inline-block;
+            margin-bottom: 12px;
+            font-size: 0.75rem;
+            color: #5dade2;
+            text-decoration: none;
+          "
+          >GP Landscape →</a
+        >
 
         <div class="section">
           <div class="section-title">Data Source</div>
           <div class="toggle-group">
-            <button id="btn-mnist" class="active">MNIST</button>
+            <button id="btn-real" class="active">Real Data</button>
             <button id="btn-synthetic">Synthetic</button>
+          </div>
+
+          <div id="real-controls">
+            <div class="control-group">
+              <label for="real-dataset">Dataset</label>
+              <select id="real-dataset">
+                <option value="mnist">MNIST</option>
+                <option value="fashion_mnist">Fashion-MNIST</option>
+                <option value="wordnet_mammals">WordNet Mammals</option>
+                <option value="pbmc">PBMC 3k</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label for="real_n_points">Points</label>
+              <input
+                type="number"
+                id="real_n_points"
+                value="1000"
+                min="50"
+                max="10000"
+              />
+            </div>
+            <p
+              id="real-dataset-note"
+              style="font-size: 0.65rem; color: #666; margin-top: 4px"
+            ></p>
           </div>
 
           <div id="synthetic-controls" style="display: none">
@@ -47,22 +83,6 @@
                 max="5000"
               />
             </div>
-          </div>
-
-          <div id="mnist-controls">
-            <div class="control-group">
-              <label for="mnist_n_points">Points (max 10000)</label>
-              <input
-                type="number"
-                id="mnist_n_points"
-                value="1000"
-                min="100"
-                max="10000"
-              />
-            </div>
-            <p style="font-size: 0.65rem; color: #666; margin-top: 4px">
-              Downloads from remote if local data is unavailable
-            </p>
           </div>
         </div>
 

@@ -16,6 +16,9 @@ pub struct PlotParams<'a> {
     pub ambient_dim: usize,
     pub curvature: f64,
     pub labels: Option<&'a [u32]>,
+    /// Human-readable names indexed by label value. When `Some`, overrides the
+    /// default "Label N" text in the legend.
+    pub label_names: Option<&'a [String]>,
     pub projection: SphericalProjection,
     /// Override the auto-fit viewport as `(center_x, center_y, half_extent)`.
     pub view: Option<(f64, f64, f64)>,
@@ -84,7 +87,13 @@ pub fn draw_embedding(canvas: &HtmlCanvasElement, params: &PlotParams) -> Result
         draw_euclidean_grid(&mut chart, cx, cy, half_x, half_y, scale)?;
     }
 
-    draw_points(&mut chart, &projected, params.n_points, params.labels)?;
+    draw_points(
+        &mut chart,
+        &projected,
+        params.n_points,
+        params.labels,
+        params.label_names,
+    )?;
 
     root.present()
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -97,6 +106,7 @@ fn draw_points(
     projected: &[f64],
     n_points: usize,
     labels: Option<&[u32]>,
+    label_names: Option<&[String]>,
 ) -> Result<(), JsValue> {
     let map_err = |e: DrawingAreaErrorKind<_>| JsValue::from_str(&e.to_string());
 
@@ -104,6 +114,9 @@ fn draw_points(
         let mut label_set: Vec<u32> = labels.to_vec();
         label_set.sort();
         label_set.dedup();
+
+        // Only render a legend when there are few enough distinct labels to be readable.
+        let show_legend = label_set.len() <= 12;
 
         for &label in &label_set {
             let (r, g, b) = tab10_color(label);
@@ -115,24 +128,38 @@ fn draw_points(
                 .filter(|(x, y)| x.is_finite() && y.is_finite())
                 .collect();
 
-            chart
+            let series = chart
                 .draw_series(
                     point_data
                         .iter()
                         .map(|&(x, y)| Circle::new((x, y), 3, color.filled())),
                 )
-                .map_err(map_err)?
-                .label(format!("Label {label}"))
-                .legend(move |(x, y)| Circle::new((x + 10, y), 3, RGBColor(r, g, b).filled()));
+                .map_err(map_err)?;
+
+            if show_legend {
+                let default_name;
+                let display: &str = match label_names.and_then(|names| names.get(label as usize)) {
+                    Some(name) => name.as_str(),
+                    None => {
+                        default_name = format!("Label {label}");
+                        &default_name
+                    }
+                };
+                series
+                    .label(display)
+                    .legend(move |(x, y)| Circle::new((x + 10, y), 3, RGBColor(r, g, b).filled()));
+            }
         }
 
-        chart
-            .configure_series_labels()
-            .position(SeriesLabelPosition::UpperRight)
-            .background_style(WHITE.mix(0.8))
-            .border_style(BLACK.mix(0.3))
-            .draw()
-            .map_err(map_err)?;
+        if show_legend {
+            chart
+                .configure_series_labels()
+                .position(SeriesLabelPosition::UpperRight)
+                .background_style(WHITE.mix(0.8))
+                .border_style(BLACK.mix(0.3))
+                .draw()
+                .map_err(map_err)?;
+        }
     } else {
         let point_data: Vec<(f64, f64)> = (0..n_points)
             .map(|i| (projected[i * 2], projected[i * 2 + 1]))

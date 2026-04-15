@@ -1,10 +1,14 @@
-use crate::affinities::compute_perplexity_affinities;
+use crate::affinities::{
+    compute_perplexity_affinities, compute_perplexity_affinities_from_distances,
+};
 use crate::config::{InitMethod, TrainingConfig};
 use crate::kernels::compute_q_matrix_with_distances;
-use crate::kl_divergence::{compute_global_similarities, kl_gradient, kl_loss, norm_loss_gradient};
+use crate::kl_divergence::{
+    compute_global_similarities, depth_norm_loss_gradient, kl_gradient, kl_loss, norm_loss_gradient,
+};
 use crate::manifolds;
 use crate::manifolds::Manifold;
-use crate::matrices::{compute_euclidean_distance_matrix, pca};
+use crate::matrices::{compute_euclidean_distance_matrix, pca, pca_from_distances};
 use crate::optimizer::RiemannianSGDMomentum;
 use crate::scaling_loss;
 
@@ -28,6 +32,15 @@ pub struct EmbeddingState {
     /// Original input data, kept for metric computation.
     input_data: Vec<f64>,
     n_features: usize,
+    /// Pre-computed high-dimensional distance matrix.
+    /// Set by `from_distances`; empty for feature-based construction.
+    precomputed_distances: Vec<f64>,
+    /// Per-point target depth norms for the distance-based norm loss.
+    /// `target_norms[i] = tanh(dist_to_root[i] / (2R))` for k < 0,
+    /// `dist_to_root[i]` for k = 0.
+    /// Non-empty only for `from_distances` when `norm_loss_weight > 0`.
+    /// When non-empty, the depth norm loss is used instead of the feature norm loss.
+    target_norms: Vec<f64>,
 }
 
 impl EmbeddingState {
@@ -83,6 +96,98 @@ impl EmbeddingState {
             p_hat,
             input_data: data.to_vec(),
             n_features,
+            precomputed_distances: Vec::new(),
+            target_norms: Vec::new(),
+        }
+    }
+
+    /// Initialize embedding state from a pre-computed pairwise distance matrix.
+    ///
+    /// Uses `compute_perplexity_affinities_from_distances` so the t-SNE affinities
+    /// are driven by the provided distances (e.g. tree distances for WordNet) rather
+    /// than Euclidean distances in some feature space.
+    ///
+    /// `InitMethod::Pca` is handled via classical MDS (PCoA): the distance matrix is
+    /// double-centered to form a Gram matrix whose top eigenvectors give coordinates.
+    /// The *feature* norm loss is skipped (no input feature vectors exist); when
+    /// `norm_loss_weight > 0`, the depth norm loss is applied instead, comparing each
+    /// point's embedding depth to its graph distance from the root.
+    pub fn from_distances(distances: &[f64], n_points: usize, config: &TrainingConfig) -> Self {
+        let manifold = manifolds::create_manifold(config.curvature);
+        let ambient_dim = manifold.ambient_dim(config.embed_dim);
+
+        let p_base =
+            compute_perplexity_affinities_from_distances(distances, n_points, config.perplexity);
+
+        let points = match config.init_method {
+            InitMethod::Pca => {
+                let coords = pca_from_distances(distances, n_points, config.embed_dim, config.seed);
+                lift_pca_to_manifold(
+                    &coords,
+                    n_points,
+                    config.embed_dim,
+                    ambient_dim,
+                    config.init_scale,
+                    config.curvature,
+                    manifold.radius(),
+                )
+            }
+            InitMethod::Random => {
+                manifold.init_points(n_points, config.embed_dim, config.init_scale, config.seed)
+            }
+        };
+
+        let optimizer = RiemannianSGDMomentum::new(
+            config.learning_rate,
+            config.momentum_early,
+            n_points,
+            ambient_dim,
+        );
+
+        // Global loss: use input distances directly for p̂.
+        let p_hat = if config.global_loss_weight > 0.0 {
+            compute_global_similarities(distances, n_points)
+        } else {
+            Vec::new()
+        };
+
+        // Precompute per-point target Poincaré/Euclidean radii from root distances.
+        // Node 0 is always the root (BFS convention).  The mapping is:
+        //   k < 0: tanh(d_root / (2R))  → Poincaré radius in [0, 1)
+        //   k = 0: d_root               → raw hop-distance (Euclidean)
+        //   k > 0: not meaningful       → empty (no depth loss on sphere)
+        let target_norms = if config.norm_loss_weight > 0.0 && config.curvature <= 0.0 {
+            let radius = manifold.radius();
+            (0..n_points)
+                .map(|i| {
+                    let d = distances[i * n_points]; // distance from node i to root (node 0)
+                    if config.curvature < 0.0 {
+                        (d / (2.0 * radius)).tanh()
+                    } else {
+                        d // Euclidean: use raw distance as target norm
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        Self {
+            points,
+            n_points,
+            ambient_dim,
+            iteration: 0,
+            loss: 0.0,
+            config: config.clone(),
+            manifold,
+            optimizer,
+            p_base,
+            p_hat,
+            // No input feature vectors in the distance-based path.
+            input_data: Vec::new(),
+            n_features: 0,
+            precomputed_distances: distances.to_vec(),
+            target_norms,
         }
     }
 
@@ -168,9 +273,30 @@ impl EmbeddingState {
             self.loss += self.config.global_loss_weight * kl_loss(&q_hat, &self.p_hat, n_points);
         }
 
-        // Norm loss: penalizes mismatch between ||x_i||² and ||y_i||².
+        // Depth norm loss for graph/tree data: compares each point's depth from
+        // the embedding origin to a target depth derived from its root distance.
+        // Used when initialized from a pairwise distance matrix (no feature vectors).
+        if self.config.norm_loss_weight > 0.0 && !self.target_norms.is_empty() {
+            let (depth_loss, mut depth_grad) = depth_norm_loss_gradient(
+                &self.points,
+                &self.target_norms,
+                n_points,
+                ambient_dim,
+                self.config.curvature,
+                self.manifold.radius(),
+            );
+            self.manifold
+                .project_to_tangent(&self.points, &mut depth_grad, n_points, ambient_dim);
+            for k in 0..grad.len() {
+                grad[k] += self.config.norm_loss_weight * depth_grad[k];
+            }
+            self.loss += self.config.norm_loss_weight * depth_loss;
+        }
+
+        // Feature norm loss: penalizes mismatch between ||x_i||² and ||y_i||².
         // Gradient is in ambient coordinates; project to tangent space first.
-        if self.config.norm_loss_weight > 0.0 {
+        // Skipped when initialized from distances (no input feature vectors).
+        if self.config.norm_loss_weight > 0.0 && self.n_features > 0 {
             let (norm_loss, mut norm_grad) = norm_loss_gradient(
                 &self.input_data,
                 &self.points,
@@ -239,13 +365,21 @@ impl EmbeddingState {
         &self.config
     }
 
-    /// Compute the high-dimensional Euclidean distance matrix from stored input data.
+    /// Return the high-dimensional distance matrix.
+    ///
+    /// For feature-based construction (`new`): computed as Euclidean distance
+    /// in input feature space. For distance-based construction (`from_distances`):
+    /// returns the pre-computed distances that were supplied at construction time.
     pub fn high_dim_distances(&self) -> Vec<f64> {
-        crate::matrices::compute_euclidean_distance_matrix(
-            &self.input_data,
-            self.n_points,
-            self.n_features,
-        )
+        if !self.precomputed_distances.is_empty() {
+            self.precomputed_distances.clone()
+        } else {
+            crate::matrices::compute_euclidean_distance_matrix(
+                &self.input_data,
+                self.n_points,
+                self.n_features,
+            )
+        }
     }
 
     /// Compute the embedded pairwise distance matrix using the manifold metric.
