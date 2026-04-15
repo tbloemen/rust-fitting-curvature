@@ -153,16 +153,14 @@ pub fn depth_norm_loss_gradient(
         // k > 0 (sphere): depth not meaningful, contribute zero.
     }
 
-    // Intentionally NOT divided by m (unlike `norm_loss_gradient`).
+    // Intentionally NOT divided by n (unlike `norm_loss_gradient`).
     //
-    // The KL gradient accumulates ~perplexity pairwise terms per point, giving
-    // it an effective scale of O(perplexity).  The depth-norm gradient has only
-    // one term per point and Poincaré residuals bounded in [0, 1], so dividing
-    // by m would make it O(1/n) — roughly perplexity × n times smaller than the
-    // KL gradient, forcing norm_loss_weight into the [10, 100] range to compensate.
-    //
-    // Using a sum (no /m) gives O(1) scale, making norm_loss_weight ≈ 0.01–1.0
-    // sufficient to balance the KL loss — consistent with CO-SNE's λ₂ = 0.01.
+    // `norm_loss_gradient` divides by n, giving a mean O(1) per-point loss.
+    // The KL gradient sums over ~perplexity neighbours per point, so its
+    // effective magnitude is O(perplexity).  Dividing this loss by n too would
+    // yield O(1/perplexity) relative to KL, requiring norm_loss_weight ~ perplexity
+    // (~30) to balance it.  Using a sum instead keeps both losses at O(n) total,
+    // so norm_loss_weight ≈ 0.01–1.0 is sufficient — consistent with CO-SNE's λ₂ = 0.01.
     (loss, grad)
 }
 

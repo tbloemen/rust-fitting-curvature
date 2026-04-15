@@ -109,7 +109,9 @@ impl EmbeddingState {
     ///
     /// `InitMethod::Pca` is handled via classical MDS (PCoA): the distance matrix is
     /// double-centered to form a Gram matrix whose top eigenvectors give coordinates.
-    /// `norm_loss_weight` is ignored in this path (no input feature vectors exist).
+    /// The *feature* norm loss is skipped (no input feature vectors exist); when
+    /// `norm_loss_weight > 0`, the depth norm loss is applied instead, comparing each
+    /// point's embedding depth to its graph distance from the root.
     pub fn from_distances(distances: &[f64], n_points: usize, config: &TrainingConfig) -> Self {
         let manifold = manifolds::create_manifold(config.curvature);
         let ambient_dim = manifold.ambient_dim(config.embed_dim);
