@@ -105,6 +105,9 @@ fn draw_points(
         label_set.sort();
         label_set.dedup();
 
+        // Only render a legend when there are few enough distinct labels to be readable.
+        let show_legend = label_set.len() <= 12;
+
         for &label in &label_set {
             let (r, g, b) = tab10_color(label);
             let color = RGBColor(r, g, b).mix(0.7);
@@ -115,24 +118,30 @@ fn draw_points(
                 .filter(|(x, y)| x.is_finite() && y.is_finite())
                 .collect();
 
-            chart
+            let series = chart
                 .draw_series(
                     point_data
                         .iter()
                         .map(|&(x, y)| Circle::new((x, y), 3, color.filled())),
                 )
-                .map_err(map_err)?
-                .label(format!("Label {label}"))
-                .legend(move |(x, y)| Circle::new((x + 10, y), 3, RGBColor(r, g, b).filled()));
+                .map_err(map_err)?;
+
+            if show_legend {
+                series
+                    .label(format!("Label {label}"))
+                    .legend(move |(x, y)| Circle::new((x + 10, y), 3, RGBColor(r, g, b).filled()));
+            }
         }
 
-        chart
-            .configure_series_labels()
-            .position(SeriesLabelPosition::UpperRight)
-            .background_style(WHITE.mix(0.8))
-            .border_style(BLACK.mix(0.3))
-            .draw()
-            .map_err(map_err)?;
+        if show_legend {
+            chart
+                .configure_series_labels()
+                .position(SeriesLabelPosition::UpperRight)
+                .background_style(WHITE.mix(0.8))
+                .border_style(BLACK.mix(0.3))
+                .draw()
+                .map_err(map_err)?;
+        }
     } else {
         let point_data: Vec<(f64, f64)> = (0..n_points)
             .map(|i| (projected[i * 2], projected[i * 2 + 1]))

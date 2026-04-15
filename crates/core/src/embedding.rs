@@ -28,6 +28,9 @@ pub struct EmbeddingState {
     /// Original input data, kept for metric computation.
     input_data: Vec<f64>,
     n_features: usize,
+    /// Pre-computed high-dimensional distance matrix.
+    /// Set by `from_distances`; empty for feature-based construction.
+    precomputed_distances: Vec<f64>,
 }
 
 impl EmbeddingState {
@@ -83,6 +86,7 @@ impl EmbeddingState {
             p_hat,
             input_data: data.to_vec(),
             n_features,
+            precomputed_distances: Vec::new(),
         }
     }
 
@@ -148,6 +152,7 @@ impl EmbeddingState {
             // No input feature vectors in the distance-based path.
             input_data: Vec::new(),
             n_features: 0,
+            precomputed_distances: distances.to_vec(),
         }
     }
 
@@ -305,13 +310,21 @@ impl EmbeddingState {
         &self.config
     }
 
-    /// Compute the high-dimensional Euclidean distance matrix from stored input data.
+    /// Return the high-dimensional distance matrix.
+    ///
+    /// For feature-based construction (`new`): computed as Euclidean distance
+    /// in input feature space. For distance-based construction (`from_distances`):
+    /// returns the pre-computed distances that were supplied at construction time.
     pub fn high_dim_distances(&self) -> Vec<f64> {
-        crate::matrices::compute_euclidean_distance_matrix(
-            &self.input_data,
-            self.n_points,
-            self.n_features,
-        )
+        if !self.precomputed_distances.is_empty() {
+            self.precomputed_distances.clone()
+        } else {
+            crate::matrices::compute_euclidean_distance_matrix(
+                &self.input_data,
+                self.n_points,
+                self.n_features,
+            )
+        }
     }
 
     /// Compute the embedded pairwise distance matrix using the manifold metric.

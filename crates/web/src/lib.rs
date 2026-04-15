@@ -151,6 +151,56 @@ impl EmbeddingRunner {
         })
     }
 
+    /// Create a runner from a pre-computed pairwise distance matrix (e.g., WordNet tree distances).
+    ///
+    /// `distances` is a flat n × n row-major Float64Array of pairwise distances.
+    /// `labels` is a Uint32Array of integer class labels of length n.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_distances(
+        canvas_id: &str,
+        distances: &[f64],
+        labels: &[u32],
+        n_points: usize,
+        curvature: f64,
+        n_iterations: usize,
+        perplexity: f64,
+        learning_rate: f64,
+        early_exaggeration_factor: f64,
+        early_exaggeration_iterations: usize,
+        centering_weight: f64,
+        scaling_loss: &str,
+        global_loss_weight: f64,
+        norm_loss_weight: f64,
+        projection: &str,
+    ) -> Result<EmbeddingRunner, JsValue> {
+        let config = TrainingConfig {
+            n_points,
+            curvature,
+            n_iterations,
+            perplexity,
+            learning_rate,
+            early_exaggeration_factor,
+            early_exaggeration_iterations,
+            centering_weight,
+            scaling_loss_type: parse_scaling_loss(scaling_loss),
+            global_loss_weight,
+            norm_loss_weight,
+            ..Default::default()
+        };
+
+        let state = EmbeddingState::from_distances(distances, n_points, &config);
+        let canvas = get_canvas(canvas_id)?;
+
+        Ok(EmbeddingRunner {
+            state,
+            canvas,
+            labels: Some(labels.to_vec()),
+            projection: parse_projection(projection),
+            view: None,
+            auto_half: 1.0,
+        })
+    }
+
     /// Run N iterations and render the current state.
     /// Returns true if there are more iterations to run.
     pub fn step(&mut self, n_steps: usize) -> bool {
@@ -180,6 +230,26 @@ impl EmbeddingRunner {
         )?;
         self.auto_half = auto_half;
         Ok(())
+    }
+
+    /// Return the 2D projected coordinates of all points as a flat Float64Array [x0,y0,x1,y1,...].
+    /// Coordinates are in the same plot space used by `render()`.
+    pub fn get_projected_coords(&self) -> Vec<f64> {
+        visualisation::project_to_2d(
+            &self.state.points,
+            self.state.n_points,
+            self.state.ambient_dim,
+            self.state.config().curvature,
+            self.projection,
+        )
+        .coords
+    }
+
+    /// Current viewport state as [cx, cy, half, auto_half].
+    /// When no explicit viewport is set, cx=cy=0 and half=auto_half.
+    pub fn get_viewport(&self) -> Vec<f64> {
+        let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
+        vec![cx, cy, half, self.auto_half]
     }
 
     /// Zoom the viewport around a normalized canvas position (0..1, 0..1).
