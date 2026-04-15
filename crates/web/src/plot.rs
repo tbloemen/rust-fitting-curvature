@@ -16,6 +16,9 @@ pub struct PlotParams<'a> {
     pub ambient_dim: usize,
     pub curvature: f64,
     pub labels: Option<&'a [u32]>,
+    /// Human-readable names indexed by label value. When `Some`, overrides the
+    /// default "Label N" text in the legend.
+    pub label_names: Option<&'a [String]>,
     pub projection: SphericalProjection,
     /// Override the auto-fit viewport as `(center_x, center_y, half_extent)`.
     pub view: Option<(f64, f64, f64)>,
@@ -84,7 +87,7 @@ pub fn draw_embedding(canvas: &HtmlCanvasElement, params: &PlotParams) -> Result
         draw_euclidean_grid(&mut chart, cx, cy, half_x, half_y, scale)?;
     }
 
-    draw_points(&mut chart, &projected, params.n_points, params.labels)?;
+    draw_points(&mut chart, &projected, params.n_points, params.labels, params.label_names)?;
 
     root.present()
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -97,6 +100,7 @@ fn draw_points(
     projected: &[f64],
     n_points: usize,
     labels: Option<&[u32]>,
+    label_names: Option<&[String]>,
 ) -> Result<(), JsValue> {
     let map_err = |e: DrawingAreaErrorKind<_>| JsValue::from_str(&e.to_string());
 
@@ -127,8 +131,16 @@ fn draw_points(
                 .map_err(map_err)?;
 
             if show_legend {
+                let default_name;
+                let display: &str = match label_names.and_then(|names| names.get(label as usize)) {
+                    Some(name) => name.as_str(),
+                    None => {
+                        default_name = format!("Label {label}");
+                        &default_name
+                    }
+                };
                 series
-                    .label(format!("Label {label}"))
+                    .label(display)
                     .legend(move |(x, y)| Circle::new((x + 10, y), 3, RGBColor(r, g, b).filled()));
             }
         }

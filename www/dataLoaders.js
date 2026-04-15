@@ -176,16 +176,18 @@ export function parsePbmcText(text, nPoints) {
   }
 
   const labels = new Uint32Array(nSamples);
+  let labelNames = null;
   if (hasLabelCol && rawLabels.length > 0) {
     const uniqueLabels = [...new Set(rawLabels)].sort();
     if (uniqueLabels.length <= MAX_LABEL_CLASSES) {
       const labelMap = new Map(uniqueLabels.map((l, idx) => [l, idx]));
       for (let i = 0; i < nSamples; i++) labels[i] = labelMap.get(rawLabels[i]) ?? 0;
+      labelNames = uniqueLabels; // string name for each integer label value
     }
     // else: too many unique values (e.g. barcodes) — leave all labels as 0
   }
 
-  return { data, labels, nPoints: nSamples, nFeatures };
+  return { data, labels, labelNames, nPoints: nSamples, nFeatures };
 }
 
 // ---------------------------------------------------------------------------

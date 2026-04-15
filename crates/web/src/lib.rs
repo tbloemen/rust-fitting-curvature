@@ -43,6 +43,9 @@ pub struct EmbeddingRunner {
     state: EmbeddingState,
     canvas: HtmlCanvasElement,
     labels: Option<Vec<u32>>,
+    /// Human-readable names for each integer label, indexed by label value.
+    /// When set, the legend shows these names instead of "Label N".
+    label_names: Option<Vec<String>>,
     projection: SphericalProjection,
     /// Current viewport: (center_x, center_y, half_extent). None = auto-fit.
     view: Option<(f64, f64, f64)>,
@@ -97,6 +100,7 @@ impl EmbeddingRunner {
             state,
             canvas,
             labels: Some(synth.labels),
+            label_names: None,
             projection: parse_projection(projection),
             view: None,
             auto_half: 1.0,
@@ -145,6 +149,7 @@ impl EmbeddingRunner {
             state,
             canvas,
             labels: Some(labels.to_vec()),
+            label_names: None,
             projection: parse_projection(projection),
             view: None,
             auto_half: 1.0,
@@ -195,10 +200,20 @@ impl EmbeddingRunner {
             state,
             canvas,
             labels: Some(labels.to_vec()),
+            label_names: None,
             projection: parse_projection(projection),
             view: None,
             auto_half: 1.0,
         })
+    }
+
+    /// Set human-readable names for integer labels.
+    ///
+    /// `names_tsv` is a tab-separated list of names, one per label value in
+    /// ascending order (e.g. `"B cells\tCD4 T\tCD14 Monocytes"`).
+    /// When set, the legend uses these names instead of "Label N".
+    pub fn set_label_names(&mut self, names_tsv: &str) {
+        self.label_names = Some(names_tsv.split('\t').map(|s| s.to_string()).collect());
     }
 
     /// Run N iterations and render the current state.
@@ -224,6 +239,7 @@ impl EmbeddingRunner {
                 ambient_dim: self.state.ambient_dim,
                 curvature: self.state.config().curvature,
                 labels: self.labels.as_deref(),
+                label_names: self.label_names.as_deref(),
                 projection: self.projection,
                 view: self.view,
             },

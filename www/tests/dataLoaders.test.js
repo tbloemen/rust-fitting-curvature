@@ -197,6 +197,19 @@ describe("parsePbmcText", () => {
     expect(result.labels[0]).toBe(1); // T cell
     expect(result.labels[1]).toBe(0); // B cell
     expect(result.labels[2]).toBe(1); // T cell
+    expect(result.labelNames).toEqual(["B cell", "T cell"]);
+  });
+
+  it("returns null labelNames when there is no label column", () => {
+    const text = ["1.0\t2.0", "3.0\t4.0"].join("\n");
+    const result = parsePbmcText(text, 10);
+    expect(result.labelNames).toBeNull();
+  });
+
+  it("returns null labelNames when too many unique values", () => {
+    const rows = Array.from({ length: 60 }, (_, i) => `BARCODE${i}\t1.0\t2.0`);
+    const result = parsePbmcText(rows.join("\n"), 60);
+    expect(result.labelNames).toBeNull();
   });
 
   it("handles comma-separated files", () => {

@@ -512,6 +512,7 @@ async function createRunner() {
         d.data, d.labels, d.nPoints, d.nFeatures,
         ...commonArgs.slice(1),
       );
+      if (d.labelNames) runner.set_label_names(d.labelNames.join("\t"));
     }
   } else if (dataSource === "synthetic") {
     const dataset = document.getElementById("dataset").value;
