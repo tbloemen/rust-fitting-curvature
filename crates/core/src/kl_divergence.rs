@@ -108,9 +108,8 @@ pub fn depth_norm_loss_gradient(
     let mut loss = 0.0;
     let mut grad = vec![0.0f64; n_points * ambient_dim];
 
-    for i in 0..n_points {
+    for (i, target) in target_norms.iter().enumerate().take(n_points) {
         let oi = i * ambient_dim;
-        let target = target_norms[i];
 
         if curvature < 0.0 {
             // Hyperboloid: Poincaré radius r = ||spatial|| / (t + R)
