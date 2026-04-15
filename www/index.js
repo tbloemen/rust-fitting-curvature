@@ -5,7 +5,9 @@ import {
 } from "fitting-web";
 import {
   parseIdxBuffers,
-  subsampleIdx, subsampleMnist, subsampleFashionMnist,
+  subsampleIdx,
+  subsampleMnist,
+  subsampleFashionMnist,
   parsePbmcText,
   parseWordnetEdges,
 } from "./dataLoaders.js";
@@ -266,7 +268,6 @@ async function loadMnistLike(baseUrl, nPoints) {
   return subsampleMnist(rawDataCache[baseUrl], nPoints);
 }
 
-
 async function loadWordnetMammals(nPoints) {
   const cacheKey = "wordnet_mammals";
   if (!rawDataCache[cacheKey]) {
@@ -280,11 +281,14 @@ async function loadWordnetMammals(nPoints) {
         `Could not fetch mammals_edges.tsv: ${edgesResp.status}. ` +
           `Run: uv run python scripts/generate_wordnet_mammals.py`,
       );
-    const isHtml = (resp) => (resp.headers.get("content-type") || "").includes("text/html");
+    const isHtml = (resp) =>
+      (resp.headers.get("content-type") || "").includes("text/html");
     rawDataCache[cacheKey] = {
       edgesText: await edgesResp.text(),
-      labelsText: labelsResp.ok && !isHtml(labelsResp) ? await labelsResp.text() : null,
-      namesText: namesResp.ok && !isHtml(namesResp) ? await namesResp.text() : null,
+      labelsText:
+        labelsResp.ok && !isHtml(labelsResp) ? await labelsResp.text() : null,
+      namesText:
+        namesResp.ok && !isHtml(namesResp) ? await namesResp.text() : null,
     };
   }
   const { edgesText, labelsText, namesText } = rawDataCache[cacheKey];
@@ -324,7 +328,7 @@ function drawNameOverlay() {
   if (!pointNames && !pointEdges) return;
 
   const coords = runner.get_projected_coords(); // [x0,y0,x1,y1,...]
-  const vp = runner.get_viewport();             // [cx, cy, half, auto_half]
+  const vp = runner.get_viewport(); // [cx, cy, half, auto_half]
   const [vpCx, vpCy, vpHalf] = vp;
 
   const w = canvas.width;
@@ -363,9 +367,12 @@ function drawNameOverlay() {
     ctx.lineWidth = dpr;
     ctx.beginPath();
     for (const [a, b] of pointEdges) {
-      const ax = coords[a * 2], ay = coords[a * 2 + 1];
-      const bx = coords[b * 2], by = coords[b * 2 + 1];
-      if (!isFinite(ax) || !isFinite(ay) || !isFinite(bx) || !isFinite(by)) continue;
+      const ax = coords[a * 2],
+        ay = coords[a * 2 + 1];
+      const bx = coords[b * 2],
+        by = coords[b * 2 + 1];
+      if (!isFinite(ax) || !isFinite(ay) || !isFinite(bx) || !isFinite(by))
+        continue;
       // Skip edges entirely outside the viewport
       if (ax < xMin && bx < xMin) continue;
       if (ax > xMax && bx > xMax) continue;
@@ -397,7 +404,12 @@ function drawNameOverlay() {
 
     function overlaps(r) {
       for (const o of occupied) {
-        if (r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y)
+        if (
+          r.x < o.x + o.w &&
+          r.x + r.w > o.x &&
+          r.y < o.y + o.h &&
+          r.y + r.h > o.y
+        )
           return true;
       }
       return false;
@@ -406,7 +418,8 @@ function drawNameOverlay() {
     for (let i = 0; i < n; i++) {
       const name = pointNames[i];
       if (!name) continue;
-      const px = coords[i * 2], py = coords[i * 2 + 1];
+      const px = coords[i * 2],
+        py = coords[i * 2 + 1];
       if (!isFinite(px) || !isFinite(py)) continue;
       if (px < xMin || px > xMax || py < yMin || py > yMax) continue;
 
@@ -489,7 +502,10 @@ async function createRunner() {
       const d = await loadMnistLike("data/mnist", nPoints);
       runner = EmbeddingRunner.from_data_with_labels(
         ...commonArgs.slice(0, 1),
-        d.data, d.labels, d.nPoints, d.nFeatures,
+        d.data,
+        d.labels,
+        d.nPoints,
+        d.nFeatures,
         ...commonArgs.slice(1),
       );
       if (d.labelNames) runner.set_label_names(d.labelNames.join("\t"));
@@ -497,7 +513,10 @@ async function createRunner() {
       const d = await loadMnistLike("data/fashion-mnist", nPoints);
       runner = EmbeddingRunner.from_data_with_labels(
         ...commonArgs.slice(0, 1),
-        d.data, d.labels, d.nPoints, d.nFeatures,
+        d.data,
+        d.labels,
+        d.nPoints,
+        d.nFeatures,
         ...commonArgs.slice(1),
       );
       if (d.labelNames) runner.set_label_names(d.labelNames.join("\t"));
@@ -505,7 +524,9 @@ async function createRunner() {
       const d = await loadWordnetMammals(nPoints);
       runner = EmbeddingRunner.from_distances(
         ...commonArgs.slice(0, 1),
-        d.distances, d.labels, d.nPoints,
+        d.distances,
+        d.labels,
+        d.nPoints,
         ...commonArgs.slice(1),
       );
       pointNames = d.names && d.names.some((n) => n) ? d.names : null;
@@ -514,7 +535,10 @@ async function createRunner() {
       const d = await loadPbmc(nPoints);
       runner = EmbeddingRunner.from_data_with_labels(
         ...commonArgs.slice(0, 1),
-        d.data, d.labels, d.nPoints, d.nFeatures,
+        d.data,
+        d.labels,
+        d.nPoints,
+        d.nFeatures,
         ...commonArgs.slice(1),
       );
       if (d.labelNames) runner.set_label_names(d.labelNames.join("\t"));

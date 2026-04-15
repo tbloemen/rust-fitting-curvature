@@ -87,7 +87,13 @@ pub fn draw_embedding(canvas: &HtmlCanvasElement, params: &PlotParams) -> Result
         draw_euclidean_grid(&mut chart, cx, cy, half_x, half_y, scale)?;
     }
 
-    draw_points(&mut chart, &projected, params.n_points, params.labels, params.label_names)?;
+    draw_points(
+        &mut chart,
+        &projected,
+        params.n_points,
+        params.labels,
+        params.label_names,
+    )?;
 
     root.present()
         .map_err(|e| JsValue::from_str(&e.to_string()))?;

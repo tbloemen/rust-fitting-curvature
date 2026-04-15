@@ -76,7 +76,11 @@ const FASHION_MNIST_LABEL_NAMES = [
   "Ankle boot",
 ];
 
-export function subsampleIdx({ imageBytes, labelBytes, nImages, nFeatures }, nPoints, labelNames = null) {
+export function subsampleIdx(
+  { imageBytes, labelBytes, nImages, nFeatures },
+  nPoints,
+  labelNames = null,
+) {
   const nSamples = Math.min(nPoints, nImages);
   const step = Math.max(1, Math.floor(nImages / nSamples));
   const data = new Float64Array(nSamples * nFeatures);
@@ -204,7 +208,8 @@ export function parsePbmcText(text, nPoints) {
     const uniqueLabels = [...new Set(rawLabels)].sort();
     if (uniqueLabels.length <= MAX_LABEL_CLASSES) {
       const labelMap = new Map(uniqueLabels.map((l, idx) => [l, idx]));
-      for (let i = 0; i < nSamples; i++) labels[i] = labelMap.get(rawLabels[i]) ?? 0;
+      for (let i = 0; i < nSamples; i++)
+        labels[i] = labelMap.get(rawLabels[i]) ?? 0;
       labelNames = uniqueLabels; // string name for each integer label value
     }
     // else: too many unique values (e.g. barcodes) — leave all labels as 0
@@ -323,7 +328,10 @@ export function parseWordnetEdges(edgesText, labelsText, namesText, nPoints) {
   let names;
   if (namesText) {
     const rawNames = namesText.split(/\r?\n/).map((l) => l.trim());
-    names = Array.from({ length: nActual }, (_, i) => rawNames[bfsOrder[i]] ?? "");
+    names = Array.from(
+      { length: nActual },
+      (_, i) => rawNames[bfsOrder[i]] ?? "",
+    );
   } else {
     names = Array(nActual).fill("");
   }
