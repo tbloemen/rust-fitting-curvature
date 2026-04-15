@@ -9,4 +9,7 @@ dependencies = [
     "nltk>=3.9",
     "numpy>=2.0",
     "scipy>=1.17.1",
+    "scanpy>=1.10",
+    "leidenalg>=0.10",
+    "igraph>=0.11",
 ]

@@ -3,12 +3,25 @@ import {
   get_default_config,
   default as init,
 } from "fitting-web";
+import {
+  parseIdxBuffers,
+  subsampleIdx,
+  parseCifar10Buffer,
+  parsePbmcText,
+  parseWordnetEdges,
+} from "./dataLoaders.js";
 
 // State
-let dataSource = "mnist";
+let dataSource = "real";
+let realDataset = "mnist";
 let runner = null;
 let animationId = null;
-let mnistCache = null;
+// Node names for datasets that render text labels (e.g., WordNet).
+// Array of strings in the same order as embedding points, or null.
+let pointNames = null;
+
+// Cache of raw fetched data keyed by dataset name
+const rawDataCache = {};
 
 // Pan state (in canvas pixel space)
 let isPanning = false;
@@ -72,13 +85,37 @@ function main() {
   status.textContent = "WebAssembly loaded! Click Run to start.";
 }
 
+// Dataset notes shown below the controls
+const DATASET_NOTES = {
+  mnist: "Test set (10k images). Fetched from public/data/mnist/.",
+  fashion_mnist:
+    "Place IDX files in public/data/fashion-mnist/. Same format as MNIST.",
+  cifar10:
+    "Place test_batch.bin in public/data/cifar10/. Download from cs.toronto.edu/~kriz/.",
+  wordnet_mammals:
+    "Generate with: uv run python scripts/generate_wordnet_mammals.py. Place in public/data/wordnet/.",
+  pbmc: "Place pbmc_pca.tsv (pre-processed PCA) in public/data/pbmc/.",
+};
+
+function updateDatasetNote() {
+  const note = document.getElementById("real-dataset-note");
+  note.textContent = DATASET_NOTES[realDataset] || "";
+}
+
 function setupUI() {
+  document
+    .getElementById("btn-real")
+    .addEventListener("click", () => setDataSource("real"));
   document
     .getElementById("btn-synthetic")
     .addEventListener("click", () => setDataSource("synthetic"));
-  document
-    .getElementById("btn-mnist")
-    .addEventListener("click", () => setDataSource("mnist"));
+
+  const realDatasetSelect = document.getElementById("real-dataset");
+  realDatasetSelect.addEventListener("change", () => {
+    realDataset = realDatasetSelect.value;
+    updateDatasetNote();
+  });
+
   runBtn.addEventListener("click", runEmbedding);
   stopBtn.addEventListener("click", () => {
     if (animationId !== null) {
@@ -91,9 +128,11 @@ function setupUI() {
   window.addEventListener("resize", () => {
     setupCanvas();
     if (runner !== null && animationId === null) {
-      runner.render();
+      renderFrame();
     }
   });
+
+  updateDatasetNote();
 }
 
 function setupCanvas() {
@@ -111,7 +150,7 @@ function setupSidebarToggle() {
   sidebar.addEventListener("transitionend", () => {
     setupCanvas();
     if (runner !== null && animationId === null) {
-      runner.render();
+      renderFrame();
     }
   });
 }
@@ -127,7 +166,7 @@ function setupZoomPan() {
       const norm_y = (e.clientY - rect.top) / rect.height;
       const factor = e.deltaY < 0 ? 1.05 : 1 / 1.05;
       runner.zoom_at(norm_x, norm_y, factor);
-      runner.render();
+      renderFrame();
     },
     { passive: false },
   );
@@ -148,7 +187,7 @@ function setupZoomPan() {
     panLastX = e.clientX;
     panLastY = e.clientY;
     runner.pan_by(dx, dy);
-    runner.render();
+    renderFrame();
   });
 
   window.addEventListener("mouseup", () => {
@@ -160,22 +199,22 @@ function setupZoomPan() {
   canvasWrapper.addEventListener("dblclick", () => {
     if (runner === null) return;
     runner.reset_view();
-    runner.render();
+    renderFrame();
   });
 }
 
 function setDataSource(source) {
   dataSource = source;
   document
+    .getElementById("btn-real")
+    .classList.toggle("active", source === "real");
+  document
     .getElementById("btn-synthetic")
     .classList.toggle("active", source === "synthetic");
-  document
-    .getElementById("btn-mnist")
-    .classList.toggle("active", source === "mnist");
+  document.getElementById("real-controls").style.display =
+    source === "real" ? "block" : "none";
   document.getElementById("synthetic-controls").style.display =
     source === "synthetic" ? "block" : "none";
-  document.getElementById("mnist-controls").style.display =
-    source === "mnist" ? "block" : "none";
 }
 
 function getParams() {
@@ -200,61 +239,151 @@ function getParams() {
   };
 }
 
-// --- MNIST loading ---
+// ---------------------------------------------------------------------------
+// Data loading
+// ---------------------------------------------------------------------------
 
-async function fetchMnistRaw() {
-  const [imagesResp, labelsResp] = await Promise.all([
-    fetch("data/t10k-images-idx3-ubyte"),
-    fetch("data/t10k-labels-idx1-ubyte"),
-  ]);
-
-  if (!imagesResp.ok || !labelsResp.ok) {
-    throw new Error("MNIST data files not found.");
+async function loadMnistLike(baseUrl, nPoints) {
+  if (!rawDataCache[baseUrl]) {
+    const imagesUrl = `${baseUrl}/t10k-images-idx3-ubyte`;
+    const labelsUrl = `${baseUrl}/t10k-labels-idx1-ubyte`;
+    const [imagesResp, labelsResp] = await Promise.all([
+      fetch(imagesUrl),
+      fetch(labelsUrl),
+    ]);
+    if (!imagesResp.ok)
+      throw new Error(`Could not fetch ${imagesUrl}: ${imagesResp.status}`);
+    if (!labelsResp.ok)
+      throw new Error(`Could not fetch ${labelsUrl}: ${labelsResp.status}`);
+    const [imagesBuf, labelsBuf] = await Promise.all([
+      imagesResp.arrayBuffer(),
+      labelsResp.arrayBuffer(),
+    ]);
+    rawDataCache[baseUrl] = parseIdxBuffers(imagesBuf, labelsBuf);
   }
-
-  const [imagesBuf, labelsBuf] = await Promise.all([
-    imagesResp.arrayBuffer(),
-    labelsResp.arrayBuffer(),
-  ]);
-
-  const imagesView = new DataView(imagesBuf);
-  const nImages = imagesView.getUint32(4);
-  const rows = imagesView.getUint32(8);
-  const cols = imagesView.getUint32(12);
-  const nFeatures = rows * cols; // 784
-  const imageBytes = new Uint8Array(imagesBuf, 16);
-  const labelBytes = new Uint8Array(labelsBuf, 8);
-
-  return { imageBytes, labelBytes, nImages, nFeatures };
+  return subsampleIdx(rawDataCache[baseUrl], nPoints);
 }
 
-async function loadMnist(nPoints) {
-  if (!mnistCache) {
-    mnistCache = await fetchMnistRaw();
+async function loadCifar10(nPoints) {
+  const cacheKey = "cifar10";
+  if (!rawDataCache[cacheKey]) {
+    const resp = await fetch("data/cifar10/test_batch.bin");
+    if (!resp.ok)
+      throw new Error(`Could not fetch CIFAR-10 test_batch.bin: ${resp.status}`);
+    rawDataCache[cacheKey] = await resp.arrayBuffer();
   }
-
-  const { imageBytes, labelBytes, nImages, nFeatures } = mnistCache;
-  const nSamples = Math.min(nPoints, nImages);
-
-  // Subsample evenly across the dataset
-  const step = Math.floor(nImages / nSamples);
-  const data = new Float64Array(nSamples * nFeatures);
-  const labels = new Uint32Array(nSamples);
-
-  for (let i = 0; i < nSamples; i++) {
-    const srcIdx = i * step;
-    const srcOffset = srcIdx * nFeatures;
-    const dstOffset = i * nFeatures;
-    for (let j = 0; j < nFeatures; j++) {
-      data[dstOffset + j] = imageBytes[srcOffset + j] / 255.0;
-    }
-    labels[i] = labelBytes[srcIdx];
-  }
-
-  return { data, labels, nPoints: nSamples, nFeatures };
+  return parseCifar10Buffer(rawDataCache[cacheKey], nPoints);
 }
 
-// --- Runner creation ---
+async function loadWordnetMammals(nPoints) {
+  const cacheKey = "wordnet_mammals";
+  if (!rawDataCache[cacheKey]) {
+    const [edgesResp, labelsResp, namesResp] = await Promise.all([
+      fetch("data/wordnet/mammals_edges.tsv"),
+      fetch("data/wordnet/mammals_labels.tsv"),
+      fetch("data/wordnet/mammals_names.tsv"),
+    ]);
+    if (!edgesResp.ok)
+      throw new Error(
+        `Could not fetch mammals_edges.tsv: ${edgesResp.status}. ` +
+          `Run: uv run python scripts/generate_wordnet_mammals.py`,
+      );
+    const isHtml = (resp) => (resp.headers.get("content-type") || "").includes("text/html");
+    rawDataCache[cacheKey] = {
+      edgesText: await edgesResp.text(),
+      labelsText: labelsResp.ok && !isHtml(labelsResp) ? await labelsResp.text() : null,
+      namesText: namesResp.ok && !isHtml(namesResp) ? await namesResp.text() : null,
+    };
+  }
+  const { edgesText, labelsText, namesText } = rawDataCache[cacheKey];
+  return parseWordnetEdges(edgesText, labelsText, namesText, nPoints);
+}
+
+async function loadPbmc(nPoints) {
+  const cacheKey = "pbmc";
+  if (!rawDataCache[cacheKey]) {
+    const resp = await fetch("data/pbmc/pbmc_pca.tsv");
+    if (!resp.ok)
+      throw new Error(
+        `Could not fetch pbmc_pca.tsv: ${resp.status}. ` +
+          `Place pre-processed PCA TSV in www/public/data/pbmc/pbmc_pca.tsv`,
+      );
+    rawDataCache[cacheKey] = await resp.text();
+  }
+  return parsePbmcText(rawDataCache[cacheKey], nPoints);
+}
+
+// ---------------------------------------------------------------------------
+// Text label overlay (WordNet names)
+// ---------------------------------------------------------------------------
+
+/**
+ * Draw node names directly on the canvas using the 2D API, layered on top
+ * of the plotters render.  Uses the viewport state exposed by `runner.get_viewport()`
+ * and the projected 2D coordinates from `runner.get_projected_coords()`.
+ *
+ * The chart margins inside the plotters canvas (from plot.rs) are:
+ *   left = y_label_area(20) + margin(5) = 25
+ *   right = margin(5) = 5
+ *   top = margin(5) = 5
+ *   bottom = x_label_area(20) + margin(5) = 25
+ */
+function drawNameOverlay() {
+  if (!pointNames || !runner) return;
+
+  const coords = runner.get_projected_coords(); // [x0,y0,x1,y1,...]
+  const vp = runner.get_viewport(); // [cx, cy, half, auto_half]
+  const [vpCx, vpCy, vpHalf] = vp;
+
+  const w = canvas.width;
+  const h = canvas.height;
+  const aspect = w / h;
+  const halfX = vpHalf * aspect;
+
+  const MARGIN_LEFT = 25;
+  const MARGIN_RIGHT = 5;
+  const MARGIN_TOP = 5;
+  const MARGIN_BOTTOM = 25;
+  const plotW = w - MARGIN_LEFT - MARGIN_RIGHT;
+  const plotH = h - MARGIN_TOP - MARGIN_BOTTOM;
+
+  const xMin = vpCx - halfX;
+  const xMax = vpCx + halfX;
+  const yMin = vpCy - vpHalf;
+  const yMax = vpCy + vpHalf;
+
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const fontSize = Math.max(9, Math.round(10 * dpr));
+  ctx.font = `${fontSize}px sans-serif`;
+  ctx.fillStyle = "rgba(20, 20, 20, 0.85)";
+  ctx.textBaseline = "bottom";
+
+  const n = coords.length / 2;
+  for (let i = 0; i < n; i++) {
+    const px = coords[i * 2];
+    const py = coords[i * 2 + 1];
+    if (!isFinite(px) || !isFinite(py)) continue;
+    // Skip points outside the current viewport
+    if (px < xMin || px > xMax || py < yMin || py > yMax) continue;
+
+    const cx = MARGIN_LEFT + ((px - xMin) / (xMax - xMin)) * plotW;
+    const cy = h - MARGIN_BOTTOM - ((py - yMin) / (yMax - yMin)) * plotH;
+
+    const name = pointNames[i] || "";
+    if (name) ctx.fillText(name, cx + 3 * dpr, cy - 1 * dpr);
+  }
+}
+
+/** Render the current embedding state and apply any text overlay. */
+function renderFrame() {
+  runner.render();
+  drawNameOverlay();
+}
+
+// ---------------------------------------------------------------------------
+// Runner creation
+// ---------------------------------------------------------------------------
 
 function updateTitle(curvature, projection) {
   const el = document.getElementById("plot-title");
@@ -277,20 +406,17 @@ async function createRunner() {
     runner.free();
     runner = null;
   }
+  pointNames = null;
 
   const p = getParams();
   updateTitle(p.curvature, p.projection);
 
-  if (dataSource === "mnist") {
-    const nPoints = parseInt(document.getElementById("mnist_n_points").value);
-    status.textContent = "Loading MNIST data...";
-    const mnist = await loadMnist(nPoints);
-    runner = EmbeddingRunner.from_data_with_labels(
+  if (dataSource === "real") {
+    const nPoints = parseInt(document.getElementById("real_n_points").value);
+    status.textContent = `Loading ${realDataset}…`;
+
+    const commonArgs = [
       "canvas",
-      mnist.data,
-      mnist.labels,
-      mnist.nPoints,
-      mnist.nFeatures,
       p.curvature,
       p.iterations,
       p.perplexity,
@@ -302,7 +428,45 @@ async function createRunner() {
       p.globalLossWeight,
       p.normLossWeight,
       p.projection,
-    );
+    ];
+
+    if (realDataset === "mnist") {
+      const d = await loadMnistLike("data/mnist", nPoints);
+      runner = EmbeddingRunner.from_data_with_labels(
+        ...commonArgs.slice(0, 1),
+        d.data, d.labels, d.nPoints, d.nFeatures,
+        ...commonArgs.slice(1),
+      );
+    } else if (realDataset === "fashion_mnist") {
+      const d = await loadMnistLike("data/fashion-mnist", nPoints);
+      runner = EmbeddingRunner.from_data_with_labels(
+        ...commonArgs.slice(0, 1),
+        d.data, d.labels, d.nPoints, d.nFeatures,
+        ...commonArgs.slice(1),
+      );
+    } else if (realDataset === "cifar10") {
+      const d = await loadCifar10(nPoints);
+      runner = EmbeddingRunner.from_data_with_labels(
+        ...commonArgs.slice(0, 1),
+        d.data, d.labels, d.nPoints, d.nFeatures,
+        ...commonArgs.slice(1),
+      );
+    } else if (realDataset === "wordnet_mammals") {
+      const d = await loadWordnetMammals(nPoints);
+      runner = EmbeddingRunner.from_distances(
+        ...commonArgs.slice(0, 1),
+        d.distances, d.labels, d.nPoints,
+        ...commonArgs.slice(1),
+      );
+      pointNames = d.names && d.names.some((n) => n) ? d.names : null;
+    } else if (realDataset === "pbmc") {
+      const d = await loadPbmc(nPoints);
+      runner = EmbeddingRunner.from_data_with_labels(
+        ...commonArgs.slice(0, 1),
+        d.data, d.labels, d.nPoints, d.nFeatures,
+        ...commonArgs.slice(1),
+      );
+    }
   } else if (dataSource === "synthetic") {
     const dataset = document.getElementById("dataset").value;
     const nPoints = parseInt(document.getElementById("synth_n_points").value);
@@ -402,7 +566,7 @@ async function stepEmbedding() {
     // Create runner if not yet initialized — show initial state (step 0)
     if (runner === null || runner.is_done()) {
       await createRunner();
-      runner.render();
+      renderFrame();
       updateDisplay();
       progressContainer.style.display = "block";
       metricsPanel.style.display = "none";
@@ -415,7 +579,7 @@ async function stepEmbedding() {
     }
 
     const hasMore = runner.step(1);
-    runner.render();
+    renderFrame();
     updateDisplay();
 
     if (hasMore) {
@@ -485,7 +649,7 @@ async function runEmbedding() {
     }
 
     const hasMore = runner.step(1);
-    runner.render();
+    renderFrame();
     updateDisplay();
 
     if (hasMore) {

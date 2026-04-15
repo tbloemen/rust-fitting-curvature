@@ -107,6 +107,14 @@ def main():
             f.write(f"{lbl}\n")
     print(f"Wrote {labels_path}")
 
+    # Short human-readable name for each node (first lemma of the synset, underscores → spaces)
+    names_path = os.path.join(args.output, "mammals_names.tsv")
+    with open(names_path, "w") as f:
+        for synset in bfs_order:
+            name = synset.lemmas()[0].name().replace("_", " ")
+            f.write(f"{name}\n")
+    print(f"Wrote {names_path}")
+
     print(f"\nDone. {len(bfs_order)} nodes total.")
     print(f"To use: --dataset wordnet_mammals --data-path <dir containing 'wordnet/'> --n-samples {len(bfs_order)}")
 
