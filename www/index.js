@@ -6,7 +6,6 @@ import {
 import {
   parseIdxBuffers,
   subsampleIdx,
-  parseCifar10Buffer,
   parsePbmcText,
   parseWordnetEdges,
 } from "./dataLoaders.js";
