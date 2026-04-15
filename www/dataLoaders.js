@@ -61,7 +61,22 @@ export function parseIdxBuffers(imagesBuf, labelsBuf) {
  * @param {number} nPoints
  * @returns {{ data: Float64Array, labels: Uint32Array, nPoints: number, nFeatures: number }}
  */
-export function subsampleIdx({ imageBytes, labelBytes, nImages, nFeatures }, nPoints) {
+const MNIST_LABEL_NAMES = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+
+const FASHION_MNIST_LABEL_NAMES = [
+  "T-shirt/top",
+  "Trouser",
+  "Pullover",
+  "Dress",
+  "Coat",
+  "Sandal",
+  "Shirt",
+  "Sneaker",
+  "Bag",
+  "Ankle boot",
+];
+
+export function subsampleIdx({ imageBytes, labelBytes, nImages, nFeatures }, nPoints, labelNames = null) {
   const nSamples = Math.min(nPoints, nImages);
   const step = Math.max(1, Math.floor(nImages / nSamples));
   const data = new Float64Array(nSamples * nFeatures);
@@ -75,7 +90,15 @@ export function subsampleIdx({ imageBytes, labelBytes, nImages, nFeatures }, nPo
     }
     labels[i] = labelBytes[srcIdx];
   }
-  return { data, labels, nPoints: nSamples, nFeatures };
+  return { data, labels, labelNames, nPoints: nSamples, nFeatures };
+}
+
+export function subsampleMnist(raw, nPoints) {
+  return subsampleIdx(raw, nPoints, MNIST_LABEL_NAMES);
+}
+
+export function subsampleFashionMnist(raw, nPoints) {
+  return subsampleIdx(raw, nPoints, FASHION_MNIST_LABEL_NAMES);
 }
 
 // ---------------------------------------------------------------------------

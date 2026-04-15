@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   parseIdxBuffers,
   subsampleIdx,
+  subsampleMnist,
+  subsampleFashionMnist,
   detectSeparator,
   splitLine,
   parsePbmcText,
@@ -123,6 +125,71 @@ describe("subsampleIdx", () => {
     const raw = parseIdxBuffers(imgBuf, lblBuf);
     const { data } = subsampleIdx(raw, 1);
     expect(data[0]).toBe(0.0);
+  });
+
+  it("returns labelNames when provided", () => {
+    const imgBuf = makeIdxImageBuf(1, 1, 1, 0);
+    const lblBuf = makeIdxLabelBuf(new Uint8Array([0]));
+    const raw = parseIdxBuffers(imgBuf, lblBuf);
+    const { labelNames } = subsampleIdx(raw, 1, ["zero", "one"]);
+    expect(labelNames).toEqual(["zero", "one"]);
+  });
+
+  it("returns null labelNames when not provided", () => {
+    const imgBuf = makeIdxImageBuf(1, 1, 1, 0);
+    const lblBuf = makeIdxLabelBuf(new Uint8Array([0]));
+    const raw = parseIdxBuffers(imgBuf, lblBuf);
+    const { labelNames } = subsampleIdx(raw, 1);
+    expect(labelNames).toBeNull();
+  });
+});
+
+describe("subsampleMnist", () => {
+  it("returns MNIST digit label names (0-9)", () => {
+    const imgBuf = makeIdxImageBuf(1, 1, 1, 0);
+    const lblBuf = makeIdxLabelBuf(new Uint8Array([5]));
+    const raw = parseIdxBuffers(imgBuf, lblBuf);
+    const { labelNames } = subsampleMnist(raw, 1);
+    expect(labelNames).toEqual(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
+  });
+
+  it("subsamples correctly", () => {
+    const imgBuf = makeIdxImageBuf(100, 2, 2, 128);
+    const lblBuf = makeIdxLabelBuf(new Uint8Array(100).fill(3));
+    const raw = parseIdxBuffers(imgBuf, lblBuf);
+    const result = subsampleMnist(raw, 10);
+    expect(result.nPoints).toBe(10);
+    expect(result.labelNames).toBeDefined();
+  });
+});
+
+describe("subsampleFashionMnist", () => {
+  it("returns Fashion-MNIST clothing label names", () => {
+    const imgBuf = makeIdxImageBuf(1, 1, 1, 0);
+    const lblBuf = makeIdxLabelBuf(new Uint8Array([5]));
+    const raw = parseIdxBuffers(imgBuf, lblBuf);
+    const { labelNames } = subsampleFashionMnist(raw, 1);
+    expect(labelNames).toEqual([
+      "T-shirt/top",
+      "Trouser",
+      "Pullover",
+      "Dress",
+      "Coat",
+      "Sandal",
+      "Shirt",
+      "Sneaker",
+      "Bag",
+      "Ankle boot",
+    ]);
+  });
+
+  it("subsamples correctly", () => {
+    const imgBuf = makeIdxImageBuf(100, 2, 2, 128);
+    const lblBuf = makeIdxLabelBuf(new Uint8Array(100).fill(7));
+    const raw = parseIdxBuffers(imgBuf, lblBuf);
+    const result = subsampleFashionMnist(raw, 10);
+    expect(result.nPoints).toBe(10);
+    expect(result.labelNames).toBeDefined();
   });
 });
 

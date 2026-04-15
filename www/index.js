@@ -5,7 +5,7 @@ import {
 } from "fitting-web";
 import {
   parseIdxBuffers,
-  subsampleIdx,
+  subsampleIdx, subsampleMnist, subsampleFashionMnist,
   parsePbmcText,
   parseWordnetEdges,
 } from "./dataLoaders.js";
@@ -260,7 +260,10 @@ async function loadMnistLike(baseUrl, nPoints) {
     ]);
     rawDataCache[baseUrl] = parseIdxBuffers(imagesBuf, labelsBuf);
   }
-  return subsampleIdx(rawDataCache[baseUrl], nPoints);
+  if (baseUrl.endsWith("fashion-mnist")) {
+    return subsampleFashionMnist(rawDataCache[baseUrl], nPoints);
+  }
+  return subsampleMnist(rawDataCache[baseUrl], nPoints);
 }
 
 
@@ -489,6 +492,7 @@ async function createRunner() {
         d.data, d.labels, d.nPoints, d.nFeatures,
         ...commonArgs.slice(1),
       );
+      if (d.labelNames) runner.set_label_names(d.labelNames.join("\t"));
     } else if (realDataset === "fashion_mnist") {
       const d = await loadMnistLike("data/fashion-mnist", nPoints);
       runner = EmbeddingRunner.from_data_with_labels(
@@ -496,6 +500,7 @@ async function createRunner() {
         d.data, d.labels, d.nPoints, d.nFeatures,
         ...commonArgs.slice(1),
       );
+      if (d.labelNames) runner.set_label_names(d.labelNames.join("\t"));
     } else if (realDataset === "wordnet_mammals") {
       const d = await loadWordnetMammals(nPoints);
       runner = EmbeddingRunner.from_distances(
