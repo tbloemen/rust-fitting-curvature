@@ -5,7 +5,6 @@ import {
 } from "fitting-web";
 import {
   parseIdxBuffers,
-  subsampleIdx,
   subsampleMnist,
   subsampleFashionMnist,
   parsePbmcText,
@@ -609,30 +608,42 @@ const METRIC_GROUPS = [
     title: "Local Structure",
     dual: true,
     metrics: [
-      { key: "trustworthiness",   label: "Trustworthiness", dir: "↑" },
-      { key: "continuity",        label: "Continuity",       dir: "↑" },
-      { key: "knn_overlap",       label: "KNN Overlap",      dir: "↑" },
-      { key: "neighborhood_hit",  label: "Neighborhood Hit", dir: "↑" },
+      { key: "trustworthiness", label: "Trustworthiness", dir: "↑" },
+      { key: "continuity", label: "Continuity", dir: "↑" },
+      { key: "knn_overlap", label: "KNN Overlap", dir: "↑" },
+      { key: "neighborhood_hit", label: "Neighborhood Hit", dir: "↑" },
     ],
   },
   {
     title: "Distance Preservation",
     dual: true,
     metrics: [
-      { key: "normalized_stress",  label: "Norm. Stress",      dir: "↓" },
-      { key: "shepard_goodness",   label: "Shepard Goodness",  dir: "↑" },
+      { key: "normalized_stress", label: "Norm. Stress", dir: "↓" },
+      { key: "shepard_goodness", label: "Shepard Goodness", dir: "↑" },
     ],
   },
   {
     title: "Class Separation (2D)",
     dual: false,
     metrics: [
-      { key: "class_density_measure",  label: "Class Density",   dir: "↑" },
+      { key: "class_density_measure", label: "Class Density", dir: "↑" },
       { key: "cluster_density_measure", label: "Cluster Density", dir: "↑" },
-      { key: "davies_bouldin_ratio",   label: "DB Ratio",         dir: "↑" },
+      { key: "davies_bouldin_ratio", label: "DB Ratio", dir: "↑" },
     ],
   },
 ];
+
+// Shared inline styles for metric rows. Inline styles are used because
+// .metrics-panel lives inside .canvas-wrapper which sets line-height:0;
+// the panel resets that in CSS, but these row styles are straightforward
+// enough to keep here alongside the HTML generation logic.
+const MS = {
+  row: "display:flex;align-items:center;padding:2px 0;gap:6px;",
+  name: "flex-grow:1;flex-shrink:1;flex-basis:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#ccc;font-size:0.75rem;",
+  val: "flex-grow:0;flex-shrink:0;flex-basis:58px;text-align:right;color:#5dade2;font-family:monospace;font-size:0.75rem;white-space:nowrap;",
+  hdr: "flex-grow:0;flex-shrink:0;flex-basis:58px;text-align:right;color:#aaa;font-size:0.6rem;white-space:nowrap;",
+  title: "font-size:0.62rem;text-transform:uppercase;letter-spacing:0.08em;color:#888;padding:8px 0 3px;border-bottom:1px solid #2a2a4a;margin-bottom:2px;",
+};
 
 function showMetrics() {
   try {
@@ -647,24 +658,21 @@ function showMetrics() {
       );
       if (rows.length === 0) continue;
 
-      html += `<div class="metrics-group">`;
-      html += `<div class="metrics-group-title">${group.title}</div>`;
+      html += `<div style="${MS.title}">${group.title}</div>`;
 
       if (group.dual) {
-        html += `<div class="mrow"><span class="mtn"></span><span class="mth">Manifold</span><span class="mth">2D</span></div>`;
+        html += `<div style="${MS.row}"><span style="${MS.name}"></span><span style="${MS.hdr}">Manifold</span><span style="${MS.hdr}">2D</span></div>`;
         for (const mt of rows) {
           const vm = m[mt.key + "_manifold"].toFixed(4);
           const v2 = m[mt.key + "_2d"].toFixed(4);
-          html += `<div class="mrow"><span class="mtn" title="${mt.dir} better">${mt.label} ${mt.dir}</span><span class="mtv">${vm}</span><span class="mtv">${v2}</span></div>`;
+          html += `<div style="${MS.row}" title="${mt.dir} better"><span style="${MS.name}">${mt.label} ${mt.dir}</span><span style="${MS.val}">${vm}</span><span style="${MS.val}">${v2}</span></div>`;
         }
       } else {
         for (const mt of rows) {
           const v = m[mt.key].toFixed(4);
-          html += `<div class="mrow"><span class="mtn" title="${mt.dir} better">${mt.label} ${mt.dir}</span><span class="mtv">${v}</span></div>`;
+          html += `<div style="${MS.row}" title="${mt.dir} better"><span style="${MS.name}">${mt.label} ${mt.dir}</span><span style="${MS.val}">${v}</span></div>`;
         }
       }
-
-      html += `</div>`;
     }
 
     metricsContent.innerHTML = html;

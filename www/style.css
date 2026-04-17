@@ -284,8 +284,8 @@ canvas {
 }
 
 /* Metrics panel — overlay in bottom-right of canvas area.
-   Explicit width (not just min-width) is required so that CSS grid fr units
-   resolve correctly inside an absolutely-positioned container. */
+   line-height must be reset here: .canvas-wrapper sets line-height:0
+   to suppress whitespace below <canvas>, and this panel inherits it. */
 .metrics-panel {
   position: absolute;
   bottom: 12px;
@@ -297,6 +297,7 @@ canvas {
   border-radius: 6px;
   border: 1px solid #333;
   font-size: 0.78rem;
+  line-height: 1.4;
   z-index: 5;
   max-height: 50vh;
   overflow-y: auto;
@@ -309,55 +310,4 @@ canvas {
   letter-spacing: 0.1em;
   color: #888;
   margin-bottom: 8px;
-}
-/* One group per metric category */
-.metrics-group {
-  margin-bottom: 10px;
-}
-.metrics-group:last-child {
-  margin-bottom: 0;
-}
-.metrics-group-title {
-  font-size: 0.62rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #666;
-  margin-bottom: 4px;
-  border-bottom: 1px solid #2a2a4a;
-  padding-bottom: 3px;
-}
-/* Each metric row is a flex container: name grows, value columns are fixed width.
-   flex: 1 1 0 + min-width: 0 on the name span is the canonical way to make a
-   flex child shrink below its content size without overflow. */
-.mrow {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 1px 0;
-}
-/* Column header span (Manifold / 2D) */
-.mth {
-  flex: 0 0 56px;
-  text-align: right;
-  font-size: 0.6rem;
-  color: #555;
-  white-space: nowrap;
-}
-/* Metric name span */
-.mtn {
-  flex: 1 1 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #aaa;
-  cursor: default;
-}
-/* Value span */
-.mtv {
-  flex: 0 0 56px;
-  text-align: right;
-  color: #5dade2;
-  font-family: monospace;
-  white-space: nowrap;
 }
