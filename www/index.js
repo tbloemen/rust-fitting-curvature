@@ -602,28 +602,71 @@ function resetEmbedding() {
   status.textContent = "Reset. Click Run or Step to start.";
 }
 
-const METRIC_LABELS = {
-  trustworthiness: ["Trustworthiness", "higher is better"],
-  continuity: ["Continuity", "higher is better"],
-  knn_overlap: ["KNN Overlap", "higher is better"],
-  class_density_measure: ["Class Density (CDM)", "higher is better"],
-  cluster_density_measure: ["Cluster Density (ClDM)", "higher is better"],
-  davies_bouldin_ratio: ["DB Ratio", "higher is better"],
-};
+// Metric groups: each dual-variant metric shows manifold + 2D columns.
+// Single-variant metrics (labels-only, 2D-only) show one value column.
+const METRIC_GROUPS = [
+  {
+    title: "Local Structure",
+    dual: true,
+    metrics: [
+      { key: "trustworthiness",   label: "Trustworthiness", dir: "↑" },
+      { key: "continuity",        label: "Continuity",       dir: "↑" },
+      { key: "knn_overlap",       label: "KNN Overlap",      dir: "↑" },
+      { key: "neighborhood_hit",  label: "Neighborhood Hit", dir: "↑" },
+    ],
+  },
+  {
+    title: "Distance Preservation",
+    dual: true,
+    metrics: [
+      { key: "normalized_stress",  label: "Norm. Stress",      dir: "↓" },
+      { key: "shepard_goodness",   label: "Shepard Goodness",  dir: "↑" },
+    ],
+  },
+  {
+    title: "Class Separation (2D)",
+    dual: false,
+    metrics: [
+      { key: "class_density_measure",  label: "Class Density",   dir: "↑" },
+      { key: "cluster_density_measure", label: "Cluster Density", dir: "↑" },
+      { key: "davies_bouldin_ratio",   label: "DB Ratio",         dir: "↑" },
+    ],
+  },
+];
 
 function showMetrics() {
   try {
     const m = runner.compute_metrics();
-    let html = '<div class="metrics-grid">';
-    for (const [key, [label, hint]] of Object.entries(METRIC_LABELS)) {
-      if (m[key] !== undefined) {
-        html += `<div class="metric-row">
-          <span class="metric-name" title="${hint}">${label}</span>
-          <span class="metric-value">${m[key].toFixed(4)}</span>
-        </div>`;
+    let html = "";
+
+    for (const group of METRIC_GROUPS) {
+      const rows = group.metrics.filter((mt) =>
+        group.dual
+          ? m[mt.key + "_manifold"] !== undefined
+          : m[mt.key] !== undefined,
+      );
+      if (rows.length === 0) continue;
+
+      html += `<div class="metrics-group">`;
+      html += `<div class="metrics-group-title">${group.title}</div>`;
+
+      if (group.dual) {
+        html += `<div class="mrow"><span class="mtn"></span><span class="mth">Manifold</span><span class="mth">2D</span></div>`;
+        for (const mt of rows) {
+          const vm = m[mt.key + "_manifold"].toFixed(4);
+          const v2 = m[mt.key + "_2d"].toFixed(4);
+          html += `<div class="mrow"><span class="mtn" title="${mt.dir} better">${mt.label} ${mt.dir}</span><span class="mtv">${vm}</span><span class="mtv">${v2}</span></div>`;
+        }
+      } else {
+        for (const mt of rows) {
+          const v = m[mt.key].toFixed(4);
+          html += `<div class="mrow"><span class="mtn" title="${mt.dir} better">${mt.label} ${mt.dir}</span><span class="mtv">${v}</span></div>`;
+        }
       }
+
+      html += `</div>`;
     }
-    html += "</div>";
+
     metricsContent.innerHTML = html;
     metricsPanel.style.display = "block";
   } catch (e) {

@@ -283,18 +283,25 @@ canvas {
   min-width: 0;
 }
 
-/* Metrics panel — overlay in bottom-right of canvas area */
+/* Metrics panel — overlay in bottom-right of canvas area.
+   Explicit width (not just min-width) is required so that CSS grid fr units
+   resolve correctly inside an absolutely-positioned container. */
 .metrics-panel {
   position: absolute;
   bottom: 12px;
   right: 12px;
-  padding: 14px 18px;
+  width: 300px;
+  padding: 12px 14px;
   background: #16213eee;
   backdrop-filter: blur(8px);
   border-radius: 6px;
   border: 1px solid #333;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   z-index: 5;
+  max-height: 50vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 .metrics-panel .section-title {
   font-size: 0.7rem;
@@ -303,22 +310,53 @@ canvas {
   color: #888;
   margin-bottom: 8px;
 }
-.metrics-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px 24px;
+/* One group per metric category */
+.metrics-group {
+  margin-bottom: 10px;
 }
-.metric-row {
+.metrics-group:last-child {
+  margin-bottom: 0;
+}
+.metrics-group-title {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #666;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #2a2a4a;
+  padding-bottom: 3px;
+}
+/* Each metric row is a flex container: name grows, value columns are fixed width.
+   flex: 1 1 0 + min-width: 0 on the name span is the canonical way to make a
+   flex child shrink below its content size without overflow. */
+.mrow {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 4px 0;
+  align-items: baseline;
+  gap: 6px;
+  padding: 1px 0;
 }
-.metric-name {
-  color: #aaa;
+/* Column header span (Manifold / 2D) */
+.mth {
+  flex: 0 0 56px;
+  text-align: right;
+  font-size: 0.6rem;
+  color: #555;
   white-space: nowrap;
 }
-.metric-value {
+/* Metric name span */
+.mtn {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #aaa;
+  cursor: default;
+}
+/* Value span */
+.mtv {
+  flex: 0 0 56px;
+  text-align: right;
   color: #5dade2;
   font-family: monospace;
   white-space: nowrap;

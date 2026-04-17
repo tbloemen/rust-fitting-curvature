@@ -321,13 +321,17 @@ impl EmbeddingRunner {
     }
 
     /// Compute all quality metrics after training.
-    /// Returns a JS object with metric names as keys.
+    ///
+    /// Returns a JS object where each metric is stored in two variants:
+    /// - `{name}_manifold`: computed using manifold geodesic distances (embedding quality)
+    /// - `{name}_2d`: computed using Euclidean distances in projected 2D space (visualization quality)
+    ///
+    /// Label-dependent metrics are omitted when no labels are available.
     pub fn compute_metrics(&self) -> Result<JsValue, JsValue> {
         let n = self.state.n_points;
         let high_dim_dist = self.state.high_dim_distances();
         let embed_dist = self.state.embedded_distances();
 
-        // Project to 2D for visualization-space metrics
         let proj = visualisation::project_to_2d(
             &self.state.points,
             n,
@@ -335,27 +339,33 @@ impl EmbeddingRunner {
             self.state.config().curvature,
             self.projection,
         );
+        let dist_2d = metrics::euclidean_dist_2d(&proj.coords, n);
 
         let k = (self.state.config().perplexity as usize).min(n - 2).max(1);
-
-        // A. Local structure preservation (on manifold distances)
-        let trust = metrics::trustworthiness(&high_dim_dist, &embed_dist, n, k);
-        let cont = metrics::continuity(&high_dim_dist, &embed_dist, n, k);
-        let knn = metrics::knn_overlap(&high_dim_dist, &embed_dist, n, k);
-
         let obj = js_sys::Object::new();
-        set_prop(&obj, "trustworthiness", trust)?;
-        set_prop(&obj, "continuity", cont)?;
-        set_prop(&obj, "knn_overlap", knn)?;
 
-        // D. Perceptual evaluation (on 2D projected coordinates)
+        // A. Local structure preservation
+        set_prop(&obj, "trustworthiness_manifold", metrics::trustworthiness(&high_dim_dist, &embed_dist, n, k))?;
+        set_prop(&obj, "trustworthiness_2d",       metrics::trustworthiness(&high_dim_dist, &dist_2d,    n, k))?;
+        set_prop(&obj, "continuity_manifold",       metrics::continuity(&high_dim_dist, &embed_dist, n, k))?;
+        set_prop(&obj, "continuity_2d",             metrics::continuity(&high_dim_dist, &dist_2d,    n, k))?;
+        set_prop(&obj, "knn_overlap_manifold",      metrics::knn_overlap(&high_dim_dist, &embed_dist, n, k))?;
+        set_prop(&obj, "knn_overlap_2d",            metrics::knn_overlap(&high_dim_dist, &dist_2d,    n, k))?;
+
+        // B. Distance preservation
+        set_prop(&obj, "normalized_stress_manifold", metrics::normalized_stress(&high_dim_dist, &embed_dist, n))?;
+        set_prop(&obj, "normalized_stress_2d",       metrics::normalized_stress(&high_dim_dist, &dist_2d,    n))?;
+        set_prop(&obj, "shepard_goodness_manifold",  metrics::shepard_goodness(&high_dim_dist, &embed_dist, n))?;
+        set_prop(&obj, "shepard_goodness_2d",        metrics::shepard_goodness(&high_dim_dist, &dist_2d,    n))?;
+
+        // C. Label-dependent metrics
         if let Some(labels) = &self.labels {
-            let cdm = metrics::class_density_measure(&proj.coords, labels, n);
-            let cldm = metrics::cluster_density_measure(&proj.coords, labels, n);
-            let db_ratio = metrics::davies_bouldin_ratio(&high_dim_dist, &proj.coords, labels, n);
-            set_prop(&obj, "class_density_measure", cdm)?;
-            set_prop(&obj, "cluster_density_measure", cldm)?;
-            set_prop(&obj, "davies_bouldin_ratio", db_ratio)?;
+            set_prop(&obj, "neighborhood_hit_manifold", metrics::neighborhood_hit(&embed_dist, labels, n, k))?;
+            set_prop(&obj, "neighborhood_hit_2d",       metrics::neighborhood_hit(&dist_2d,    labels, n, k))?;
+
+            set_prop(&obj, "class_density_measure",  metrics::class_density_measure(&proj.coords, labels, n))?;
+            set_prop(&obj, "cluster_density_measure", metrics::cluster_density_measure(&proj.coords, labels, n))?;
+            set_prop(&obj, "davies_bouldin_ratio",   metrics::davies_bouldin_ratio(&high_dim_dist, &proj.coords, labels, n))?;
         }
 
         Ok(obj.into())
