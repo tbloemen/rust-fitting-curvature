@@ -10,7 +10,12 @@ use fitting_core::synthetic_data::Rng;
 
 /// Build 2D point clusters: `n_clusters` groups of `per_cluster` points,
 /// placed on a wide grid so clusters are well-separated.
-fn make_clustered_2d(n_clusters: usize, per_cluster: usize, spread: f64, seed: u64) -> (Vec<f64>, Vec<u32>) {
+fn make_clustered_2d(
+    n_clusters: usize,
+    per_cluster: usize,
+    spread: f64,
+    seed: u64,
+) -> (Vec<f64>, Vec<u32>) {
     let mut rng = Rng::new(seed);
     let n = n_clusters * per_cluster;
     let mut pts = vec![0.0f64; n * 2];
@@ -224,7 +229,10 @@ fn test_normalized_stress_positive_for_different() {
     let d1 = make_distance_matrix(20, 42);
     let d2 = make_distance_matrix(20, 99);
     let stress = normalized_stress(&d1, &d2, 20);
-    assert!(stress > 0.0, "Different matrices should give positive stress");
+    assert!(
+        stress > 0.0,
+        "Different matrices should give positive stress"
+    );
 }
 
 #[test]
@@ -265,10 +273,7 @@ fn test_neighborhood_hit_random_labels() {
     let d = dist_from_2d(&pts, n);
     let nh = neighborhood_hit(&d, &labels, n, 7);
     // With random points + balanced labels, expected NH ≈ 1/3
-    assert!(
-        nh < 0.6,
-        "Random labels should give low NH, got {nh}"
-    );
+    assert!(nh < 0.6, "Random labels should give low NH, got {nh}");
 }
 
 #[test]
@@ -327,7 +332,10 @@ fn test_shepard_goodness_lower_for_uncorrelated() {
     }
     let sg = shepard_goodness(&d1, &d2, n);
     // Anti-correlated ranks → raw Spearman ≈ -1, clipped to 0
-    assert!(sg < 0.1, "Anti-correlated distances should give low shepard goodness, got {sg}");
+    assert!(
+        sg < 0.1,
+        "Anti-correlated distances should give low shepard goodness, got {sg}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -420,5 +428,122 @@ fn test_davies_bouldin_separated() {
     assert!(
         db < 1.0,
         "Well-separated clusters should have low DB, got {db}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// compute_snapshot
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_compute_snapshot_iteration_stored() {
+    let (pts_2d, _) = make_clustered_2d(2, 12, 1.0, 42);
+    let n = pts_2d.len() / 2;
+    let d = make_distance_matrix(n, 42);
+    let snap = compute_snapshot(77, &d, &d, &pts_2d, None, n, 5);
+    assert_eq!(snap.iteration, 77);
+}
+
+#[test]
+fn test_compute_snapshot_without_labels_gives_none() {
+    let (pts_2d, _) = make_clustered_2d(2, 12, 1.0, 42);
+    let n = pts_2d.len() / 2;
+    let d = make_distance_matrix(n, 42);
+    let snap = compute_snapshot(0, &d, &d, &pts_2d, None, n, 5);
+    assert!(snap.neighborhood_hit_manifold.is_none());
+    assert!(snap.neighborhood_hit_2d.is_none());
+    assert!(snap.class_density_measure.is_none());
+    assert!(snap.cluster_density_measure.is_none());
+    assert!(snap.davies_bouldin_ratio.is_none());
+}
+
+#[test]
+fn test_compute_snapshot_with_labels_gives_some() {
+    let (pts_2d, labels) = make_clustered_2d(3, 10, 0.5, 42);
+    let n = pts_2d.len() / 2;
+    let d = dist_from_2d(&pts_2d, n);
+    let snap = compute_snapshot(5, &d, &d, &pts_2d, Some(&labels), n, 7);
+    assert!(snap.neighborhood_hit_manifold.is_some());
+    assert!(snap.neighborhood_hit_2d.is_some());
+    assert!(snap.class_density_measure.is_some());
+    assert!(snap.cluster_density_measure.is_some());
+    assert!(snap.davies_bouldin_ratio.is_some());
+}
+
+#[test]
+fn test_compute_snapshot_perfect_embedding_scores() {
+    // When embed_dist == high_dim_dist: trustworthiness/continuity/knn_overlap
+    // should all be 1.0 and normalized_stress/shepard_goodness should be 0/1.
+    let n = 20;
+    let d = make_distance_matrix(n, 42);
+    let pts_2d = vec![0.0f64; n * 2]; // dummy 2D coords for the 2D half
+    let snap = compute_snapshot(1, &d, &d, &pts_2d, None, n, 5);
+    assert!(
+        (snap.trustworthiness_manifold - 1.0).abs() < 1e-10,
+        "trustworthiness_manifold should be 1.0, got {}",
+        snap.trustworthiness_manifold
+    );
+    assert!(
+        (snap.continuity_manifold - 1.0).abs() < 1e-10,
+        "continuity_manifold should be 1.0, got {}",
+        snap.continuity_manifold
+    );
+    assert!(
+        (snap.knn_overlap_manifold - 1.0).abs() < 1e-10,
+        "knn_overlap_manifold should be 1.0, got {}",
+        snap.knn_overlap_manifold
+    );
+    assert!(
+        snap.normalized_stress_manifold.abs() < 1e-10,
+        "normalized_stress_manifold should be 0, got {}",
+        snap.normalized_stress_manifold
+    );
+    assert!(
+        (snap.shepard_goodness_manifold - 1.0).abs() < 1e-10,
+        "shepard_goodness_manifold should be 1.0, got {}",
+        snap.shepard_goodness_manifold
+    );
+}
+
+#[test]
+fn test_compute_snapshot_all_values_in_range() {
+    let (pts_2d, labels) = make_clustered_2d(3, 10, 0.5, 99);
+    let n = pts_2d.len() / 2;
+    let d_high = make_distance_matrix(n, 1);
+    let d_embed = dist_from_2d(&pts_2d, n);
+    let snap = compute_snapshot(50, &d_high, &d_embed, &pts_2d, Some(&labels), n, 5);
+    assert!((0.0..=1.0).contains(&snap.trustworthiness_manifold));
+    assert!((0.0..=1.0).contains(&snap.trustworthiness_2d));
+    assert!((0.0..=1.0).contains(&snap.continuity_manifold));
+    assert!((0.0..=1.0).contains(&snap.continuity_2d));
+    assert!((0.0..=1.0).contains(&snap.knn_overlap_manifold));
+    assert!((0.0..=1.0).contains(&snap.knn_overlap_2d));
+    assert!(snap.normalized_stress_manifold >= 0.0);
+    assert!(snap.normalized_stress_2d >= 0.0);
+    assert!((0.0..=1.0).contains(&snap.shepard_goodness_manifold));
+    assert!((0.0..=1.0).contains(&snap.shepard_goodness_2d));
+    assert!((0.0..=1.0).contains(&snap.neighborhood_hit_manifold.unwrap()));
+    assert!((0.0..=1.0).contains(&snap.neighborhood_hit_2d.unwrap()));
+}
+
+#[test]
+fn test_compute_snapshot_manifold_and_2d_can_differ() {
+    // When the 2D distances differ from embed_dist the two variants must differ.
+    let (pts_2d, _) = make_clustered_2d(2, 15, 1.0, 42);
+    let n = pts_2d.len() / 2;
+    let d = dist_from_2d(&pts_2d, n);
+    // Scaled 2D: shrink x, stretch y — creates different pairwise distances.
+    let pts_scaled: Vec<f64> = pts_2d
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| if i % 2 == 0 { v * 3.0 } else { v * 0.3 })
+        .collect();
+    let snap = compute_snapshot(1, &d, &d, &pts_scaled, None, n, 5);
+    // Manifold = self-comparison → stress 0; 2D uses different distances → stress > 0.
+    assert!(
+        snap.normalized_stress_2d > snap.normalized_stress_manifold,
+        "2D stress ({}) should exceed manifold stress ({})",
+        snap.normalized_stress_2d,
+        snap.normalized_stress_manifold
     );
 }

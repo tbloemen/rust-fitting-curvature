@@ -557,11 +557,7 @@ fn rank_vector(values: &[f64]) -> Vec<usize> {
 /// preservation).  Pass manifold geodesic distances as `embedded_distances`
 /// to measure embedding quality; pass `euclidean_dist_2d` output to measure
 /// final visualization quality.
-pub fn normalized_stress(
-    high_dim_distances: &[f64],
-    embedded_distances: &[f64],
-    n: usize,
-) -> f64 {
+pub fn normalized_stress(high_dim_distances: &[f64], embedded_distances: &[f64], n: usize) -> f64 {
     let mut numerator = 0.0;
     let mut denominator = 0.0;
     for i in 0..n {
@@ -614,11 +610,7 @@ pub fn neighborhood_hit(embedded_distances: &[f64], labels: &[u32], n: usize, k:
 /// Returns a value in [0, 1], with **1 being best** (perfect rank order
 /// preservation).  The result is clipped to 0 from below since negative
 /// correlations are meaningless for projection quality.
-pub fn shepard_goodness(
-    high_dim_distances: &[f64],
-    embedded_distances: &[f64],
-    n: usize,
-) -> f64 {
+pub fn shepard_goodness(high_dim_distances: &[f64], embedded_distances: &[f64], n: usize) -> f64 {
     let m = n * (n - 1) / 2;
     if m < 2 {
         return 1.0;
@@ -652,6 +644,87 @@ pub fn shepard_goodness(
     }
 
     (1.0 - 6.0 * sum_sq / denom).max(0.0)
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot
+// ---------------------------------------------------------------------------
+
+/// All quality metrics at a single training iteration, in both manifold and
+/// 2D-projected variants (the "before" / "after projecting" distinction).
+#[derive(Debug, Clone)]
+pub struct MetricsSnapshot {
+    pub iteration: usize,
+    // A. Local structure preservation
+    pub trustworthiness_manifold: f64,
+    pub trustworthiness_2d: f64,
+    pub continuity_manifold: f64,
+    pub continuity_2d: f64,
+    pub knn_overlap_manifold: f64,
+    pub knn_overlap_2d: f64,
+    // B. Distance preservation
+    pub normalized_stress_manifold: f64,
+    pub normalized_stress_2d: f64,
+    pub shepard_goodness_manifold: f64,
+    pub shepard_goodness_2d: f64,
+    // C. Label-dependent (None when no labels provided)
+    pub neighborhood_hit_manifold: Option<f64>,
+    pub neighborhood_hit_2d: Option<f64>,
+    // D. Class separation — 2D only, label-dependent
+    pub class_density_measure: Option<f64>,
+    pub cluster_density_measure: Option<f64>,
+    pub davies_bouldin_ratio: Option<f64>,
+}
+
+/// Compute a full metrics snapshot.
+///
+/// `high_dim_dist` — pairwise distances in input space.
+/// `embed_dist`    — manifold geodesic distances (before projection).
+/// `pts_2d`        — flat (x,y) pairs from `project_to_2d` (after projection).
+/// `labels`        — optional class labels; label-dependent metrics are `None` when absent.
+/// `k`             — neighbourhood size used for kNN metrics.
+pub fn compute_snapshot(
+    iteration: usize,
+    high_dim_dist: &[f64],
+    embed_dist: &[f64],
+    pts_2d: &[f64],
+    labels: Option<&[u32]>,
+    n: usize,
+    k: usize,
+) -> MetricsSnapshot {
+    let dist_2d = euclidean_dist_2d(pts_2d, n);
+
+    let (neighborhood_hit_manifold, neighborhood_hit_2d, class_density, cluster_density, db_ratio) =
+        if let Some(lbl) = labels {
+            (
+                Some(neighborhood_hit(embed_dist, lbl, n, k)),
+                Some(neighborhood_hit(&dist_2d, lbl, n, k)),
+                Some(class_density_measure(pts_2d, lbl, n)),
+                Some(cluster_density_measure(pts_2d, lbl, n)),
+                Some(davies_bouldin_ratio(high_dim_dist, pts_2d, lbl, n)),
+            )
+        } else {
+            (None, None, None, None, None)
+        };
+
+    MetricsSnapshot {
+        iteration,
+        trustworthiness_manifold: trustworthiness(high_dim_dist, embed_dist, n, k),
+        trustworthiness_2d: trustworthiness(high_dim_dist, &dist_2d, n, k),
+        continuity_manifold: continuity(high_dim_dist, embed_dist, n, k),
+        continuity_2d: continuity(high_dim_dist, &dist_2d, n, k),
+        knn_overlap_manifold: knn_overlap(high_dim_dist, embed_dist, n, k),
+        knn_overlap_2d: knn_overlap(high_dim_dist, &dist_2d, n, k),
+        normalized_stress_manifold: normalized_stress(high_dim_dist, embed_dist, n),
+        normalized_stress_2d: normalized_stress(high_dim_dist, &dist_2d, n),
+        shepard_goodness_manifold: shepard_goodness(high_dim_dist, embed_dist, n),
+        shepard_goodness_2d: shepard_goodness(high_dim_dist, &dist_2d, n),
+        neighborhood_hit_manifold,
+        neighborhood_hit_2d,
+        class_density_measure: class_density,
+        cluster_density_measure: cluster_density,
+        davies_bouldin_ratio: db_ratio,
+    }
 }
 
 /// Dunn index: ratio of minimum inter-cluster distance to maximum intra-cluster diameter.
