@@ -650,11 +650,10 @@ pub fn shepard_goodness(high_dim_distances: &[f64], embedded_distances: &[f64], 
 // Snapshot
 // ---------------------------------------------------------------------------
 
-/// All quality metrics at a single training iteration, in both manifold and
+/// All quality metrics for a completed embedding, in both manifold and
 /// 2D-projected variants (the "before" / "after projecting" distinction).
 #[derive(Debug, Clone)]
 pub struct MetricsSnapshot {
-    pub iteration: usize,
     // A. Local structure preservation
     pub trustworthiness_manifold: f64,
     pub trustworthiness_2d: f64,
@@ -684,7 +683,6 @@ pub struct MetricsSnapshot {
 /// `labels`        — optional class labels; label-dependent metrics are `None` when absent.
 /// `k`             — neighbourhood size used for kNN metrics.
 pub fn compute_snapshot(
-    iteration: usize,
     high_dim_dist: &[f64],
     embed_dist: &[f64],
     pts_2d: &[f64],
@@ -708,7 +706,6 @@ pub fn compute_snapshot(
         };
 
     MetricsSnapshot {
-        iteration,
         trustworthiness_manifold: trustworthiness(high_dim_dist, embed_dist, n, k),
         trustworthiness_2d: trustworthiness(high_dim_dist, &dist_2d, n, k),
         continuity_manifold: continuity(high_dim_dist, embed_dist, n, k),

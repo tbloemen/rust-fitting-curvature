@@ -432,7 +432,7 @@ fn test_pca_init_deterministic() {
 }
 
 // ---------------------------------------------------------------------------
-// Metrics history: builder methods and recording
+// compute_snapshot: on-demand end-of-training metrics
 // ---------------------------------------------------------------------------
 
 fn small_config(n: usize, n_iterations: usize) -> TrainingConfig {
@@ -451,118 +451,49 @@ fn small_config(n: usize, n_iterations: usize) -> TrainingConfig {
 }
 
 #[test]
-fn test_metrics_interval_zero_records_no_history() {
-    let data = create_test_data(50, 5, 42);
-    let mut state = EmbeddingState::new(&data, 5, &small_config(50, 40));
-    // Default metrics_interval is 0 — nothing should be recorded.
-    state.run(|_| true);
-    assert_eq!(state.metrics_history.len(), 0);
-}
-
-#[test]
-fn test_metrics_interval_records_correct_count() {
-    let data = create_test_data(50, 5, 42);
-    let mut state = EmbeddingState::new(&data, 5, &small_config(50, 100)).with_metrics_interval(10);
-    state.run(|_| true);
-    // 100 iterations / interval 10 = 10 snapshots
-    assert_eq!(state.metrics_history.len(), 10);
-}
-
-#[test]
-fn test_metrics_history_iteration_numbers_correct() {
-    let data = create_test_data(50, 5, 42);
-    let n_iter = 50;
-    let interval = 10;
-    let mut state =
-        EmbeddingState::new(&data, 5, &small_config(50, n_iter)).with_metrics_interval(interval);
-    state.run(|_| true);
-
-    let iters: Vec<usize> = state.metrics_history.iter().map(|s| s.iteration).collect();
-    assert_eq!(iters, vec![10, 20, 30, 40, 50]);
-}
-
-#[test]
-fn test_metrics_history_iterations_monotone() {
-    let data = create_test_data(50, 5, 42);
-    let mut state = EmbeddingState::new(&data, 5, &small_config(50, 60)).with_metrics_interval(7);
-    state.run(|_| true);
-
-    let iters: Vec<usize> = state.metrics_history.iter().map(|s| s.iteration).collect();
-    for w in iters.windows(2) {
-        assert!(w[1] > w[0], "Iterations must be strictly increasing");
-    }
-}
-
-#[test]
-fn test_metrics_history_without_labels_gives_none() {
-    let data = create_test_data(50, 5, 42);
-    let mut state = EmbeddingState::new(&data, 5, &small_config(50, 20)).with_metrics_interval(10);
-    state.run(|_| true);
-
-    for snap in &state.metrics_history {
-        assert!(snap.neighborhood_hit_manifold.is_none());
-        assert!(snap.neighborhood_hit_2d.is_none());
-        assert!(snap.class_density_measure.is_none());
-        assert!(snap.cluster_density_measure.is_none());
-        assert!(snap.davies_bouldin_ratio.is_none());
-    }
-}
-
-#[test]
-fn test_metrics_history_with_labels_gives_some() {
-    let data = create_test_data(60, 5, 42);
-    let labels: Vec<u32> = (0..60u32).map(|i| i / 20).collect();
-    let mut state = EmbeddingState::new(&data, 5, &small_config(60, 30))
-        .with_labels(labels)
-        .with_metrics_interval(10);
-    state.run(|_| true);
-
-    assert_eq!(state.metrics_history.len(), 3);
-    for snap in &state.metrics_history {
-        assert!(snap.neighborhood_hit_manifold.is_some());
-        assert!(snap.neighborhood_hit_2d.is_some());
-        assert!(snap.class_density_measure.is_some());
-        assert!(snap.cluster_density_measure.is_some());
-        assert!(snap.davies_bouldin_ratio.is_some());
-    }
-}
-
-#[test]
-fn test_metrics_history_values_in_range() {
-    let data = create_test_data(50, 5, 42);
-    let labels: Vec<u32> = (0..50u32).map(|i| i / 25).collect();
-    let mut state = EmbeddingState::new(&data, 5, &small_config(50, 20))
-        .with_labels(labels)
-        .with_metrics_interval(10);
-    state.run(|_| true);
-
-    for snap in &state.metrics_history {
-        assert!((0.0..=1.0).contains(&snap.trustworthiness_manifold));
-        assert!((0.0..=1.0).contains(&snap.trustworthiness_2d));
-        assert!((0.0..=1.0).contains(&snap.continuity_manifold));
-        assert!((0.0..=1.0).contains(&snap.continuity_2d));
-        assert!((0.0..=1.0).contains(&snap.knn_overlap_manifold));
-        assert!((0.0..=1.0).contains(&snap.knn_overlap_2d));
-        assert!(snap.normalized_stress_manifold >= 0.0);
-        assert!(snap.normalized_stress_2d >= 0.0);
-        assert!((0.0..=1.0).contains(&snap.shepard_goodness_manifold));
-        assert!((0.0..=1.0).contains(&snap.shepard_goodness_2d));
-        assert!(!snap.trustworthiness_manifold.is_nan());
-        assert!(!snap.trustworthiness_2d.is_nan());
-    }
-}
-
-#[test]
 fn test_compute_snapshot_manual_call() {
     let data = create_test_data(50, 5, 42);
     let mut state = EmbeddingState::new(&data, 5, &small_config(50, 30));
     state.run(|_| true);
-    // compute_snapshot can be called on demand even without a history interval.
     let snap = state.compute_snapshot();
-    assert_eq!(snap.iteration, 30);
     assert!((0.0..=1.0).contains(&snap.trustworthiness_manifold));
     assert!((0.0..=1.0).contains(&snap.trustworthiness_2d));
     assert!(snap.neighborhood_hit_manifold.is_none());
+}
+
+#[test]
+fn test_compute_snapshot_with_labels_gives_some() {
+    let data = create_test_data(60, 5, 42);
+    let labels: Vec<u32> = (0..60u32).map(|i| i / 20).collect();
+    let mut state = EmbeddingState::new(&data, 5, &small_config(60, 30)).with_labels(labels);
+    state.run(|_| true);
+    let snap = state.compute_snapshot();
+    assert!(snap.neighborhood_hit_manifold.is_some());
+    assert!(snap.neighborhood_hit_2d.is_some());
+    assert!(snap.class_density_measure.is_some());
+    assert!(snap.cluster_density_measure.is_some());
+    assert!(snap.davies_bouldin_ratio.is_some());
+}
+
+#[test]
+fn test_compute_snapshot_values_in_range() {
+    let data = create_test_data(50, 5, 42);
+    let labels: Vec<u32> = (0..50u32).map(|i| i / 25).collect();
+    let mut state = EmbeddingState::new(&data, 5, &small_config(50, 20)).with_labels(labels);
+    state.run(|_| true);
+    let snap = state.compute_snapshot();
+    assert!((0.0..=1.0).contains(&snap.trustworthiness_manifold));
+    assert!((0.0..=1.0).contains(&snap.trustworthiness_2d));
+    assert!((0.0..=1.0).contains(&snap.continuity_manifold));
+    assert!((0.0..=1.0).contains(&snap.continuity_2d));
+    assert!((0.0..=1.0).contains(&snap.knn_overlap_manifold));
+    assert!((0.0..=1.0).contains(&snap.knn_overlap_2d));
+    assert!(snap.normalized_stress_manifold >= 0.0);
+    assert!(snap.normalized_stress_2d >= 0.0);
+    assert!((0.0..=1.0).contains(&snap.shepard_goodness_manifold));
+    assert!((0.0..=1.0).contains(&snap.shepard_goodness_2d));
+    assert!(!snap.trustworthiness_manifold.is_nan());
+    assert!(!snap.trustworthiness_2d.is_nan());
 }
 
 #[test]
@@ -570,26 +501,22 @@ fn test_with_projection_spherical_no_nan() {
     let data = create_test_data(50, 5, 42);
     let mut cfg = small_config(50, 20);
     cfg.curvature = 1.0;
-    let mut state = EmbeddingState::new(&data, 5, &cfg)
-        .with_projection(SphericalProjection::Stereographic)
-        .with_metrics_interval(10);
+    let mut state =
+        EmbeddingState::new(&data, 5, &cfg).with_projection(SphericalProjection::Stereographic);
     state.run(|_| true);
-
-    assert_eq!(state.metrics_history.len(), 2);
-    for snap in &state.metrics_history {
-        assert!(
-            !snap.trustworthiness_2d.is_nan(),
-            "NaN in trustworthiness_2d"
-        );
-        assert!(
-            !snap.normalized_stress_2d.is_nan(),
-            "NaN in normalized_stress_2d"
-        );
-        assert!(
-            !snap.shepard_goodness_2d.is_nan(),
-            "NaN in shepard_goodness_2d"
-        );
-    }
+    let snap = state.compute_snapshot();
+    assert!(
+        !snap.trustworthiness_2d.is_nan(),
+        "NaN in trustworthiness_2d"
+    );
+    assert!(
+        !snap.normalized_stress_2d.is_nan(),
+        "NaN in normalized_stress_2d"
+    );
+    assert!(
+        !snap.shepard_goodness_2d.is_nan(),
+        "NaN in shepard_goodness_2d"
+    );
 }
 
 #[test]
@@ -598,25 +525,21 @@ fn test_with_projection_hyperbolic_no_nan() {
     let mut cfg = small_config(50, 20);
     cfg.curvature = -1.0;
     let mut state = EmbeddingState::new(&data, 5, &cfg)
-        .with_projection(SphericalProjection::AzimuthalEquidistant)
-        .with_metrics_interval(10);
+        .with_projection(SphericalProjection::AzimuthalEquidistant);
     state.run(|_| true);
-
-    for snap in &state.metrics_history {
-        assert!(
-            !snap.trustworthiness_2d.is_nan(),
-            "NaN in trustworthiness_2d"
-        );
-        assert!(
-            !snap.normalized_stress_2d.is_nan(),
-            "NaN in normalized_stress_2d"
-        );
-    }
+    let snap = state.compute_snapshot();
+    assert!(
+        !snap.trustworthiness_2d.is_nan(),
+        "NaN in trustworthiness_2d"
+    );
+    assert!(
+        !snap.normalized_stress_2d.is_nan(),
+        "NaN in normalized_stress_2d"
+    );
 }
 
 #[test]
-fn test_metrics_history_from_distances() {
-    // Verify the from_distances path also records history correctly.
+fn test_compute_snapshot_from_distances() {
     let mut rng = Rng::new(42);
     let n = 40;
     let mut dist = vec![0.0f64; n * n];
@@ -639,12 +562,9 @@ fn test_metrics_history_from_distances() {
         init_scale: 0.001,
         ..Default::default()
     };
-    let mut state = EmbeddingState::from_distances(&dist, n, &cfg).with_metrics_interval(10);
+    let mut state = EmbeddingState::from_distances(&dist, n, &cfg);
     state.run(|_| true);
-
-    assert_eq!(state.metrics_history.len(), 2);
-    for snap in &state.metrics_history {
-        assert!(!snap.trustworthiness_manifold.is_nan());
-        assert!(!snap.trustworthiness_2d.is_nan());
-    }
+    let snap = state.compute_snapshot();
+    assert!(!snap.trustworthiness_manifold.is_nan());
+    assert!(!snap.trustworthiness_2d.is_nan());
 }

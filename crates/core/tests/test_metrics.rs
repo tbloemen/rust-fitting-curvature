@@ -436,20 +436,11 @@ fn test_davies_bouldin_separated() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_compute_snapshot_iteration_stored() {
-    let (pts_2d, _) = make_clustered_2d(2, 12, 1.0, 42);
-    let n = pts_2d.len() / 2;
-    let d = make_distance_matrix(n, 42);
-    let snap = compute_snapshot(77, &d, &d, &pts_2d, None, n, 5);
-    assert_eq!(snap.iteration, 77);
-}
-
-#[test]
 fn test_compute_snapshot_without_labels_gives_none() {
     let (pts_2d, _) = make_clustered_2d(2, 12, 1.0, 42);
     let n = pts_2d.len() / 2;
     let d = make_distance_matrix(n, 42);
-    let snap = compute_snapshot(0, &d, &d, &pts_2d, None, n, 5);
+    let snap = compute_snapshot(&d, &d, &pts_2d, None, n, 5);
     assert!(snap.neighborhood_hit_manifold.is_none());
     assert!(snap.neighborhood_hit_2d.is_none());
     assert!(snap.class_density_measure.is_none());
@@ -462,7 +453,7 @@ fn test_compute_snapshot_with_labels_gives_some() {
     let (pts_2d, labels) = make_clustered_2d(3, 10, 0.5, 42);
     let n = pts_2d.len() / 2;
     let d = dist_from_2d(&pts_2d, n);
-    let snap = compute_snapshot(5, &d, &d, &pts_2d, Some(&labels), n, 7);
+    let snap = compute_snapshot(&d, &d, &pts_2d, Some(&labels), n, 7);
     assert!(snap.neighborhood_hit_manifold.is_some());
     assert!(snap.neighborhood_hit_2d.is_some());
     assert!(snap.class_density_measure.is_some());
@@ -477,7 +468,7 @@ fn test_compute_snapshot_perfect_embedding_scores() {
     let n = 20;
     let d = make_distance_matrix(n, 42);
     let pts_2d = vec![0.0f64; n * 2]; // dummy 2D coords for the 2D half
-    let snap = compute_snapshot(1, &d, &d, &pts_2d, None, n, 5);
+    let snap = compute_snapshot(&d, &d, &pts_2d, None, n, 5);
     assert!(
         (snap.trustworthiness_manifold - 1.0).abs() < 1e-10,
         "trustworthiness_manifold should be 1.0, got {}",
@@ -511,7 +502,7 @@ fn test_compute_snapshot_all_values_in_range() {
     let n = pts_2d.len() / 2;
     let d_high = make_distance_matrix(n, 1);
     let d_embed = dist_from_2d(&pts_2d, n);
-    let snap = compute_snapshot(50, &d_high, &d_embed, &pts_2d, Some(&labels), n, 5);
+    let snap = compute_snapshot(&d_high, &d_embed, &pts_2d, Some(&labels), n, 5);
     assert!((0.0..=1.0).contains(&snap.trustworthiness_manifold));
     assert!((0.0..=1.0).contains(&snap.trustworthiness_2d));
     assert!((0.0..=1.0).contains(&snap.continuity_manifold));
@@ -538,7 +529,7 @@ fn test_compute_snapshot_manifold_and_2d_can_differ() {
         .enumerate()
         .map(|(i, &v)| if i % 2 == 0 { v * 3.0 } else { v * 0.3 })
         .collect();
-    let snap = compute_snapshot(1, &d, &d, &pts_scaled, None, n, 5);
+    let snap = compute_snapshot(&d, &d, &pts_scaled, None, n, 5);
     // Manifold = self-comparison → stress 0; 2D uses different distances → stress > 0.
     assert!(
         snap.normalized_stress_2d > snap.normalized_stress_manifold,

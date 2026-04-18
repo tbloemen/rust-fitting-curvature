@@ -48,10 +48,6 @@ pub struct EmbeddingState {
     labels: Option<Vec<u32>>,
     /// Projection used for the 2D ("after projecting") metric variant.
     projection: SphericalProjection,
-    /// Record a metrics snapshot every N iterations (0 = disabled).
-    metrics_interval: usize,
-    /// Accumulated metric snapshots, one per recorded iteration.
-    pub metrics_history: Vec<MetricsSnapshot>,
 }
 
 impl EmbeddingState {
@@ -111,8 +107,6 @@ impl EmbeddingState {
             target_norms: Vec::new(),
             labels: None,
             projection: SphericalProjection::AzimuthalEquidistant,
-            metrics_interval: 0,
-            metrics_history: Vec::new(),
         }
     }
 
@@ -205,8 +199,6 @@ impl EmbeddingState {
             target_norms,
             labels: None,
             projection: SphericalProjection::AzimuthalEquidistant,
-            metrics_interval: 0,
-            metrics_history: Vec::new(),
         }
     }
 
@@ -219,12 +211,6 @@ impl EmbeddingState {
     /// Set the spherical projection used when computing "after-projection" (2D) metrics.
     pub fn with_projection(mut self, projection: SphericalProjection) -> Self {
         self.projection = projection;
-        self
-    }
-
-    /// Record a metrics snapshot every `interval` iterations (0 = disabled).
-    pub fn with_metrics_interval(mut self, interval: usize) -> Self {
-        self.metrics_interval = interval;
         self
     }
 
@@ -244,7 +230,6 @@ impl EmbeddingState {
             self.projection,
         );
         metrics::compute_snapshot(
-            self.iteration,
             &high_dim,
             &embed_dist,
             &proj.coords,
@@ -389,11 +374,6 @@ impl EmbeddingState {
             .center(&mut self.points, n_points, ambient_dim);
 
         self.iteration += 1;
-
-        if self.metrics_interval > 0 && self.iteration.is_multiple_of(self.metrics_interval) {
-            let snapshot = self.compute_snapshot();
-            self.metrics_history.push(snapshot);
-        }
 
         if self.iteration <= self.config.early_exaggeration_iterations {
             "early"

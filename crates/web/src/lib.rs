@@ -18,11 +18,6 @@ use lol_alloc::{AssumeSingleThreaded, FreeListAllocator};
 static ALLOCATOR: AssumeSingleThreaded<FreeListAllocator> =
     unsafe { AssumeSingleThreaded::new(FreeListAllocator::new()) };
 
-/// Record ~100 snapshots spread evenly over `n_iterations`, minimum every 10 steps.
-fn metrics_interval(n_iterations: usize) -> usize {
-    (n_iterations / 100).max(10)
-}
-
 fn parse_scaling_loss(s: &str) -> ScalingLossType {
     match s {
         "rms" => ScalingLossType::Rms,
@@ -99,11 +94,9 @@ impl EmbeddingRunner {
         };
 
         let proj = parse_projection(projection);
-        let interval = metrics_interval(config.n_iterations);
         let state = EmbeddingState::new(&synth.x, n_features, &config)
             .with_labels(synth.labels.clone())
-            .with_projection(proj)
-            .with_metrics_interval(interval);
+            .with_projection(proj);
         let canvas = get_canvas(canvas_id)?;
 
         Ok(EmbeddingRunner {
@@ -153,11 +146,9 @@ impl EmbeddingRunner {
         };
 
         let proj = parse_projection(projection);
-        let interval = metrics_interval(config.n_iterations);
         let state = EmbeddingState::new(data, n_features, &config)
             .with_labels(labels.to_vec())
-            .with_projection(proj)
-            .with_metrics_interval(interval);
+            .with_projection(proj);
         let canvas = get_canvas(canvas_id)?;
 
         Ok(EmbeddingRunner {
@@ -209,11 +200,9 @@ impl EmbeddingRunner {
         };
 
         let proj = parse_projection(projection);
-        let interval = metrics_interval(config.n_iterations);
         let state = EmbeddingState::from_distances(distances, n_points, &config)
             .with_labels(labels.to_vec())
-            .with_projection(proj)
-            .with_metrics_interval(interval);
+            .with_projection(proj);
         let canvas = get_canvas(canvas_id)?;
 
         Ok(EmbeddingRunner {
@@ -449,57 +438,6 @@ impl EmbeddingRunner {
         }
 
         Ok(obj.into())
-    }
-
-    /// Return the accumulated metrics history as a JS Array of objects.
-    ///
-    /// Each entry has the same fields as `compute_metrics()` plus an `iteration` field.
-    /// Only populated when `metrics_interval > 0` (set automatically during construction).
-    pub fn get_metrics_history(&self) -> Result<JsValue, JsValue> {
-        let arr = js_sys::Array::new();
-        for snap in &self.state.metrics_history {
-            let obj = js_sys::Object::new();
-            set_prop(&obj, "iteration", snap.iteration as f64)?;
-            set_prop(
-                &obj,
-                "trustworthiness_manifold",
-                snap.trustworthiness_manifold,
-            )?;
-            set_prop(&obj, "trustworthiness_2d", snap.trustworthiness_2d)?;
-            set_prop(&obj, "continuity_manifold", snap.continuity_manifold)?;
-            set_prop(&obj, "continuity_2d", snap.continuity_2d)?;
-            set_prop(&obj, "knn_overlap_manifold", snap.knn_overlap_manifold)?;
-            set_prop(&obj, "knn_overlap_2d", snap.knn_overlap_2d)?;
-            set_prop(
-                &obj,
-                "normalized_stress_manifold",
-                snap.normalized_stress_manifold,
-            )?;
-            set_prop(&obj, "normalized_stress_2d", snap.normalized_stress_2d)?;
-            set_prop(
-                &obj,
-                "shepard_goodness_manifold",
-                snap.shepard_goodness_manifold,
-            )?;
-            set_prop(&obj, "shepard_goodness_2d", snap.shepard_goodness_2d)?;
-            if let Some(v) = snap.neighborhood_hit_manifold {
-                set_prop(&obj, "neighborhood_hit_manifold", v)?;
-            }
-            if let Some(v) = snap.neighborhood_hit_2d {
-                set_prop(&obj, "neighborhood_hit_2d", v)?;
-            }
-            if let Some(v) = snap.class_density_measure {
-                set_prop(&obj, "class_density_measure", v)?;
-            }
-            if let Some(v) = snap.cluster_density_measure {
-                set_prop(&obj, "cluster_density_measure", v)?;
-            }
-            if let Some(v) = snap.davies_bouldin_ratio {
-                set_prop(&obj, "davies_bouldin_ratio", v)?;
-            }
-            arr.push(&obj);
-        }
-        Ok(arr.into())
     }
 }
 

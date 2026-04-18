@@ -208,7 +208,9 @@ impl Evaluator {
             "geodesic_distortion_gu2019" => {
                 geodesic_distortion_gu2019(&self.high_dim_dist, &dist_2d(), n)
             }
-            "geodesic_distortion_mse" => geodesic_distortion_mse(&self.high_dim_dist, &dist_2d(), n),
+            "geodesic_distortion_mse" => {
+                geodesic_distortion_mse(&self.high_dim_dist, &dist_2d(), n)
+            }
             "dunn_index" => dunn_index(&dist_2d(), &self.dataset.labels, n),
             "davies_bouldin_ratio" => davies_bouldin_ratio(
                 &self.high_dim_dist,
