@@ -3,7 +3,8 @@ use fitting_core::embedding::EmbeddingState;
 use fitting_core::matrices::compute_euclidean_distance_matrix;
 use fitting_core::metrics::{
     class_density_measure, cluster_density_measure, continuity, davies_bouldin_ratio, dunn_index,
-    geodesic_distortion_gu2019, geodesic_distortion_mse, knn_overlap, trustworthiness,
+    geodesic_distortion_gu2019, geodesic_distortion_mse, knn_overlap, neighborhood_hit,
+    normalized_stress, shepard_goodness, trustworthiness,
 };
 use fitting_core::visualisation::{SphericalProjection, project_to_2d};
 use indicatif::ProgressBar;
@@ -14,11 +15,24 @@ use crate::search_space::TrialConfig;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AllMetrics {
+    // Local structure — 2D (after projection) and manifold (before projection)
     pub trustworthiness: f64,
+    pub trustworthiness_manifold: f64,
     pub continuity: f64,
+    pub continuity_manifold: f64,
     pub knn_overlap: f64,
+    pub knn_overlap_manifold: f64,
+    pub neighborhood_hit: f64,
+    pub neighborhood_hit_manifold: f64,
+    // Distance preservation — 2D and manifold
+    pub normalized_stress: f64,
+    pub normalized_stress_manifold: f64,
+    pub shepard_goodness: f64,
+    pub shepard_goodness_manifold: f64,
+    // Global distance structure
     pub geodesic_distortion_gu2019: f64,
     pub geodesic_distortion_mse: f64,
+    // Class separation (2D only)
     pub davies_bouldin_ratio: f64,
     pub dunn_index: f64,
     pub class_density_measure: f64,
@@ -88,30 +102,37 @@ impl Evaluator {
 
         let k = (30_f64.min(n as f64 * 0.1)).round() as usize;
 
-        // Compute all metrics once using precomputed data.
-        let embedded_dist = compute_euclidean_distance_matrix(&projected.coords, n, 2);
+        // Before-projection distances: manifold geodesic.
+        let manifold_dist = state.embedded_distances();
+        // After-projection distances: Euclidean in 2D projected space.
+        let dist_2d = compute_euclidean_distance_matrix(&projected.coords, n, 2);
 
         AllMetrics {
-            trustworthiness: trustworthiness(&self.high_dim_dist, &embedded_dist, n, k),
-            continuity: continuity(&self.high_dim_dist, &embedded_dist, n, k),
-            knn_overlap: knn_overlap(&self.high_dim_dist, &embedded_dist, n, k),
+            trustworthiness: trustworthiness(&self.high_dim_dist, &dist_2d, n, k),
+            trustworthiness_manifold: trustworthiness(&self.high_dim_dist, &manifold_dist, n, k),
+            continuity: continuity(&self.high_dim_dist, &dist_2d, n, k),
+            continuity_manifold: continuity(&self.high_dim_dist, &manifold_dist, n, k),
+            knn_overlap: knn_overlap(&self.high_dim_dist, &dist_2d, n, k),
+            knn_overlap_manifold: knn_overlap(&self.high_dim_dist, &manifold_dist, n, k),
+            neighborhood_hit: neighborhood_hit(&dist_2d, &self.dataset.labels, n, k),
+            neighborhood_hit_manifold: neighborhood_hit(&manifold_dist, &self.dataset.labels, n, k),
+            normalized_stress: normalized_stress(&self.high_dim_dist, &dist_2d, n),
+            normalized_stress_manifold: normalized_stress(&self.high_dim_dist, &manifold_dist, n),
+            shepard_goodness: shepard_goodness(&self.high_dim_dist, &dist_2d, n),
+            shepard_goodness_manifold: shepard_goodness(&self.high_dim_dist, &manifold_dist, n),
             geodesic_distortion_gu2019: geodesic_distortion_gu2019(
                 &self.high_dim_dist,
-                &embedded_dist,
+                &dist_2d,
                 n,
             ),
-            geodesic_distortion_mse: geodesic_distortion_mse(
-                &self.high_dim_dist,
-                &embedded_dist,
-                n,
-            ),
+            geodesic_distortion_mse: geodesic_distortion_mse(&self.high_dim_dist, &dist_2d, n),
             davies_bouldin_ratio: davies_bouldin_ratio(
                 &self.high_dim_dist,
                 &projected.coords,
                 &self.dataset.labels,
                 n,
             ),
-            dunn_index: dunn_index(&embedded_dist, &self.dataset.labels, n),
+            dunn_index: dunn_index(&dist_2d, &self.dataset.labels, n),
             class_density_measure: class_density_measure(
                 &projected.coords,
                 &self.dataset.labels,
@@ -159,39 +180,36 @@ impl Evaluator {
 
         let k = (30_f64.min(n as f64 * 0.1)).round() as usize;
 
-        // Only compute what the requested metric actually needs.
-        // Metrics marked (*) need embedded_dist (O(n²)); others only need projected.coords.
+        // Lazily compute distance matrices only when needed.
+        let dist_2d = || compute_euclidean_distance_matrix(&projected.coords, n, 2);
+        let manifold_dist = || state.embedded_distances();
+
         match metric {
-            "trustworthiness" => {
-                // *
-                let d = compute_euclidean_distance_matrix(&projected.coords, n, 2);
-                trustworthiness(&self.high_dim_dist, &d, n, k)
+            "trustworthiness" => trustworthiness(&self.high_dim_dist, &dist_2d(), n, k),
+            "trustworthiness_manifold" => {
+                trustworthiness(&self.high_dim_dist, &manifold_dist(), n, k)
             }
-            "continuity" => {
-                // *
-                let d = compute_euclidean_distance_matrix(&projected.coords, n, 2);
-                continuity(&self.high_dim_dist, &d, n, k)
+            "continuity" => continuity(&self.high_dim_dist, &dist_2d(), n, k),
+            "continuity_manifold" => continuity(&self.high_dim_dist, &manifold_dist(), n, k),
+            "knn_overlap" => knn_overlap(&self.high_dim_dist, &dist_2d(), n, k),
+            "knn_overlap_manifold" => knn_overlap(&self.high_dim_dist, &manifold_dist(), n, k),
+            "neighborhood_hit" => neighborhood_hit(&dist_2d(), &self.dataset.labels, n, k),
+            "neighborhood_hit_manifold" => {
+                neighborhood_hit(&manifold_dist(), &self.dataset.labels, n, k)
             }
-            "knn_overlap" => {
-                // *
-                let d = compute_euclidean_distance_matrix(&projected.coords, n, 2);
-                knn_overlap(&self.high_dim_dist, &d, n, k)
+            "normalized_stress" => normalized_stress(&self.high_dim_dist, &dist_2d(), n),
+            "normalized_stress_manifold" => {
+                normalized_stress(&self.high_dim_dist, &manifold_dist(), n)
+            }
+            "shepard_goodness" => shepard_goodness(&self.high_dim_dist, &dist_2d(), n),
+            "shepard_goodness_manifold" => {
+                shepard_goodness(&self.high_dim_dist, &manifold_dist(), n)
             }
             "geodesic_distortion_gu2019" => {
-                // *
-                let d = compute_euclidean_distance_matrix(&projected.coords, n, 2);
-                geodesic_distortion_gu2019(&self.high_dim_dist, &d, n)
+                geodesic_distortion_gu2019(&self.high_dim_dist, &dist_2d(), n)
             }
-            "geodesic_distortion_mse" => {
-                // *
-                let d = compute_euclidean_distance_matrix(&projected.coords, n, 2);
-                geodesic_distortion_mse(&self.high_dim_dist, &d, n)
-            }
-            "dunn_index" => {
-                // *
-                let d = compute_euclidean_distance_matrix(&projected.coords, n, 2);
-                dunn_index(&d, &self.dataset.labels, n)
-            }
+            "geodesic_distortion_mse" => geodesic_distortion_mse(&self.high_dim_dist, &dist_2d(), n),
+            "dunn_index" => dunn_index(&dist_2d(), &self.dataset.labels, n),
             "davies_bouldin_ratio" => davies_bouldin_ratio(
                 &self.high_dim_dist,
                 &projected.coords,
@@ -205,9 +223,11 @@ impl Evaluator {
                 cluster_density_measure(&projected.coords, &self.dataset.labels, n)
             }
             _ => panic!(
-                "Unknown metric: {metric}. Options: trustworthiness, continuity, knn_overlap, \
-                 geodesic_distortion_gu2019, geodesic_distortion_mse, davies_bouldin_ratio, \
-                 dunn_index, class_density_measure, cluster_density_measure"
+                "Unknown metric: {metric}. Options: trustworthiness[_manifold], \
+                 continuity[_manifold], knn_overlap[_manifold], neighborhood_hit[_manifold], \
+                 normalized_stress[_manifold], shepard_goodness[_manifold], \
+                 geodesic_distortion_gu2019, geodesic_distortion_mse, \
+                 davies_bouldin_ratio, dunn_index, class_density_measure, cluster_density_measure"
             ),
         }
     }

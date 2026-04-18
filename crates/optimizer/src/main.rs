@@ -106,8 +106,17 @@ struct TrialResult {
     norm_loss_weight: f64,
 
     trustworthiness: Option<f64>,
+    trustworthiness_manifold: Option<f64>,
     continuity: Option<f64>,
+    continuity_manifold: Option<f64>,
     knn_overlap: Option<f64>,
+    knn_overlap_manifold: Option<f64>,
+    neighborhood_hit: Option<f64>,
+    neighborhood_hit_manifold: Option<f64>,
+    normalized_stress: Option<f64>,
+    normalized_stress_manifold: Option<f64>,
+    shepard_goodness: Option<f64>,
+    shepard_goodness_manifold: Option<f64>,
     geodesic_distortion_gu2019: Option<f64>,
     geodesic_distortion_mse: Option<f64>,
     davies_bouldin_ratio: Option<f64>,
@@ -144,8 +153,17 @@ impl TrialResult {
             global_loss_weight: config.global_loss_weight,
             norm_loss_weight: config.norm_loss_weight,
             trustworthiness: None,
+            trustworthiness_manifold: None,
             continuity: None,
+            continuity_manifold: None,
             knn_overlap: None,
+            knn_overlap_manifold: None,
+            neighborhood_hit: None,
+            neighborhood_hit_manifold: None,
+            normalized_stress: None,
+            normalized_stress_manifold: None,
+            shepard_goodness: None,
+            shepard_goodness_manifold: None,
             geodesic_distortion_gu2019: None,
             geodesic_distortion_mse: None,
             davies_bouldin_ratio: None,
@@ -159,8 +177,17 @@ impl TrialResult {
 
     fn with_all_metrics(mut self, m: &AggregatedMetrics) -> Self {
         self.trustworthiness = Some(m.trustworthiness);
+        self.trustworthiness_manifold = Some(m.trustworthiness_manifold);
         self.continuity = Some(m.continuity);
+        self.continuity_manifold = Some(m.continuity_manifold);
         self.knn_overlap = Some(m.knn_overlap);
+        self.knn_overlap_manifold = Some(m.knn_overlap_manifold);
+        self.neighborhood_hit = Some(m.neighborhood_hit);
+        self.neighborhood_hit_manifold = Some(m.neighborhood_hit_manifold);
+        self.normalized_stress = Some(m.normalized_stress);
+        self.normalized_stress_manifold = Some(m.normalized_stress_manifold);
+        self.shepard_goodness = Some(m.shepard_goodness);
+        self.shepard_goodness_manifold = Some(m.shepard_goodness_manifold);
         self.geodesic_distortion_gu2019 = Some(m.geodesic_distortion_gu2019);
         self.geodesic_distortion_mse = Some(m.geodesic_distortion_mse);
         self.davies_bouldin_ratio = Some(m.davies_bouldin_ratio);
@@ -219,8 +246,17 @@ fn eval_single_metric(
 
 struct AggregatedMetrics {
     trustworthiness: f64,
+    trustworthiness_manifold: f64,
     continuity: f64,
+    continuity_manifold: f64,
     knn_overlap: f64,
+    knn_overlap_manifold: f64,
+    neighborhood_hit: f64,
+    neighborhood_hit_manifold: f64,
+    normalized_stress: f64,
+    normalized_stress_manifold: f64,
+    shepard_goodness: f64,
+    shepard_goodness_manifold: f64,
     geodesic_distortion_gu2019: f64,
     geodesic_distortion_mse: f64,
     davies_bouldin_ratio: f64,
@@ -249,8 +285,17 @@ fn eval_all_metrics(
 
     AggregatedMetrics {
         trustworthiness: avg(|m| m.trustworthiness),
+        trustworthiness_manifold: avg(|m| m.trustworthiness_manifold),
         continuity: avg(|m| m.continuity),
+        continuity_manifold: avg(|m| m.continuity_manifold),
         knn_overlap: avg(|m| m.knn_overlap),
+        knn_overlap_manifold: avg(|m| m.knn_overlap_manifold),
+        neighborhood_hit: avg(|m| m.neighborhood_hit),
+        neighborhood_hit_manifold: avg(|m| m.neighborhood_hit_manifold),
+        normalized_stress: avg(|m| m.normalized_stress),
+        normalized_stress_manifold: avg(|m| m.normalized_stress_manifold),
+        shepard_goodness: avg(|m| m.shepard_goodness),
+        shepard_goodness_manifold: avg(|m| m.shepard_goodness_manifold),
         geodesic_distortion_gu2019: avg(|m| m.geodesic_distortion_gu2019),
         geodesic_distortion_mse: avg(|m| m.geodesic_distortion_mse),
         davies_bouldin_ratio: avg(|m| m.davies_bouldin_ratio),
@@ -273,8 +318,17 @@ fn make_progress_bar(mp: &MultiProgress, total: u64, template: &str) -> Progress
 fn metric_value(m: &AggregatedMetrics, name: &str) -> f64 {
     match name {
         "trustworthiness" => m.trustworthiness,
+        "trustworthiness_manifold" => m.trustworthiness_manifold,
         "continuity" => m.continuity,
+        "continuity_manifold" => m.continuity_manifold,
         "knn_overlap" => m.knn_overlap,
+        "knn_overlap_manifold" => m.knn_overlap_manifold,
+        "neighborhood_hit" => m.neighborhood_hit,
+        "neighborhood_hit_manifold" => m.neighborhood_hit_manifold,
+        "normalized_stress" => m.normalized_stress,
+        "normalized_stress_manifold" => m.normalized_stress_manifold,
+        "shepard_goodness" => m.shepard_goodness,
+        "shepard_goodness_manifold" => m.shepard_goodness_manifold,
         "geodesic_distortion_gu2019" => m.geodesic_distortion_gu2019,
         "geodesic_distortion_mse" => m.geodesic_distortion_mse,
         "davies_bouldin_ratio" => m.davies_bouldin_ratio,
@@ -287,10 +341,20 @@ fn metric_value(m: &AggregatedMetrics, name: &str) -> f64 {
 
 fn metric_direction(name: &str) -> OptimizeDirection {
     match name {
-        "geodesic_distortion_gu2019" | "geodesic_distortion_mse" => OptimizeDirection::Minimize,
+        "geodesic_distortion_gu2019"
+        | "geodesic_distortion_mse"
+        | "normalized_stress"
+        | "normalized_stress_manifold" => OptimizeDirection::Minimize,
         "trustworthiness"
+        | "trustworthiness_manifold"
         | "continuity"
+        | "continuity_manifold"
         | "knn_overlap"
+        | "knn_overlap_manifold"
+        | "neighborhood_hit"
+        | "neighborhood_hit_manifold"
+        | "shepard_goodness"
+        | "shepard_goodness_manifold"
         | "davies_bouldin_ratio"
         | "dunn_index"
         | "class_density_measure"
