@@ -9,7 +9,7 @@ Rust/WASM port of a Python+JS thesis project implementing t-SNE embedding in con
 ## Build & Test Commands
 
 ```bash
-# Run all tests (core crate, 67 tests)
+# Run all tests
 cargo test
 
 # Run a single test file
@@ -48,6 +48,13 @@ All point data is **flat row-major `Vec<f64>`** of shape `(n_points, ambient_dim
 - **`TrainingConfig`** (`config.rs`): All hyperparameters. Curvature sign selects geometry.
 - **`fit_embedding`** (`embedding.rs`): Main training loop. Takes data, config, and optional `FnMut(StepResult) -> bool` callback for per-iteration rendering/logging.
 - **`RiemannianSGDMomentum`** (`optimizer.rs`): Optimizer with parallel transport for momentum on curved spaces.
+
+### Additional modules
+
+- **`curvature_detection.rs`**: Detects geometry (Euclidean/spherical/hyperbolic) and intrinsic dimension from a pairwise distance matrix using shell density histograms + OLS fitting. Native-only (no WASM).
+- **`kl_divergence.rs`**: Global t-SNE similarity matrix (`compute_global_similarities`) using `(1 + d²)` kernel (Zhou & Sharpee loss variant that emphasizes large distances).
+- **`scaling_loss.rs`**: Radial regularization for hyperbolic embeddings — penalizes geodesic spread from origin. Returns `(loss, ambient_gradient)`; caller must project gradient to tangent space.
+- **`data.rs`**: MNIST loader from IDX binary format. `#[cfg(not(target_arch = "wasm32"))]` — not compiled for WASM.
 
 ### Pipeline flow
 
