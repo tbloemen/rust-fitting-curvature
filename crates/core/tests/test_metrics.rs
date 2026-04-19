@@ -32,11 +32,6 @@ fn make_clustered_2d(
     (pts, labels)
 }
 
-/// Build a pairwise Euclidean distance matrix from 2D points.
-fn dist_from_2d(pts: &[f64], n: usize) -> Vec<f64> {
-    euclidean_dist_2d(pts, n)
-}
-
 fn make_distance_matrix(n: usize, seed: u64) -> Vec<f64> {
     let mut rng = Rng::new(seed);
     let mut d = vec![0.0; n * n];
@@ -254,7 +249,7 @@ fn test_normalized_stress_range() {
 fn test_neighborhood_hit_perfect_separation() {
     let (pts, labels) = make_clustered_2d(3, 20, 0.3, 42);
     let n = pts.len() / 2;
-    let d = dist_from_2d(&pts, n);
+    let d = euclidean_dist_2d(&pts, n);
     let nh = neighborhood_hit(&d, &labels, n, 7);
     assert!(
         nh > 0.95,
@@ -270,7 +265,7 @@ fn test_neighborhood_hit_random_labels() {
     let num_classes = 3usize;
     let pts: Vec<f64> = (0..n * 2).map(|_| rng.normal()).collect();
     let labels: Vec<u32> = (0..n).map(|i| (i % num_classes) as u32).collect();
-    let d = dist_from_2d(&pts, n);
+    let d = euclidean_dist_2d(&pts, n);
     let nh = neighborhood_hit(&d, &labels, n, 7);
     // With random points + balanced labels, expected NH ≈ 1/3
     assert!(nh < 0.6, "Random labels should give low NH, got {nh}");
@@ -280,7 +275,7 @@ fn test_neighborhood_hit_random_labels() {
 fn test_neighborhood_hit_range() {
     let (pts, labels) = make_clustered_2d(2, 15, 1.0, 7);
     let n = pts.len() / 2;
-    let d = dist_from_2d(&pts, n);
+    let d = euclidean_dist_2d(&pts, n);
     let nh = neighborhood_hit(&d, &labels, n, 5);
     assert!(
         (0.0..=1.0).contains(&nh),
@@ -367,14 +362,14 @@ fn test_before_after_projection_differ() {
     let n = pts.len() / 2;
 
     // "before": distances in some ambient space (here: a scaled version)
-    let d_before = dist_from_2d(&pts, n);
+    let d_before = euclidean_dist_2d(&pts, n);
     // "after": distances in a distorted 2D space (simulate projection distortion)
     let pts_distorted: Vec<f64> = pts
         .iter()
         .enumerate()
         .map(|(i, &v)| if i % 2 == 0 { v * 2.0 } else { v * 0.5 })
         .collect();
-    let d_after = dist_from_2d(&pts_distorted, n);
+    let d_after = euclidean_dist_2d(&pts_distorted, n);
 
     let t_before = trustworthiness(&d_before, &d_before, n, 7);
     let _t_after = trustworthiness(&d_before, &d_after, n, 7);
@@ -452,7 +447,7 @@ fn test_compute_snapshot_without_labels_gives_none() {
 fn test_compute_snapshot_with_labels_gives_some() {
     let (pts_2d, labels) = make_clustered_2d(3, 10, 0.5, 42);
     let n = pts_2d.len() / 2;
-    let d = dist_from_2d(&pts_2d, n);
+    let d = euclidean_dist_2d(&pts_2d, n);
     let snap = compute_snapshot(&d, &d, &pts_2d, Some(&labels), n, 7);
     assert!(snap.neighborhood_hit_manifold.is_some());
     assert!(snap.neighborhood_hit_2d.is_some());
@@ -501,7 +496,7 @@ fn test_compute_snapshot_all_values_in_range() {
     let (pts_2d, labels) = make_clustered_2d(3, 10, 0.5, 99);
     let n = pts_2d.len() / 2;
     let d_high = make_distance_matrix(n, 1);
-    let d_embed = dist_from_2d(&pts_2d, n);
+    let d_embed = euclidean_dist_2d(&pts_2d, n);
     let snap = compute_snapshot(&d_high, &d_embed, &pts_2d, Some(&labels), n, 5);
     assert!((0.0..=1.0).contains(&snap.trustworthiness_manifold));
     assert!((0.0..=1.0).contains(&snap.trustworthiness_2d));
@@ -540,7 +535,7 @@ fn test_compute_snapshot_manifold_and_2d_can_differ() {
     // When the 2D distances differ from embed_dist the two variants must differ.
     let (pts_2d, _) = make_clustered_2d(2, 15, 1.0, 42);
     let n = pts_2d.len() / 2;
-    let d = dist_from_2d(&pts_2d, n);
+    let d = euclidean_dist_2d(&pts_2d, n);
     // Scaled 2D: shrink x, stretch y — creates different pairwise distances.
     let pts_scaled: Vec<f64> = pts_2d
         .iter()
