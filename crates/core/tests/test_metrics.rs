@@ -518,6 +518,24 @@ fn test_compute_snapshot_all_values_in_range() {
 }
 
 #[test]
+fn test_normalized_stress_scale_invariant() {
+    // SNS must be invariant to uniform scaling of the embedded distances.
+    // If it is not, the manifold and 2D variants will differ for Euclidean
+    // embeddings where project_to_2d rescales coords for display.
+    let n = 20;
+    let d_high = make_distance_matrix(n, 1);
+    let d_embed = make_distance_matrix(n, 2);
+    let scale = 7.3_f64;
+    let d_embed_scaled: Vec<f64> = d_embed.iter().map(|&v| v * scale).collect();
+    let s1 = normalized_stress(&d_high, &d_embed, n);
+    let s2 = normalized_stress(&d_high, &d_embed_scaled, n);
+    assert!(
+        (s1 - s2).abs() < 1e-10,
+        "normalized_stress must be scale-invariant: {s1} != {s2}"
+    );
+}
+
+#[test]
 fn test_compute_snapshot_manifold_and_2d_can_differ() {
     // When the 2D distances differ from embed_dist the two variants must differ.
     let (pts_2d, _) = make_clustered_2d(2, 15, 1.0, 42);

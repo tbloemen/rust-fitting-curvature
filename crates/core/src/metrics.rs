@@ -546,33 +546,46 @@ fn rank_vector(values: &[f64]) -> Vec<usize> {
     ranks
 }
 
-/// Normalized stress (Kruskal 1964).
+/// Scale-normalized stress (SNS) from Damrich & Hamprecht 2022.
 ///
-/// Measures the global preservation of pairwise distances from the original
-/// space D to the projected space P(D):
+/// Standard normalized stress is scale-sensitive: embeddings that preserve
+/// distance shape but differ in overall scale appear poor. SNS removes this
+/// by finding the optimal scale factor α before computing stress:
 ///
-/// `M_s = sqrt( sum_{i<j}(Δ_D(i,j) - Δ_P(i,j))² / sum_{i<j} Δ_D(i,j)² )`
+/// `α  = Σ_{i,j} d(x,x') · ‖y−y'‖ / Σ_{i,j} d(x,x')²`
+/// `SNS = Σ_{i,j} [d(x,x') − α·‖y−y'‖]² / Σ_{i,j} d(x,x')²`
 ///
-/// Returns a value in [0, 1], with **0 being best** (perfect distance
-/// preservation).  Pass manifold geodesic distances as `embedded_distances`
-/// to measure embedding quality; pass `euclidean_dist_2d` output to measure
-/// final visualization quality.
+/// Returns a value in [0, 1], with **0 being best**. Because α is optimised
+/// out, manifold and 2D variants are identical for Euclidean embeddings where
+/// `project_to_2d` only rescales coordinates for display.
 pub fn normalized_stress(high_dim_distances: &[f64], embedded_distances: &[f64], n: usize) -> f64 {
-    let mut numerator = 0.0;
-    let mut denominator = 0.0;
+    let mut cross = 0.0;
+    let mut embed_sq = 0.0;
+    let mut high_sq = 0.0;
     for i in 0..n {
         for j in (i + 1)..n {
             let d_h = high_dim_distances[i * n + j];
             let d_e = embedded_distances[i * n + j];
-            let diff = d_h - d_e;
-            numerator += diff * diff;
-            denominator += d_h * d_h;
+            cross += d_h * d_e;
+            embed_sq += d_e * d_e;
+            high_sq += d_h * d_h;
         }
     }
-    if denominator < 1e-12 {
+    if high_sq < 1e-12 {
         return 0.0;
     }
-    (numerator / denominator).sqrt()
+    let alpha = if embed_sq < 1e-12 { 1.0 } else { cross / embed_sq };
+
+    let mut numerator = 0.0;
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let d_h = high_dim_distances[i * n + j];
+            let d_e = embedded_distances[i * n + j];
+            let diff = d_h - alpha * d_e;
+            numerator += diff * diff;
+        }
+    }
+    (numerator / high_sq).sqrt()
 }
 
 /// Neighborhood hit (van der Maaten 2009).
