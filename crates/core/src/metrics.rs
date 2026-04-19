@@ -574,7 +574,11 @@ pub fn normalized_stress(high_dim_distances: &[f64], embedded_distances: &[f64],
     if high_sq < 1e-12 {
         return 0.0;
     }
-    let alpha = if embed_sq < 1e-12 { 1.0 } else { cross / embed_sq };
+    let alpha = if embed_sq < 1e-12 {
+        1.0
+    } else {
+        cross / embed_sq
+    };
 
     let mut numerator = 0.0;
     for i in 0..n {
