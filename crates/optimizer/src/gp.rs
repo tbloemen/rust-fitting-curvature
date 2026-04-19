@@ -613,6 +613,261 @@ pub fn expected_improvement(mu: f64, sigma: f64, f_best: f64) -> f64 {
     delta * normal_cdf(z) + sigma * normal_pdf(z)
 }
 
+// ─── qParEGO: multi-objective Bayesian optimisation ──────────────────────────
+//
+// Strategy: Knowles (2006) "ParEGO: A Hybrid Algorithm with On-Line Landscape
+// Approximation for Expensive Multiobjective Optimization Problems."
+//
+// Each batch member gets its own randomly sampled Chebyshev scalarisation weight
+// vector λ, converting the multi-objective problem into a scalar one solved by the
+// existing GP + EI machinery.  Across many trials, different λ vectors cover
+// different parts of the Pareto front without ever computing a hypervolume.
+
+/// One optimisation objective: a metric name and whether to maximise or minimise it.
+#[derive(Debug, Clone)]
+pub struct MetricSpec {
+    pub name: &'static str,
+    pub direction: OptimizeDirection,
+}
+
+/// A single observed trial with all objective values.
+#[derive(Debug, Clone)]
+pub struct MultiTrial {
+    pub config: TrialConfig,
+    /// Raw metric values in the same order as the `MetricSpec` list.
+    pub metrics: Vec<f64>,
+}
+
+pub struct ParEgoOptimizer {
+    pub trials: Vec<MultiTrial>,
+    pub metrics: Vec<MetricSpec>,
+    optimize_curvature: bool,
+    curvature_mag_min: f64,
+    curvature_mag_max: f64,
+    n_ei_candidates: usize,
+}
+
+impl ParEgoOptimizer {
+    pub fn new(
+        metrics: Vec<MetricSpec>,
+        optimize_curvature: bool,
+        curvature_mag_min: f64,
+        curvature_mag_max: f64,
+    ) -> Self {
+        Self {
+            trials: Vec::new(),
+            metrics,
+            optimize_curvature,
+            curvature_mag_min,
+            curvature_mag_max,
+            n_ei_candidates: 1000,
+        }
+    }
+
+    pub fn observe(&mut self, config: TrialConfig, metrics: Vec<f64>) {
+        self.trials.push(MultiTrial { config, metrics });
+    }
+
+    /// Indices of Pareto-non-dominated trials (all objectives in maximise space).
+    pub fn pareto_front_indices(&self) -> Vec<usize> {
+        let points: Vec<Vec<f64>> = self
+            .trials
+            .iter()
+            .map(|t| self.to_max_space(&t.metrics))
+            .collect();
+        pareto_front_indices(&points)
+    }
+
+    pub fn pareto_trials(&self) -> Vec<&MultiTrial> {
+        self.pareto_front_indices()
+            .into_iter()
+            .map(|i| &self.trials[i])
+            .collect()
+    }
+
+    /// Suggest a batch of `n` configs, each with its own random scalarisation.
+    pub fn suggest_batch(&self, n: usize, rng: &mut Rng) -> Vec<TrialConfig> {
+        const N_INIT: usize = 5;
+        if self.trials.len() < N_INIT {
+            return (0..n).map(|_| self.random_config(rng)).collect();
+        }
+
+        (0..n)
+            .map(|_| {
+                let weights = sample_simplex(self.metrics.len(), rng);
+                let scalar_trials = self.scalarize_trials(&weights);
+                let gp = GpModel::fit(
+                    &scalar_trials,
+                    OptimizeDirection::Maximize,
+                    self.optimize_curvature,
+                );
+                let seed = self.best_ei_candidate(&gp, rng);
+                self.local_search(seed, rng, &gp)
+            })
+            .collect()
+    }
+
+    /// Flip sign on Minimize objectives so all dimensions point upward.
+    fn to_max_space(&self, metrics: &[f64]) -> Vec<f64> {
+        metrics
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| match self.metrics[i].direction {
+                OptimizeDirection::Maximize => v,
+                OptimizeDirection::Minimize => -v,
+            })
+            .collect()
+    }
+
+    /// Build scalar `Trial` list for a given weight vector using augmented Chebyshev.
+    ///
+    /// Pipeline per observation:
+    ///   1. Flip sign for Minimize objectives → all maximise.
+    ///   2. Normalise each dimension to [0, 1] using the observed range.
+    ///   3. Ideal point z* = [1, …, 1] (component-wise max of normalised).
+    ///   4. scalar = chebyshev(norm, λ, z*) — lower is better (closer to ideal).
+    ///   5. Feed −scalar to GP so that GP maximises (closer to ideal = higher score).
+    fn scalarize_trials(&self, weights: &[f64]) -> Vec<Trial> {
+        let m = self.metrics.len();
+
+        let flipped: Vec<Vec<f64>> = self
+            .trials
+            .iter()
+            .map(|t| self.to_max_space(&t.metrics))
+            .collect();
+
+        let mut mins = vec![f64::MAX; m];
+        let mut maxs = vec![f64::MIN; m];
+        for row in &flipped {
+            for (i, &v) in row.iter().enumerate() {
+                if v < mins[i] {
+                    mins[i] = v;
+                }
+                if v > maxs[i] {
+                    maxs[i] = v;
+                }
+            }
+        }
+        let ranges: Vec<f64> = (0..m).map(|i| (maxs[i] - mins[i]).max(1e-8)).collect();
+        let ideal = vec![1.0_f64; m];
+
+        self.trials
+            .iter()
+            .zip(&flipped)
+            .map(|(t, row)| {
+                let norm: Vec<f64> = (0..m).map(|i| (row[i] - mins[i]) / ranges[i]).collect();
+                let scalar = chebyshev_scalarize(&norm, weights, &ideal, 0.05);
+                Trial {
+                    config: t.config.clone(),
+                    metric: -scalar,
+                }
+            })
+            .collect()
+    }
+
+    fn best_ei_candidate(&self, gp: &GpModel, rng: &mut Rng) -> TrialConfig {
+        let mut best_ei = f64::NEG_INFINITY;
+        let mut best = self.random_config(rng);
+        for _ in 0..self.n_ei_candidates {
+            let candidate = if rng.uniform() < 0.3 {
+                let idx = (rng.uniform() * self.trials.len() as f64) as usize % self.trials.len();
+                self.mutate_config(&self.trials[idx].config, rng)
+            } else {
+                self.random_config(rng)
+            };
+            let ei = gp.ei(&candidate);
+            if ei > best_ei {
+                best_ei = ei;
+                best = candidate;
+            }
+        }
+        best
+    }
+
+    fn local_search(&self, initial: TrialConfig, rng: &mut Rng, gp: &GpModel) -> TrialConfig {
+        let mut current = initial;
+        let mut current_ei = gp.ei(&current);
+        for _ in 0..50 {
+            let mutated = self.mutate_config(&current, rng);
+            let ei = gp.ei(&mutated);
+            if ei > current_ei {
+                current = mutated;
+                current_ei = ei;
+            }
+        }
+        current
+    }
+
+    fn random_config(&self, rng: &mut Rng) -> TrialConfig {
+        let mut cfg = TrialConfig::random(rng);
+        if self.optimize_curvature {
+            let lo = self.curvature_mag_min;
+            let hi = self.curvature_mag_max;
+            cfg.curvature_magnitude = (rng.uniform() * (hi.ln() - lo.ln()) + lo.ln())
+                .exp()
+                .clamp(lo, hi);
+        }
+        cfg
+    }
+
+    fn mutate_config(&self, config: &TrialConfig, rng: &mut Rng) -> TrialConfig {
+        let mut cfg = config.mutate(rng);
+        if self.optimize_curvature && rng.uniform() < 0.3 {
+            let lo = self.curvature_mag_min;
+            let hi = self.curvature_mag_max;
+            cfg.curvature_magnitude =
+                (cfg.curvature_magnitude * 2.0_f64.powf((rng.uniform() - 0.5) * 1.0)).clamp(lo, hi);
+        }
+        cfg
+    }
+}
+
+/// Sample a weight vector uniformly from the (dim−1)-simplex via the exponential trick.
+fn sample_simplex(dim: usize, rng: &mut Rng) -> Vec<f64> {
+    let exps: Vec<f64> = (0..dim)
+        .map(|_| -(1.0_f64 - rng.uniform()).max(1e-300).ln())
+        .collect();
+    let sum: f64 = exps.iter().sum();
+    exps.iter().map(|&e| e / sum).collect()
+}
+
+/// Augmented Chebyshev scalarisation (Knowles 2006, Eq. 1).
+///
+///   s = max_i(λ_i · (z*_i − f_i))  +  ρ · Σ_i λ_i · (z*_i − f_i)
+///
+/// Lower s = closer to ideal = better.  ρ=0.05 is the standard value.
+fn chebyshev_scalarize(metrics_norm: &[f64], weights: &[f64], ideal: &[f64], rho: f64) -> f64 {
+    let diffs: Vec<f64> = metrics_norm
+        .iter()
+        .zip(ideal)
+        .zip(weights)
+        .map(|((f, z), w)| w * (z - f))
+        .collect();
+    let max_term = diffs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let sum_term: f64 = diffs.iter().sum();
+    max_term + rho * sum_term
+}
+
+/// Return indices of Pareto-non-dominated rows (all dimensions assumed maximise).
+fn pareto_front_indices(points: &[Vec<f64>]) -> Vec<usize> {
+    let n = points.len();
+    let mut non_dominated = Vec::new();
+    'outer: for i in 0..n {
+        for j in 0..n {
+            if i != j && dominates(&points[j], &points[i]) {
+                continue 'outer;
+            }
+        }
+        non_dominated.push(i);
+    }
+    non_dominated
+}
+
+/// True if `a` Pareto-dominates `b`: a ≥ b on all objectives, strictly > on at least one.
+fn dominates(a: &[f64], b: &[f64]) -> bool {
+    a.iter().zip(b).all(|(ai, bi)| ai >= bi) && a.iter().zip(b).any(|(ai, bi)| ai > bi)
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

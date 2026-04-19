@@ -1,6 +1,7 @@
 use clap::Parser;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -10,7 +11,7 @@ use std::thread;
 
 use crate::data::Dataset;
 use crate::evaluate::{AllMetrics, Evaluator};
-use crate::gp::{GpOptimizer, GpState};
+use crate::gp::{GpOptimizer, GpState, MetricSpec, MultiTrial, ParEgoOptimizer};
 use crate::search_space::{OptimizeDirection, SearchSpace, TrialConfig};
 
 mod data;
@@ -41,11 +42,12 @@ struct Args {
     #[arg(long)]
     dataset: Option<String>,
 
-    /// Run mode: "random" (default), "bayes", or "scan".
+    /// Run mode: "random" (default), "bayes", "scan", or "pareto".
     /// random: sample random configs with continuous curvature, compute all metrics.
-    /// bayes: Bayesian optimisation over all 7 hyperparameters (including curvature magnitude).
-    ///        Geometry sign is detected automatically unless --geometry is given.
-    /// scan:  sweep each parameter individually from a base config (requires --metric).
+    /// bayes:  Bayesian optimisation over all 7 hyperparameters (requires --metric).
+    ///         Geometry sign is detected automatically unless --geometry is given.
+    /// scan:   sweep each parameter individually from a base config (requires --metric).
+    /// pareto: qParEGO multi-objective optimisation over 10 objectives (no --metric needed).
     #[arg(long, default_value = "random")]
     mode: String,
 
@@ -346,6 +348,243 @@ fn metric_direction(name: &str) -> OptimizeDirection {
         | "cluster_density_measure" => OptimizeDirection::Maximize,
         _ => panic!("Unknown metric: '{}'. See --help for options.", name),
     }
+}
+
+// ─── qParEGO: multi-objective optimisation ────────────────────────────────────
+
+/// Default set of objectives for --mode pareto.
+///
+/// Includes both the 2D (post-projection) and manifold (pre-projection) variants
+/// of the five core DR quality metrics, giving 10 objectives total.
+fn default_pareto_metrics() -> Vec<MetricSpec> {
+    vec![
+        MetricSpec {
+            name: "trustworthiness",
+            direction: OptimizeDirection::Maximize,
+        },
+        MetricSpec {
+            name: "trustworthiness_manifold",
+            direction: OptimizeDirection::Maximize,
+        },
+        MetricSpec {
+            name: "continuity",
+            direction: OptimizeDirection::Maximize,
+        },
+        MetricSpec {
+            name: "continuity_manifold",
+            direction: OptimizeDirection::Maximize,
+        },
+        MetricSpec {
+            name: "normalized_stress",
+            direction: OptimizeDirection::Minimize,
+        },
+        MetricSpec {
+            name: "normalized_stress_manifold",
+            direction: OptimizeDirection::Minimize,
+        },
+        MetricSpec {
+            name: "shepard_goodness",
+            direction: OptimizeDirection::Maximize,
+        },
+        MetricSpec {
+            name: "shepard_goodness_manifold",
+            direction: OptimizeDirection::Maximize,
+        },
+        MetricSpec {
+            name: "neighborhood_hit",
+            direction: OptimizeDirection::Maximize,
+        },
+        MetricSpec {
+            name: "neighborhood_hit_manifold",
+            direction: OptimizeDirection::Maximize,
+        },
+    ]
+}
+
+fn agg_to_metric_vec(m: &AggregatedMetrics, specs: &[MetricSpec]) -> Vec<f64> {
+    specs.iter().map(|s| metric_value(m, s.name)).collect()
+}
+
+fn write_pareto_front(front: &[&MultiTrial], specs: &[MetricSpec], path: &str) {
+    #[derive(Serialize)]
+    struct ParetoEntry<'a> {
+        learning_rate: f64,
+        perplexity_ratio: f64,
+        momentum_main: f64,
+        centering_weight: f64,
+        global_loss_weight: f64,
+        norm_loss_weight: f64,
+        curvature_magnitude: f64,
+        metrics: HashMap<&'a str, f64>,
+    }
+
+    let entries: Vec<ParetoEntry> = front
+        .iter()
+        .map(|t| {
+            let mut metrics = HashMap::new();
+            for (spec, &v) in specs.iter().zip(&t.metrics) {
+                metrics.insert(spec.name, v);
+            }
+            ParetoEntry {
+                learning_rate: t.config.learning_rate,
+                perplexity_ratio: t.config.perplexity_ratio,
+                momentum_main: t.config.momentum_main,
+                centering_weight: t.config.centering_weight,
+                global_loss_weight: t.config.global_loss_weight,
+                norm_loss_weight: t.config.norm_loss_weight,
+                curvature_magnitude: t.config.curvature_magnitude,
+                metrics,
+            }
+        })
+        .collect();
+
+    match serde_json::to_string_pretty(&entries) {
+        Ok(json) => {
+            std::fs::write(path, json).ok();
+        }
+        Err(e) => eprintln!("Failed to write Pareto front: {e}"),
+    }
+}
+
+fn run_pareto(
+    dataset_name: &str,
+    args: &Args,
+    evaluator: Arc<Evaluator>,
+    mp: &MultiProgress,
+    batch_size: usize,
+) {
+    let (geometry, curvature_sign) = resolve_geometry(args, &evaluator);
+    let optimize_curvature = curvature_sign != 0.0;
+
+    let curvature_mag_min = crate::search_space::DEFAULT_CURVATURE_MAG_MIN;
+    let curvature_mag_max = args
+        .curvature_max
+        .abs()
+        .max(args.curvature_min.abs())
+        .max(curvature_mag_min);
+
+    let metrics = default_pareto_metrics();
+    let n_objectives = metrics.len();
+    let mut optimizer = ParEgoOptimizer::new(
+        metrics,
+        optimize_curvature,
+        curvature_mag_min,
+        curvature_mag_max,
+    );
+    let mut rng = fitting_core::synthetic_data::Rng::new(0xdead_beef_cafe_2222);
+
+    let out_path = &args.output;
+    let pb = make_progress_bar(
+        mp,
+        args.n_trials as u64,
+        "{spinner:.green} pareto={msg} [{bar:35.cyan/blue}] {pos}/{len} | front: {prefix}",
+    );
+    pb.set_message(format!("{} (sign={:+.0})", geometry, curvature_sign));
+    pb.set_prefix("0");
+    pb.println(format!(
+        "pareto '{}' ({}) optimising {} objectives, batch_size={}",
+        dataset_name, geometry, n_objectives, batch_size
+    ));
+
+    let mut completed = 0usize;
+    let mut remaining = args.n_trials;
+
+    while remaining > 0 {
+        let this_batch = batch_size.min(remaining);
+        let configs = optimizer.suggest_batch(this_batch, &mut rng);
+
+        let results: Vec<(f64, AggregatedMetrics, u64)> = thread::scope(|s| {
+            configs
+                .iter()
+                .enumerate()
+                .map(|(i, config)| {
+                    let evaluator = &*evaluator;
+                    let actual_curvature = if optimize_curvature {
+                        curvature_sign * config.curvature_magnitude
+                    } else {
+                        0.0
+                    };
+                    let trial_idx = completed + i + 1;
+                    s.spawn(move || {
+                        let pb_iters = ProgressBar::hidden();
+                        let start = std::time::Instant::now();
+                        let all = eval_all_metrics(
+                            evaluator,
+                            config,
+                            actual_curvature,
+                            args.n_seeds,
+                            trial_idx,
+                            &pb_iters,
+                        );
+                        let elapsed = start.elapsed().as_millis() as u64;
+                        (actual_curvature, all, elapsed)
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect()
+        });
+
+        for (config, (actual_curvature, all, elapsed)) in configs.iter().zip(results.iter()) {
+            let metric_vec = agg_to_metric_vec(all, optimizer.metrics.as_slice());
+            optimizer.observe(config.clone(), metric_vec);
+            completed += 1;
+
+            let mut result = TrialResult::new(
+                config,
+                dataset_name,
+                args.n_samples,
+                args.n_seeds,
+                *actual_curvature,
+                *elapsed,
+            )
+            .with_all_metrics(all);
+            result.geometry = Some(geometry.to_string());
+            if optimize_curvature {
+                result.curvature_magnitude = Some(config.curvature_magnitude);
+            }
+            write_result(&result, out_path);
+
+            let front_size = optimizer.pareto_front_indices().len();
+            pb.set_prefix(format!("{}", front_size));
+            pb.println(format!(
+                "pareto '{}' trial {:3}/{} | front={} | {}ms | k={:.3} lr={:.4} perp={:.4}",
+                dataset_name,
+                completed,
+                args.n_trials,
+                front_size,
+                *elapsed,
+                actual_curvature,
+                config.learning_rate,
+                config.perplexity_ratio,
+            ));
+            pb.inc(1);
+        }
+
+        remaining -= this_batch;
+    }
+
+    pb.finish_with_message(format!("{} ({}) done", dataset_name, geometry));
+
+    let front = optimizer.pareto_trials();
+    pb.println(format!("\n=== Pareto front: {} configs ===", front.len()));
+    for t in &front {
+        let metrics_str: Vec<String> = optimizer
+            .metrics
+            .iter()
+            .zip(&t.metrics)
+            .map(|(spec, &v)| format!("{}={:.4}", spec.name, v))
+            .collect();
+        pb.println(format!("  {}", metrics_str.join("  ")));
+    }
+
+    let stem = out_path
+        .trim_end_matches(".jsonl")
+        .trim_end_matches(".json");
+    let front_path = format!("{}_pareto_{}_{}.json", stem, dataset_name, geometry);
+    write_pareto_front(&front, &optimizer.metrics, &front_path);
+    pb.println(format!("Pareto front written to {}", front_path));
 }
 
 // ─── Random search ────────────────────────────────────────────────────────────
@@ -890,6 +1129,9 @@ fn main() {
         eprintln!("Error: --metric is required for --mode {}", args.mode);
         std::process::exit(1);
     }
+    if args.mode == "pareto" && args.metric.is_some() {
+        eprintln!("Note: --metric is ignored for --mode pareto (optimises all objectives).");
+    }
 
     if let Some(parent) = Path::new(&args.output).parent()
         && !parent.as_os_str().is_empty()
@@ -924,9 +1166,16 @@ fn main() {
             args.geometry.as_deref().unwrap_or("auto-detect"),
             args.n_seeds
         ),
+        "pareto" => println!(
+            "Starting qParEGO multi-objective optimisation: {} datasets × {} trials, 10 objectives, geometry={}, seeds={}",
+            dataset_names.len(),
+            args.n_trials,
+            args.geometry.as_deref().unwrap_or("auto-detect"),
+            args.n_seeds
+        ),
         other => {
             eprintln!(
-                "Unknown --mode '{}'. Use 'random', 'scan', or 'bayes'.",
+                "Unknown --mode '{}'. Use 'random', 'scan', 'bayes', or 'pareto'.",
                 other
             );
             std::process::exit(1);
@@ -980,7 +1229,7 @@ fn main() {
     // single-dataset run this is always just n_threads total threads.
     let n_outer = n_threads.min(work.len().max(1));
     println!(
-        "Using {} thread(s) ({} outer dataset worker(s), batch_size={} for bayes).",
+        "Using {} thread(s) ({} outer dataset worker(s), batch_size={} for bayes/pareto).",
         n_threads, n_outer, n_threads,
     );
 
@@ -999,6 +1248,7 @@ fn main() {
                     Some((dataset_name, evaluator)) => match args.mode.as_str() {
                         "scan" => run_scan(&dataset_name, &args, evaluator, &mp),
                         "bayes" => run_bayes(&dataset_name, &args, evaluator, &mp, n_threads),
+                        "pareto" => run_pareto(&dataset_name, &args, evaluator, &mp, n_threads),
                         _ => run_random(&dataset_name, &args, evaluator, &mp),
                     },
                 }
