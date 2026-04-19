@@ -3,7 +3,6 @@ use web_sys::HtmlCanvasElement;
 
 use fitting_core::config::{ScalingLossType, TrainingConfig};
 use fitting_core::embedding::EmbeddingState;
-use fitting_core::metrics;
 use fitting_core::synthetic_data;
 use fitting_core::visualisation::{self, SphericalProjection};
 
@@ -42,11 +41,9 @@ fn parse_projection(s: &str) -> SphericalProjection {
 pub struct EmbeddingRunner {
     state: EmbeddingState,
     canvas: HtmlCanvasElement,
-    labels: Option<Vec<u32>>,
     /// Human-readable names for each integer label, indexed by label value.
     /// When set, the legend shows these names instead of "Label N".
     label_names: Option<Vec<String>>,
-    projection: SphericalProjection,
     /// Current viewport: (center_x, center_y, half_extent). None = auto-fit.
     view: Option<(f64, f64, f64)>,
     /// Auto-fit half-extent from the last render, used to anchor zoom interactions.
@@ -102,9 +99,7 @@ impl EmbeddingRunner {
         Ok(EmbeddingRunner {
             state,
             canvas,
-            labels: Some(synth.labels),
             label_names: None,
-            projection: proj,
             view: None,
             auto_half: 1.0,
         })
@@ -154,9 +149,7 @@ impl EmbeddingRunner {
         Ok(EmbeddingRunner {
             state,
             canvas,
-            labels: Some(labels.to_vec()),
             label_names: None,
-            projection: proj,
             view: None,
             auto_half: 1.0,
         })
@@ -208,9 +201,7 @@ impl EmbeddingRunner {
         Ok(EmbeddingRunner {
             state,
             canvas,
-            labels: Some(labels.to_vec()),
             label_names: None,
-            projection: proj,
             view: None,
             auto_half: 1.0,
         })
@@ -247,9 +238,9 @@ impl EmbeddingRunner {
                 n_points: self.state.n_points,
                 ambient_dim: self.state.ambient_dim,
                 curvature: self.state.config().curvature,
-                labels: self.labels.as_deref(),
+                labels: self.state.labels.as_deref(),
                 label_names: self.label_names.as_deref(),
-                projection: self.projection,
+                projection: self.state.projection,
                 view: self.view,
             },
         )?;
@@ -265,7 +256,7 @@ impl EmbeddingRunner {
             self.state.n_points,
             self.state.ambient_dim,
             self.state.config().curvature,
-            self.projection,
+            self.state.projection,
         )
         .coords
     }
@@ -337,106 +328,33 @@ impl EmbeddingRunner {
     ///
     /// Label-dependent metrics are omitted when no labels are available.
     pub fn compute_metrics(&self) -> Result<JsValue, JsValue> {
-        let n = self.state.n_points;
-        let high_dim_dist = self.state.high_dim_distances();
-        let embed_dist = self.state.embedded_distances();
-
-        let proj = visualisation::project_to_2d(
-            &self.state.points,
-            n,
-            self.state.ambient_dim,
-            self.state.config().curvature,
-            self.projection,
-        );
-        let dist_2d = metrics::euclidean_dist_2d(&proj.coords, n);
-
-        let k = (self.state.config().perplexity as usize).min(n - 2).max(1);
+        let snap = self.state.compute_snapshot();
         let obj = js_sys::Object::new();
-
-        // A. Local structure preservation
-        set_prop(
-            &obj,
-            "trustworthiness_manifold",
-            metrics::trustworthiness(&high_dim_dist, &embed_dist, n, k),
-        )?;
-        set_prop(
-            &obj,
-            "trustworthiness_2d",
-            metrics::trustworthiness(&high_dim_dist, &dist_2d, n, k),
-        )?;
-        set_prop(
-            &obj,
-            "continuity_manifold",
-            metrics::continuity(&high_dim_dist, &embed_dist, n, k),
-        )?;
-        set_prop(
-            &obj,
-            "continuity_2d",
-            metrics::continuity(&high_dim_dist, &dist_2d, n, k),
-        )?;
-        set_prop(
-            &obj,
-            "knn_overlap_manifold",
-            metrics::knn_overlap(&high_dim_dist, &embed_dist, n, k),
-        )?;
-        set_prop(
-            &obj,
-            "knn_overlap_2d",
-            metrics::knn_overlap(&high_dim_dist, &dist_2d, n, k),
-        )?;
-
-        // B. Distance preservation
-        set_prop(
-            &obj,
-            "normalized_stress_manifold",
-            metrics::normalized_stress(&high_dim_dist, &embed_dist, n),
-        )?;
-        set_prop(
-            &obj,
-            "normalized_stress_2d",
-            metrics::normalized_stress(&high_dim_dist, &dist_2d, n),
-        )?;
-        set_prop(
-            &obj,
-            "shepard_goodness_manifold",
-            metrics::shepard_goodness(&high_dim_dist, &embed_dist, n),
-        )?;
-        set_prop(
-            &obj,
-            "shepard_goodness_2d",
-            metrics::shepard_goodness(&high_dim_dist, &dist_2d, n),
-        )?;
-
-        // C. Label-dependent metrics
-        if let Some(labels) = &self.labels {
-            set_prop(
-                &obj,
-                "neighborhood_hit_manifold",
-                metrics::neighborhood_hit(&embed_dist, labels, n, k),
-            )?;
-            set_prop(
-                &obj,
-                "neighborhood_hit_2d",
-                metrics::neighborhood_hit(&dist_2d, labels, n, k),
-            )?;
-
-            set_prop(
-                &obj,
-                "class_density_measure",
-                metrics::class_density_measure(&proj.coords, labels, n),
-            )?;
-            set_prop(
-                &obj,
-                "cluster_density_measure",
-                metrics::cluster_density_measure(&proj.coords, labels, n),
-            )?;
-            set_prop(
-                &obj,
-                "davies_bouldin_ratio",
-                metrics::davies_bouldin_ratio(&high_dim_dist, &proj.coords, labels, n),
-            )?;
+        set_prop(&obj, "trustworthiness_manifold", snap.trustworthiness_manifold)?;
+        set_prop(&obj, "trustworthiness_2d", snap.trustworthiness_2d)?;
+        set_prop(&obj, "continuity_manifold", snap.continuity_manifold)?;
+        set_prop(&obj, "continuity_2d", snap.continuity_2d)?;
+        set_prop(&obj, "knn_overlap_manifold", snap.knn_overlap_manifold)?;
+        set_prop(&obj, "knn_overlap_2d", snap.knn_overlap_2d)?;
+        set_prop(&obj, "normalized_stress_manifold", snap.normalized_stress_manifold)?;
+        set_prop(&obj, "normalized_stress_2d", snap.normalized_stress_2d)?;
+        set_prop(&obj, "shepard_goodness_manifold", snap.shepard_goodness_manifold)?;
+        set_prop(&obj, "shepard_goodness_2d", snap.shepard_goodness_2d)?;
+        if let Some(v) = snap.neighborhood_hit_manifold {
+            set_prop(&obj, "neighborhood_hit_manifold", v)?;
         }
-
+        if let Some(v) = snap.neighborhood_hit_2d {
+            set_prop(&obj, "neighborhood_hit_2d", v)?;
+        }
+        if let Some(v) = snap.class_density_measure {
+            set_prop(&obj, "class_density_measure", v)?;
+        }
+        if let Some(v) = snap.cluster_density_measure {
+            set_prop(&obj, "cluster_density_measure", v)?;
+        }
+        if let Some(v) = snap.davies_bouldin_ratio {
+            set_prop(&obj, "davies_bouldin_ratio", v)?;
+        }
         Ok(obj.into())
     }
 }

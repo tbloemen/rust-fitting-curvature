@@ -43,11 +43,11 @@ pub struct EmbeddingState {
     /// Non-empty only for `from_distances` when `norm_loss_weight > 0`.
     /// When non-empty, the depth norm loss is used instead of the feature norm loss.
     target_norms: Vec<f64>,
-    // Metric recording ---------------------------------------------------
+    // Metric computation state -------------------------------------------
     /// Class labels for label-dependent metrics; `None` if unavailable.
-    labels: Option<Vec<u32>>,
+    pub labels: Option<Vec<u32>>,
     /// Projection used for the 2D ("after projecting") metric variant.
-    projection: SphericalProjection,
+    pub projection: SphericalProjection,
 }
 
 impl EmbeddingState {
