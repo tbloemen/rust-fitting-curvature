@@ -10,9 +10,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::data::Dataset;
-use crate::evaluate::{AllMetrics, Evaluator};
-use crate::gp::{GpOptimizer, GpState, MetricSpec, MultiTrial, ParEgoOptimizer};
-use crate::search_space::{OptimizeDirection, SearchSpace, TrialConfig};
+use crate::evaluate::{AllMetrics, Evaluator, Metric};
+use crate::gp::{GpOptimizer, GpState, MultiTrial, ParEgoOptimizer};
+use crate::search_space::{SearchSpace, TrialConfig};
 
 mod data;
 mod evaluate;
@@ -173,7 +173,7 @@ impl TrialResult {
         }
     }
 
-    fn with_all_metrics(mut self, m: &AggregatedMetrics) -> Self {
+    fn with_all_metrics(mut self, m: &AllMetrics) -> Self {
         self.trustworthiness = Some(m.trustworthiness);
         self.trustworthiness_manifold = Some(m.trustworthiness_manifold);
         self.continuity = Some(m.continuity);
@@ -240,25 +240,6 @@ fn eval_single_metric(
     mean_std(&values)
 }
 
-struct AggregatedMetrics {
-    trustworthiness: f64,
-    trustworthiness_manifold: f64,
-    continuity: f64,
-    continuity_manifold: f64,
-    knn_overlap: f64,
-    knn_overlap_manifold: f64,
-    neighborhood_hit: f64,
-    neighborhood_hit_manifold: f64,
-    normalized_stress: f64,
-    normalized_stress_manifold: f64,
-    shepard_goodness: f64,
-    shepard_goodness_manifold: f64,
-    davies_bouldin_ratio: f64,
-    dunn_index: f64,
-    class_density_measure: f64,
-    cluster_density_measure: f64,
-}
-
 fn eval_all_metrics(
     evaluator: &Evaluator,
     config: &TrialConfig,
@@ -266,35 +247,13 @@ fn eval_all_metrics(
     n_seeds: usize,
     trial_idx: usize,
     pb_iters: &ProgressBar,
-) -> AggregatedMetrics {
+) -> AllMetrics {
     let samples: Vec<AllMetrics> = (0..n_seeds)
         .map(|si| {
             evaluator.compute_all_metrics(config, curvature, trial_seed(trial_idx, si), pb_iters)
         })
         .collect();
-
-    let avg = |f: fn(&AllMetrics) -> f64| -> f64 {
-        samples.iter().map(f).sum::<f64>() / samples.len() as f64
-    };
-
-    AggregatedMetrics {
-        trustworthiness: avg(|m| m.trustworthiness),
-        trustworthiness_manifold: avg(|m| m.trustworthiness_manifold),
-        continuity: avg(|m| m.continuity),
-        continuity_manifold: avg(|m| m.continuity_manifold),
-        knn_overlap: avg(|m| m.knn_overlap),
-        knn_overlap_manifold: avg(|m| m.knn_overlap_manifold),
-        neighborhood_hit: avg(|m| m.neighborhood_hit),
-        neighborhood_hit_manifold: avg(|m| m.neighborhood_hit_manifold),
-        normalized_stress: avg(|m| m.normalized_stress),
-        normalized_stress_manifold: avg(|m| m.normalized_stress_manifold),
-        shepard_goodness: avg(|m| m.shepard_goodness),
-        shepard_goodness_manifold: avg(|m| m.shepard_goodness_manifold),
-        davies_bouldin_ratio: avg(|m| m.davies_bouldin_ratio),
-        dunn_index: avg(|m| m.dunn_index),
-        class_density_measure: avg(|m| m.class_density_measure),
-        cluster_density_measure: avg(|m| m.cluster_density_measure),
-    }
+    AllMetrics::mean(&samples)
 }
 
 fn make_progress_bar(mp: &MultiProgress, total: u64, template: &str) -> ProgressBar {
@@ -307,47 +266,15 @@ fn make_progress_bar(mp: &MultiProgress, total: u64, template: &str) -> Progress
     pb
 }
 
-fn metric_value(m: &AggregatedMetrics, name: &str) -> f64 {
-    match name {
-        "trustworthiness" => m.trustworthiness,
-        "trustworthiness_manifold" => m.trustworthiness_manifold,
-        "continuity" => m.continuity,
-        "continuity_manifold" => m.continuity_manifold,
-        "knn_overlap" => m.knn_overlap,
-        "knn_overlap_manifold" => m.knn_overlap_manifold,
-        "neighborhood_hit" => m.neighborhood_hit,
-        "neighborhood_hit_manifold" => m.neighborhood_hit_manifold,
-        "normalized_stress" => m.normalized_stress,
-        "normalized_stress_manifold" => m.normalized_stress_manifold,
-        "shepard_goodness" => m.shepard_goodness,
-        "shepard_goodness_manifold" => m.shepard_goodness_manifold,
-        "davies_bouldin_ratio" => m.davies_bouldin_ratio,
-        "dunn_index" => m.dunn_index,
-        "class_density_measure" => m.class_density_measure,
-        "cluster_density_measure" => m.cluster_density_measure,
-        _ => panic!("Unknown metric: '{}'. See --help for options.", name),
-    }
-}
-
-fn metric_direction(name: &str) -> OptimizeDirection {
-    match name {
-        "normalized_stress" | "normalized_stress_manifold" => OptimizeDirection::Minimize,
-        "trustworthiness"
-        | "trustworthiness_manifold"
-        | "continuity"
-        | "continuity_manifold"
-        | "knn_overlap"
-        | "knn_overlap_manifold"
-        | "neighborhood_hit"
-        | "neighborhood_hit_manifold"
-        | "shepard_goodness"
-        | "shepard_goodness_manifold"
-        | "davies_bouldin_ratio"
-        | "dunn_index"
-        | "class_density_measure"
-        | "cluster_density_measure" => OptimizeDirection::Maximize,
-        _ => panic!("Unknown metric: '{}'. See --help for options.", name),
-    }
+fn parse_metric(name: &str) -> Metric {
+    Metric::from_str(name).unwrap_or_else(|| {
+        eprintln!(
+            "Unknown metric '{}'. Valid options: {}",
+            name,
+            Metric::valid_names()
+        );
+        std::process::exit(1);
+    })
 }
 
 // ─── qParEGO: multi-objective optimisation ────────────────────────────────────
@@ -356,56 +283,26 @@ fn metric_direction(name: &str) -> OptimizeDirection {
 ///
 /// Includes both the 2D (post-projection) and manifold (pre-projection) variants
 /// of the five core DR quality metrics, giving 10 objectives total.
-fn default_pareto_metrics() -> Vec<MetricSpec> {
+fn default_pareto_metrics() -> Vec<Metric> {
     vec![
-        MetricSpec {
-            name: "trustworthiness",
-            direction: OptimizeDirection::Maximize,
-        },
-        MetricSpec {
-            name: "trustworthiness_manifold",
-            direction: OptimizeDirection::Maximize,
-        },
-        MetricSpec {
-            name: "continuity",
-            direction: OptimizeDirection::Maximize,
-        },
-        MetricSpec {
-            name: "continuity_manifold",
-            direction: OptimizeDirection::Maximize,
-        },
-        MetricSpec {
-            name: "normalized_stress",
-            direction: OptimizeDirection::Minimize,
-        },
-        MetricSpec {
-            name: "normalized_stress_manifold",
-            direction: OptimizeDirection::Minimize,
-        },
-        MetricSpec {
-            name: "shepard_goodness",
-            direction: OptimizeDirection::Maximize,
-        },
-        MetricSpec {
-            name: "shepard_goodness_manifold",
-            direction: OptimizeDirection::Maximize,
-        },
-        MetricSpec {
-            name: "neighborhood_hit",
-            direction: OptimizeDirection::Maximize,
-        },
-        MetricSpec {
-            name: "neighborhood_hit_manifold",
-            direction: OptimizeDirection::Maximize,
-        },
+        Metric::Trustworthiness,
+        Metric::TrustworthinessManifold,
+        Metric::Continuity,
+        Metric::ContinuityManifold,
+        Metric::NormalizedStress,
+        Metric::NormalizedStressManifold,
+        Metric::ShepardGoodness,
+        Metric::ShepardGoodnessManifold,
+        Metric::NeighborhoodHit,
+        Metric::NeighborhoodHitManifold,
     ]
 }
 
-fn agg_to_metric_vec(m: &AggregatedMetrics, specs: &[MetricSpec]) -> Vec<f64> {
-    specs.iter().map(|s| metric_value(m, s.name)).collect()
+fn metrics_to_vec(m: &AllMetrics, metrics: &[Metric]) -> Vec<f64> {
+    metrics.iter().map(|metric| metric.value(m)).collect()
 }
 
-fn write_pareto_front(front: &[&MultiTrial], specs: &[MetricSpec], path: &str) {
+fn write_pareto_front(front: &[&MultiTrial], metrics: &[Metric], path: &str) {
     #[derive(Serialize)]
     struct ParetoEntry<'a> {
         learning_rate: f64,
@@ -421,9 +318,9 @@ fn write_pareto_front(front: &[&MultiTrial], specs: &[MetricSpec], path: &str) {
     let entries: Vec<ParetoEntry> = front
         .iter()
         .map(|t| {
-            let mut metrics = HashMap::new();
-            for (spec, &v) in specs.iter().zip(&t.metrics) {
-                metrics.insert(spec.name, v);
+            let mut metric_map = HashMap::new();
+            for (metric, &v) in metrics.iter().zip(&t.metrics) {
+                metric_map.insert(metric.name(), v);
             }
             ParetoEntry {
                 learning_rate: t.config.learning_rate,
@@ -433,7 +330,7 @@ fn write_pareto_front(front: &[&MultiTrial], specs: &[MetricSpec], path: &str) {
                 global_loss_weight: t.config.global_loss_weight,
                 norm_loss_weight: t.config.norm_loss_weight,
                 curvature_magnitude: t.config.curvature_magnitude,
-                metrics,
+                metrics: metric_map,
             }
         })
         .collect();
@@ -493,7 +390,7 @@ fn run_pareto(
         let this_batch = batch_size.min(remaining);
         let configs = optimizer.suggest_batch(this_batch, &mut rng);
 
-        let results: Vec<(f64, AggregatedMetrics, u64)> = thread::scope(|s| {
+        let results: Vec<(f64, AllMetrics, u64)> = thread::scope(|s| {
             configs
                 .iter()
                 .enumerate()
@@ -527,7 +424,7 @@ fn run_pareto(
         });
 
         for (config, (actual_curvature, all, elapsed)) in configs.iter().zip(results.iter()) {
-            let metric_vec = agg_to_metric_vec(all, optimizer.metrics.as_slice());
+            let metric_vec = metrics_to_vec(all, optimizer.metrics.as_slice());
             optimizer.observe(config.clone(), metric_vec);
             completed += 1;
 
@@ -574,7 +471,7 @@ fn run_pareto(
             .metrics
             .iter()
             .zip(&t.metrics)
-            .map(|(spec, &v)| format!("{}={:.4}", spec.name, v))
+            .map(|(spec, &v)| format!("{}={:.4}", spec.name(), v))
             .collect();
         pb.println(format!("  {}", metrics_str.join("  ")));
     }
@@ -725,8 +622,8 @@ fn run_bayes(
     mp: &MultiProgress,
     batch_size: usize,
 ) {
-    let metric = args.metric.as_deref().unwrap();
-    let direction = metric_direction(metric);
+    let metric = parse_metric(args.metric.as_deref().unwrap());
+    let direction = metric.direction();
 
     let (geometry, curvature_sign) = resolve_geometry(args, &evaluator);
     let optimize_curvature = curvature_sign != 0.0;
@@ -749,7 +646,7 @@ fn run_bayes(
 
     // Warm-start from prior results matching this dataset + geometry.
     let n_warm = if let Some(warm_file) = &args.warm_start {
-        let trials = load_warm_start_trials(warm_file, metric, dataset_name, geometry);
+        let trials = load_warm_start_trials(warm_file, metric.name(), dataset_name, geometry);
         let n = trials.len();
         for (config, metric_val) in trials {
             optimizer.observe(config, metric_val);
@@ -788,7 +685,7 @@ fn run_bayes(
         let configs = optimizer.suggest_batch(this_batch, &mut rng);
 
         // Evaluate all configs in this batch in parallel, then collect results.
-        let results: Vec<(f64, AggregatedMetrics, u64)> = thread::scope(|s| {
+        let results: Vec<(f64, AllMetrics, u64)> = thread::scope(|s| {
             configs
                 .iter()
                 .enumerate()
@@ -823,7 +720,7 @@ fn run_bayes(
 
         // Observe all results and update the GP before the next round.
         for (config, (actual_curvature, all, elapsed)) in configs.iter().zip(results.iter()) {
-            let mean = metric_value(all, metric);
+            let mean = metric.value(all);
             optimizer.observe(config.clone(), mean);
             completed += 1;
 
@@ -850,7 +747,7 @@ fn run_bayes(
                 dataset_name,
                 completed,
                 args.n_trials,
-                metric,
+                metric.name(),
                 mean,
                 best,
                 *elapsed,
@@ -873,7 +770,7 @@ fn run_bayes(
              centering={:.3}  global_loss={:.3}  norm={:.4}",
             dataset_name,
             geometry,
-            metric,
+            metric.name(),
             optimizer.best_trial(),
             curvature_sign * best.curvature_magnitude,
             best.learning_rate,

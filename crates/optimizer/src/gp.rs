@@ -15,6 +15,7 @@ use std::f64::consts::PI;
 use fitting_core::synthetic_data::Rng;
 use serde::Serialize;
 
+use crate::evaluate::Metric;
 use crate::search_space::{OptimizeDirection, SearchSpace, TrialConfig};
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -623,24 +624,17 @@ pub fn expected_improvement(mu: f64, sigma: f64, f_best: f64) -> f64 {
 // existing GP + EI machinery.  Across many trials, different λ vectors cover
 // different parts of the Pareto front without ever computing a hypervolume.
 
-/// One optimisation objective: a metric name and whether to maximise or minimise it.
-#[derive(Debug, Clone)]
-pub struct MetricSpec {
-    pub name: &'static str,
-    pub direction: OptimizeDirection,
-}
-
 /// A single observed trial with all objective values.
 #[derive(Debug, Clone)]
 pub struct MultiTrial {
     pub config: TrialConfig,
-    /// Raw metric values in the same order as the `MetricSpec` list.
+    /// Raw metric values in the same order as the `metrics` list.
     pub metrics: Vec<f64>,
 }
 
 pub struct ParEgoOptimizer {
     pub trials: Vec<MultiTrial>,
-    pub metrics: Vec<MetricSpec>,
+    pub metrics: Vec<Metric>,
     optimize_curvature: bool,
     curvature_mag_min: f64,
     curvature_mag_max: f64,
@@ -649,7 +643,7 @@ pub struct ParEgoOptimizer {
 
 impl ParEgoOptimizer {
     pub fn new(
-        metrics: Vec<MetricSpec>,
+        metrics: Vec<Metric>,
         optimize_curvature: bool,
         curvature_mag_min: f64,
         curvature_mag_max: f64,
@@ -712,7 +706,7 @@ impl ParEgoOptimizer {
         metrics
             .iter()
             .enumerate()
-            .map(|(i, &v)| match self.metrics[i].direction {
+            .map(|(i, &v)| match self.metrics[i].direction() {
                 OptimizeDirection::Maximize => v,
                 OptimizeDirection::Minimize => -v,
             })
