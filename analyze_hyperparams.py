@@ -75,15 +75,11 @@ ALL_PARAMS = [
 
 LOG_SCALE_PARAMS = {"learning_rate", "perplexity", "perplexity_ratio"}
 CATEGORICAL_PARAMS: set[str] = set()
-# Metrics where lower is better (will be handled accordingly in plots).
-MINIMIZE_METRICS = {"geodesic_distortion_gu2019", "geodesic_distortion_mse"}
 
 ALL_METRICS = [
     "trustworthiness",
     "continuity",
     "knn_overlap",
-    "geodesic_distortion_gu2019",
-    "geodesic_distortion_mse",
     "davies_bouldin_ratio",
     "dunn_index",
     "class_density_measure",
@@ -418,8 +414,8 @@ def plot_metric_correlation(records: list[dict], out_path: str) -> None:
                 v1, v2 = zip(*vals)
                 # Negate minimisation metrics so that positive ρ always means
                 # 'both metrics agree in direction'.
-                s1 = -1 if m1 in MINIMIZE_METRICS else 1
-                s2 = -1 if m2 in MINIMIZE_METRICS else 1
+                s1 = 1
+                s2 = 1
                 v1 = tuple(s1 * x for x in v1)
                 v2 = tuple(s2 * x for x in v2)
                 rho, _ = stats.spearmanr(v1, v2)
@@ -618,10 +614,8 @@ def plot_marginal_effects(
             ax.set_xscale("log")
         ax.set_title(param, fontsize=9)
         ax.set_xlabel(param + (" (log)" if is_log else ""), fontsize=7)
-        ylabel = metric_label + (
-            " (lower=better)" if metric in MINIMIZE_METRICS else ""
-        )
-        ax.set_ylabel(ylabel, fontsize=7)
+
+        ax.set_ylabel(metric_label, fontsize=7)
         ax.tick_params(labelsize=7)
 
     for ax in axes_flat[n_p:]:
@@ -672,7 +666,7 @@ def _good_region_data(
         return {}
     n_top = max(1, int(len(valid) * top_pct))
     ordered = sorted(valid, key=lambda r: get_metric_value(r, metric) or 0.0)
-    top_records = ordered[:n_top] if metric in MINIMIZE_METRICS else ordered[-n_top:]
+    top_records = ordered[-n_top:]
 
     result: dict[str, tuple[float, float, float]] = {}
     for param in continuous_params:
@@ -715,7 +709,7 @@ def print_good_regions(
     groups = [("All", records)] + [
         (geo, [r for r in records if r.get("geometry") == geo]) for geo in all_geos
     ]
-    direction = "lower=better" if metric in MINIMIZE_METRICS else "higher=better"
+    direction = "higher=better"
     print(
         f"\nGood regions — top {int(top_pct * 100)}% runs by "
         f"{metric or 'auto metric'}  ({direction})"
@@ -726,9 +720,7 @@ def print_good_regions(
             continue
         n_top = max(1, int(len(valid) * top_pct))
         ordered = sorted(valid, key=lambda r: get_metric_value(r, metric) or 0.0)
-        top_records = (
-            ordered[:n_top] if metric in MINIMIZE_METRICS else ordered[-n_top:]
-        )
+        top_records = ordered[-n_top:]
         print(f"\n  {group_name}  (n={len(valid)}, top {n_top}):")
         print(f"  {'param':<35} {'p10':>10} {'p50':>10} {'p90':>10}")
         print("  " + "-" * 70)
@@ -795,7 +787,7 @@ def plot_good_regions(
     axes[0].set_yticklabels(continuous_params, fontsize=7)
     axes[0].invert_yaxis()
 
-    metric_dir = " (lower=better)" if metric in MINIMIZE_METRICS else " (higher=better)"
+    metric_dir = " (higher=better)"
     fig.suptitle(
         f"Good regions: p10–p90 of top {int(top_pct * 100)}% runs  ·  "
         f"metric: {metric or 'auto'}{metric_dir}\n"
@@ -1562,9 +1554,7 @@ def plot_scan_optimal(
                 continue
             xs = [get_param_value(r, param) or 0 for r in group]
             ys = [get_metric_value(r, metric) for r in group]
-            best_idx = int(
-                np.argmin(ys) if metric in MINIMIZE_METRICS else np.argmax(ys)  # type: ignore
-            )
+            best_idx = int(np.argmax(ys))  # type: ignore
             val_matrix[i, j] = ys[best_idx]
             # Normalise position: 0 = lowest x, 1 = highest x
             x_min, x_max = min(xs), max(xs)

@@ -46,7 +46,11 @@ fn knn_index_sets(dist: &[f64], n: usize, k: usize) -> Vec<Vec<usize>> {
 }
 
 /// Compute pairwise Euclidean distance matrix from 2D points (flat [x,y] pairs).
-fn euclidean_dist_2d(pts_2d: &[f64], n: usize) -> Vec<f64> {
+///
+/// Use this to obtain "after-projection" distances from the output of
+/// `visualisation::project_to_2d`, so that any metric can be evaluated on
+/// what the viewer actually sees rather than on the manifold geometry.
+pub fn euclidean_dist_2d(pts_2d: &[f64], n: usize) -> Vec<f64> {
     let mut dist = vec![0.0; n * n];
     for i in 0..n {
         for j in (i + 1)..n {
@@ -521,6 +525,220 @@ pub fn davies_bouldin_ratio(
         return 0.0;
     }
     db_high / db_proj
+}
+
+// ---------------------------------------------------------------------------
+// E. Distance-rank preservation
+// ---------------------------------------------------------------------------
+
+/// Assign 0-based ranks to `values` (rank 0 = smallest value).
+fn rank_vector(values: &[f64]) -> Vec<usize> {
+    let mut indices: Vec<usize> = (0..values.len()).collect();
+    indices.sort_by(|&a, &b| {
+        values[a]
+            .partial_cmp(&values[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut ranks = vec![0usize; values.len()];
+    for (rank, &idx) in indices.iter().enumerate() {
+        ranks[idx] = rank;
+    }
+    ranks
+}
+
+/// Scale-normalized stress (SNS) from Damrich & Hamprecht 2022.
+///
+/// Standard normalized stress is scale-sensitive: embeddings that preserve
+/// distance shape but differ in overall scale appear poor. SNS removes this
+/// by finding the optimal scale factor α before computing stress:
+///
+/// `α  = Σ_{i,j} d(x,x') · ‖y−y'‖ / Σ_{i,j} d(x,x')²`
+/// `SNS = Σ_{i,j} [d(x,x') − α·‖y−y'‖]² / Σ_{i,j} d(x,x')²`
+///
+/// Returns a value in [0, 1], with **0 being best**. Because α is optimised
+/// out, manifold and 2D variants are identical for Euclidean embeddings where
+/// `project_to_2d` only rescales coordinates for display.
+pub fn normalized_stress(high_dim_distances: &[f64], embedded_distances: &[f64], n: usize) -> f64 {
+    let mut cross = 0.0;
+    let mut embed_sq = 0.0;
+    let mut high_sq = 0.0;
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let d_h = high_dim_distances[i * n + j];
+            let d_e = embedded_distances[i * n + j];
+            cross += d_h * d_e;
+            embed_sq += d_e * d_e;
+            high_sq += d_h * d_h;
+        }
+    }
+    if high_sq < 1e-12 {
+        return 0.0;
+    }
+    let alpha = if embed_sq < 1e-12 {
+        1.0
+    } else {
+        cross / embed_sq
+    };
+
+    let mut numerator = 0.0;
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let d_h = high_dim_distances[i * n + j];
+            let d_e = embedded_distances[i * n + j];
+            let diff = d_h - alpha * d_e;
+            numerator += diff * diff;
+        }
+    }
+    (numerator / high_sq).sqrt()
+}
+
+/// Neighborhood hit (van der Maaten 2009).
+///
+/// Measures how well the k-nearest-neighbor structure in the embedding aligns
+/// with class labels: for each point, the fraction of its k-NN in the
+/// embedding that share the same label, averaged over all points.
+///
+/// `M_NH = (1/N) * sum_i |{j ∈ kNN_embed(i) : label[j] = label[i]}| / k`
+///
+/// Returns a value in [0, 1], with **1 being best** (all k-NN same-class).
+/// Requires labeled data. Pass manifold geodesic or 2D Euclidean distances
+/// for the before/after projection distinction.
+pub fn neighborhood_hit(embedded_distances: &[f64], labels: &[u32], n: usize, k: usize) -> f64 {
+    let k = k.min(n - 1);
+    if k == 0 {
+        return 1.0;
+    }
+
+    let knn = knn_index_sets(embedded_distances, n, k);
+    let mut total = 0.0;
+    for i in 0..n {
+        let same = knn[i].iter().filter(|&&j| labels[j] == labels[i]).count();
+        total += same as f64 / k as f64;
+    }
+    total / n as f64
+}
+
+/// Shepard goodness (Spearman rank correlation of pairwise distances).
+///
+/// Computes the Spearman rank correlation between all N*(N-1)/2 upper-triangle
+/// pairwise distances in the original space and in the embedding, giving a
+/// scalar measure of how well the global rank-order of distances is preserved.
+///
+/// Returns a value in [0, 1], with **1 being best** (perfect rank order
+/// preservation).  The result is clipped to 0 from below since negative
+/// correlations are meaningless for projection quality.
+pub fn shepard_goodness(high_dim_distances: &[f64], embedded_distances: &[f64], n: usize) -> f64 {
+    let m = n * (n - 1) / 2;
+    if m < 2 {
+        return 1.0;
+    }
+
+    let mut d_high = Vec::with_capacity(m);
+    let mut d_embed = Vec::with_capacity(m);
+    for i in 0..n {
+        for j in (i + 1)..n {
+            d_high.push(high_dim_distances[i * n + j]);
+            d_embed.push(embedded_distances[i * n + j]);
+        }
+    }
+
+    let ranks_high = rank_vector(&d_high);
+    let ranks_embed = rank_vector(&d_embed);
+
+    // Spearman: r_s = 1 - 6 * sum(d_i^2) / (m * (m^2 - 1))
+    let sum_sq: f64 = ranks_high
+        .iter()
+        .zip(ranks_embed.iter())
+        .map(|(&rh, &re)| {
+            let diff = rh as f64 - re as f64;
+            diff * diff
+        })
+        .sum();
+
+    let denom = m as f64 * (m as f64 * m as f64 - 1.0);
+    if denom < 1e-12 {
+        return 1.0;
+    }
+
+    (1.0 - 6.0 * sum_sq / denom).max(0.0)
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot
+// ---------------------------------------------------------------------------
+
+/// All quality metrics for a completed embedding, in both manifold and
+/// 2D-projected variants (the "before" / "after projecting" distinction).
+#[derive(Debug, Clone)]
+pub struct MetricsSnapshot {
+    // A. Local structure preservation
+    pub trustworthiness_manifold: f64,
+    pub trustworthiness_2d: f64,
+    pub continuity_manifold: f64,
+    pub continuity_2d: f64,
+    pub knn_overlap_manifold: f64,
+    pub knn_overlap_2d: f64,
+    // B. Distance preservation
+    pub normalized_stress_manifold: f64,
+    pub normalized_stress_2d: f64,
+    pub shepard_goodness_manifold: f64,
+    pub shepard_goodness_2d: f64,
+    // C. Label-dependent (None when no labels provided)
+    pub neighborhood_hit_manifold: Option<f64>,
+    pub neighborhood_hit_2d: Option<f64>,
+    // D. Class separation — 2D only, label-dependent
+    pub class_density_measure: Option<f64>,
+    pub cluster_density_measure: Option<f64>,
+    pub davies_bouldin_ratio: Option<f64>,
+}
+
+/// Compute a full metrics snapshot.
+///
+/// `high_dim_dist` — pairwise distances in input space.
+/// `embed_dist`    — manifold geodesic distances (before projection).
+/// `pts_2d`        — flat (x,y) pairs from `project_to_2d` (after projection).
+/// `labels`        — optional class labels; label-dependent metrics are `None` when absent.
+/// `k`             — neighbourhood size used for kNN metrics.
+pub fn compute_snapshot(
+    high_dim_dist: &[f64],
+    embed_dist: &[f64],
+    pts_2d: &[f64],
+    labels: Option<&[u32]>,
+    n: usize,
+    k: usize,
+) -> MetricsSnapshot {
+    let dist_2d = euclidean_dist_2d(pts_2d, n);
+
+    let (neighborhood_hit_manifold, neighborhood_hit_2d, class_density, cluster_density, db_ratio) =
+        if let Some(lbl) = labels {
+            (
+                Some(neighborhood_hit(embed_dist, lbl, n, k)),
+                Some(neighborhood_hit(&dist_2d, lbl, n, k)),
+                Some(class_density_measure(pts_2d, lbl, n)),
+                Some(cluster_density_measure(pts_2d, lbl, n)),
+                Some(davies_bouldin_ratio(high_dim_dist, pts_2d, lbl, n)),
+            )
+        } else {
+            (None, None, None, None, None)
+        };
+
+    MetricsSnapshot {
+        trustworthiness_manifold: trustworthiness(high_dim_dist, embed_dist, n, k),
+        trustworthiness_2d: trustworthiness(high_dim_dist, &dist_2d, n, k),
+        continuity_manifold: continuity(high_dim_dist, embed_dist, n, k),
+        continuity_2d: continuity(high_dim_dist, &dist_2d, n, k),
+        knn_overlap_manifold: knn_overlap(high_dim_dist, embed_dist, n, k),
+        knn_overlap_2d: knn_overlap(high_dim_dist, &dist_2d, n, k),
+        normalized_stress_manifold: normalized_stress(high_dim_dist, embed_dist, n),
+        normalized_stress_2d: normalized_stress(high_dim_dist, &dist_2d, n),
+        shepard_goodness_manifold: shepard_goodness(high_dim_dist, embed_dist, n),
+        shepard_goodness_2d: shepard_goodness(high_dim_dist, &dist_2d, n),
+        neighborhood_hit_manifold,
+        neighborhood_hit_2d,
+        class_density_measure: class_density,
+        cluster_density_measure: cluster_density,
+        davies_bouldin_ratio: db_ratio,
+    }
 }
 
 /// Dunn index: ratio of minimum inter-cluster distance to maximum intra-cluster diameter.

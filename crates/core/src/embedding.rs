@@ -9,8 +9,10 @@ use crate::kl_divergence::{
 use crate::manifolds;
 use crate::manifolds::Manifold;
 use crate::matrices::{compute_euclidean_distance_matrix, pca, pca_from_distances};
+use crate::metrics::{self, MetricsSnapshot};
 use crate::optimizer::RiemannianSGDMomentum;
 use crate::scaling_loss;
+use crate::visualisation::{self, SphericalProjection};
 
 /// Embedding state for step-by-step iteration.
 ///
@@ -41,6 +43,11 @@ pub struct EmbeddingState {
     /// Non-empty only for `from_distances` when `norm_loss_weight > 0`.
     /// When non-empty, the depth norm loss is used instead of the feature norm loss.
     target_norms: Vec<f64>,
+    // Metric computation state -------------------------------------------
+    /// Class labels for label-dependent metrics; `None` if unavailable.
+    pub labels: Option<Vec<u32>>,
+    /// Projection used for the 2D ("after projecting") metric variant.
+    pub projection: SphericalProjection,
 }
 
 impl EmbeddingState {
@@ -98,6 +105,8 @@ impl EmbeddingState {
             n_features,
             precomputed_distances: Vec::new(),
             target_norms: Vec::new(),
+            labels: None,
+            projection: SphericalProjection::AzimuthalEquidistant,
         }
     }
 
@@ -188,7 +197,46 @@ impl EmbeddingState {
             n_features: 0,
             precomputed_distances: distances.to_vec(),
             target_norms,
+            labels: None,
+            projection: SphericalProjection::AzimuthalEquidistant,
         }
+    }
+
+    /// Set class labels for label-dependent metrics (neighbourhood hit, class/cluster density, DB ratio).
+    pub fn with_labels(mut self, labels: Vec<u32>) -> Self {
+        self.labels = Some(labels);
+        self
+    }
+
+    /// Set the spherical projection used when computing "after-projection" (2D) metrics.
+    pub fn with_projection(mut self, projection: SphericalProjection) -> Self {
+        self.projection = projection;
+        self
+    }
+
+    /// Compute a full metrics snapshot for the current embedding state.
+    pub fn compute_snapshot(&self) -> MetricsSnapshot {
+        let n = self.n_points;
+        let k = (self.config.perplexity as usize)
+            .min(n.saturating_sub(2))
+            .max(1);
+        let high_dim = self.high_dim_distances();
+        let embed_dist = self.embedded_distances();
+        let proj = visualisation::project_to_2d(
+            &self.points,
+            n,
+            self.ambient_dim,
+            self.config.curvature,
+            self.projection,
+        );
+        metrics::compute_snapshot(
+            &high_dim,
+            &embed_dist,
+            &proj.coords,
+            self.labels.as_deref(),
+            n,
+            k,
+        )
     }
 
     /// Run one training iteration. Returns the current phase name.
@@ -325,14 +373,13 @@ impl EmbeddingState {
         self.manifold
             .center(&mut self.points, n_points, ambient_dim);
 
-        let phase = if self.iteration < self.config.early_exaggeration_iterations {
+        self.iteration += 1;
+
+        if self.iteration <= self.config.early_exaggeration_iterations {
             "early"
         } else {
             "main"
-        };
-
-        self.iteration += 1;
-        phase
+        }
     }
 
     /// Whether all iterations have been completed.

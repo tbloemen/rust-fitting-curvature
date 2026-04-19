@@ -5,6 +5,7 @@ use fitting_core::config::{InitMethod, ScalingLossType, TrainingConfig};
 use fitting_core::embedding::EmbeddingState;
 use fitting_core::matrices::get_default_init_scale;
 use fitting_core::synthetic_data::Rng;
+use fitting_core::visualisation::SphericalProjection;
 
 fn create_test_data(n_samples: usize, n_features: usize, seed: u64) -> Vec<f64> {
     let mut rng = Rng::new(seed);
@@ -428,4 +429,142 @@ fn test_pca_init_deterministic() {
     for (a, b) in state1.points.iter().zip(state2.points.iter()) {
         assert!((a - b).abs() < 1e-10, "PCA init should be deterministic");
     }
+}
+
+// ---------------------------------------------------------------------------
+// compute_snapshot: on-demand end-of-training metrics
+// ---------------------------------------------------------------------------
+
+fn small_config(n: usize, n_iterations: usize) -> TrainingConfig {
+    TrainingConfig {
+        n_points: n,
+        embed_dim: 2,
+        curvature: 0.0,
+        perplexity: 10.0,
+        n_iterations,
+        early_exaggeration_iterations: n_iterations / 4,
+        learning_rate: 50.0,
+        init_method: InitMethod::Random,
+        init_scale: 0.001,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn test_compute_snapshot_manual_call() {
+    let data = create_test_data(50, 5, 42);
+    let mut state = EmbeddingState::new(&data, 5, &small_config(50, 30));
+    state.run(|_| true);
+    let snap = state.compute_snapshot();
+    assert!((0.0..=1.0).contains(&snap.trustworthiness_manifold));
+    assert!((0.0..=1.0).contains(&snap.trustworthiness_2d));
+    assert!(snap.neighborhood_hit_manifold.is_none());
+}
+
+#[test]
+fn test_compute_snapshot_with_labels_gives_some() {
+    let data = create_test_data(60, 5, 42);
+    let labels: Vec<u32> = (0..60u32).map(|i| i / 20).collect();
+    let mut state = EmbeddingState::new(&data, 5, &small_config(60, 30)).with_labels(labels);
+    state.run(|_| true);
+    let snap = state.compute_snapshot();
+    assert!(snap.neighborhood_hit_manifold.is_some());
+    assert!(snap.neighborhood_hit_2d.is_some());
+    assert!(snap.class_density_measure.is_some());
+    assert!(snap.cluster_density_measure.is_some());
+    assert!(snap.davies_bouldin_ratio.is_some());
+}
+
+#[test]
+fn test_compute_snapshot_values_in_range() {
+    let data = create_test_data(50, 5, 42);
+    let labels: Vec<u32> = (0..50u32).map(|i| i / 25).collect();
+    let mut state = EmbeddingState::new(&data, 5, &small_config(50, 20)).with_labels(labels);
+    state.run(|_| true);
+    let snap = state.compute_snapshot();
+    assert!((0.0..=1.0).contains(&snap.trustworthiness_manifold));
+    assert!((0.0..=1.0).contains(&snap.trustworthiness_2d));
+    assert!((0.0..=1.0).contains(&snap.continuity_manifold));
+    assert!((0.0..=1.0).contains(&snap.continuity_2d));
+    assert!((0.0..=1.0).contains(&snap.knn_overlap_manifold));
+    assert!((0.0..=1.0).contains(&snap.knn_overlap_2d));
+    assert!(snap.normalized_stress_manifold >= 0.0);
+    assert!(snap.normalized_stress_2d >= 0.0);
+    assert!((0.0..=1.0).contains(&snap.shepard_goodness_manifold));
+    assert!((0.0..=1.0).contains(&snap.shepard_goodness_2d));
+    assert!(!snap.trustworthiness_manifold.is_nan());
+    assert!(!snap.trustworthiness_2d.is_nan());
+}
+
+#[test]
+fn test_with_projection_spherical_no_nan() {
+    let data = create_test_data(50, 5, 42);
+    let mut cfg = small_config(50, 20);
+    cfg.curvature = 1.0;
+    let mut state =
+        EmbeddingState::new(&data, 5, &cfg).with_projection(SphericalProjection::Stereographic);
+    state.run(|_| true);
+    let snap = state.compute_snapshot();
+    assert!(
+        !snap.trustworthiness_2d.is_nan(),
+        "NaN in trustworthiness_2d"
+    );
+    assert!(
+        !snap.normalized_stress_2d.is_nan(),
+        "NaN in normalized_stress_2d"
+    );
+    assert!(
+        !snap.shepard_goodness_2d.is_nan(),
+        "NaN in shepard_goodness_2d"
+    );
+}
+
+#[test]
+fn test_with_projection_hyperbolic_no_nan() {
+    let data = create_test_data(50, 5, 42);
+    let mut cfg = small_config(50, 20);
+    cfg.curvature = -1.0;
+    let mut state = EmbeddingState::new(&data, 5, &cfg)
+        .with_projection(SphericalProjection::AzimuthalEquidistant);
+    state.run(|_| true);
+    let snap = state.compute_snapshot();
+    assert!(
+        !snap.trustworthiness_2d.is_nan(),
+        "NaN in trustworthiness_2d"
+    );
+    assert!(
+        !snap.normalized_stress_2d.is_nan(),
+        "NaN in normalized_stress_2d"
+    );
+}
+
+#[test]
+fn test_compute_snapshot_from_distances() {
+    let mut rng = Rng::new(42);
+    let n = 40;
+    let mut dist = vec![0.0f64; n * n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let d = rng.uniform() * 5.0 + 0.1;
+            dist[i * n + j] = d;
+            dist[j * n + i] = d;
+        }
+    }
+    let cfg = TrainingConfig {
+        n_points: n,
+        embed_dim: 2,
+        curvature: -1.0,
+        perplexity: 8.0,
+        n_iterations: 20,
+        early_exaggeration_iterations: 5,
+        learning_rate: 20.0,
+        init_method: InitMethod::Random,
+        init_scale: 0.001,
+        ..Default::default()
+    };
+    let mut state = EmbeddingState::from_distances(&dist, n, &cfg);
+    state.run(|_| true);
+    let snap = state.compute_snapshot();
+    assert!(!snap.trustworthiness_manifold.is_nan());
+    assert!(!snap.trustworthiness_2d.is_nan());
 }

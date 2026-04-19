@@ -53,16 +53,6 @@ const METRICS = [
   { key: "continuity", label: "Continuity", maximize: true },
   { key: "knn_overlap", label: "KNN Overlap", maximize: true },
   {
-    key: "geodesic_distortion_gu2019",
-    label: "Geodesic Distortion GU19",
-    maximize: false,
-  },
-  {
-    key: "geodesic_distortion_mse",
-    label: "Geodesic Distortion MSE",
-    maximize: false,
-  },
-  {
     key: "davies_bouldin_ratio",
     label: "Davies-Bouldin Ratio",
     maximize: true,

@@ -283,18 +283,26 @@ canvas {
   min-width: 0;
 }
 
-/* Metrics panel — overlay in bottom-right of canvas area */
+/* Metrics panel — overlay in bottom-right of canvas area.
+   line-height must be reset here: .canvas-wrapper sets line-height:0
+   to suppress whitespace below <canvas>, and this panel inherits it. */
 .metrics-panel {
   position: absolute;
   bottom: 12px;
   right: 12px;
-  padding: 14px 18px;
+  width: 300px;
+  padding: 12px 14px;
   background: #16213eee;
   backdrop-filter: blur(8px);
   border-radius: 6px;
   border: 1px solid #333;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
   z-index: 5;
+  max-height: 50vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 .metrics-panel .section-title {
   font-size: 0.7rem;
@@ -302,24 +310,4 @@ canvas {
   letter-spacing: 0.1em;
   color: #888;
   margin-bottom: 8px;
-}
-.metrics-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px 24px;
-}
-.metric-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 4px 0;
-}
-.metric-name {
-  color: #aaa;
-  white-space: nowrap;
-}
-.metric-value {
-  color: #5dade2;
-  font-family: monospace;
-  white-space: nowrap;
 }
