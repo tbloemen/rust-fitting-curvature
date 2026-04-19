@@ -117,8 +117,6 @@ struct TrialResult {
     normalized_stress_manifold: Option<f64>,
     shepard_goodness: Option<f64>,
     shepard_goodness_manifold: Option<f64>,
-    geodesic_distortion_gu2019: Option<f64>,
-    geodesic_distortion_mse: Option<f64>,
     davies_bouldin_ratio: Option<f64>,
     dunn_index: Option<f64>,
     class_density_measure: Option<f64>,
@@ -164,8 +162,6 @@ impl TrialResult {
             normalized_stress_manifold: None,
             shepard_goodness: None,
             shepard_goodness_manifold: None,
-            geodesic_distortion_gu2019: None,
-            geodesic_distortion_mse: None,
             davies_bouldin_ratio: None,
             dunn_index: None,
             class_density_measure: None,
@@ -188,8 +184,6 @@ impl TrialResult {
         self.normalized_stress_manifold = Some(m.normalized_stress_manifold);
         self.shepard_goodness = Some(m.shepard_goodness);
         self.shepard_goodness_manifold = Some(m.shepard_goodness_manifold);
-        self.geodesic_distortion_gu2019 = Some(m.geodesic_distortion_gu2019);
-        self.geodesic_distortion_mse = Some(m.geodesic_distortion_mse);
         self.davies_bouldin_ratio = Some(m.davies_bouldin_ratio);
         self.dunn_index = Some(m.dunn_index);
         self.class_density_measure = Some(m.class_density_measure);
@@ -257,8 +251,6 @@ struct AggregatedMetrics {
     normalized_stress_manifold: f64,
     shepard_goodness: f64,
     shepard_goodness_manifold: f64,
-    geodesic_distortion_gu2019: f64,
-    geodesic_distortion_mse: f64,
     davies_bouldin_ratio: f64,
     dunn_index: f64,
     class_density_measure: f64,
@@ -296,8 +288,6 @@ fn eval_all_metrics(
         normalized_stress_manifold: avg(|m| m.normalized_stress_manifold),
         shepard_goodness: avg(|m| m.shepard_goodness),
         shepard_goodness_manifold: avg(|m| m.shepard_goodness_manifold),
-        geodesic_distortion_gu2019: avg(|m| m.geodesic_distortion_gu2019),
-        geodesic_distortion_mse: avg(|m| m.geodesic_distortion_mse),
         davies_bouldin_ratio: avg(|m| m.davies_bouldin_ratio),
         dunn_index: avg(|m| m.dunn_index),
         class_density_measure: avg(|m| m.class_density_measure),
@@ -329,8 +319,6 @@ fn metric_value(m: &AggregatedMetrics, name: &str) -> f64 {
         "normalized_stress_manifold" => m.normalized_stress_manifold,
         "shepard_goodness" => m.shepard_goodness,
         "shepard_goodness_manifold" => m.shepard_goodness_manifold,
-        "geodesic_distortion_gu2019" => m.geodesic_distortion_gu2019,
-        "geodesic_distortion_mse" => m.geodesic_distortion_mse,
         "davies_bouldin_ratio" => m.davies_bouldin_ratio,
         "dunn_index" => m.dunn_index,
         "class_density_measure" => m.class_density_measure,
@@ -341,10 +329,7 @@ fn metric_value(m: &AggregatedMetrics, name: &str) -> f64 {
 
 fn metric_direction(name: &str) -> OptimizeDirection {
     match name {
-        "geodesic_distortion_gu2019"
-        | "geodesic_distortion_mse"
-        | "normalized_stress"
-        | "normalized_stress_manifold" => OptimizeDirection::Minimize,
+        "normalized_stress" | "normalized_stress_manifold" => OptimizeDirection::Minimize,
         "trustworthiness"
         | "trustworthiness_manifold"
         | "continuity"

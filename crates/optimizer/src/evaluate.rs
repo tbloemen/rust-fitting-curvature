@@ -3,8 +3,7 @@ use fitting_core::embedding::EmbeddingState;
 use fitting_core::matrices::compute_euclidean_distance_matrix;
 use fitting_core::metrics::{
     class_density_measure, cluster_density_measure, continuity, davies_bouldin_ratio, dunn_index,
-    geodesic_distortion_gu2019, geodesic_distortion_mse, knn_overlap, neighborhood_hit,
-    normalized_stress, shepard_goodness, trustworthiness,
+    knn_overlap, neighborhood_hit, normalized_stress, shepard_goodness, trustworthiness,
 };
 use fitting_core::visualisation::{SphericalProjection, project_to_2d};
 use indicatif::ProgressBar;
@@ -29,9 +28,6 @@ pub struct AllMetrics {
     pub normalized_stress_manifold: f64,
     pub shepard_goodness: f64,
     pub shepard_goodness_manifold: f64,
-    // Global distance structure
-    pub geodesic_distortion_gu2019: f64,
-    pub geodesic_distortion_mse: f64,
     // Class separation (2D only)
     pub davies_bouldin_ratio: f64,
     pub dunn_index: f64,
@@ -120,12 +116,6 @@ impl Evaluator {
             normalized_stress_manifold: normalized_stress(&self.high_dim_dist, &manifold_dist, n),
             shepard_goodness: shepard_goodness(&self.high_dim_dist, &dist_2d, n),
             shepard_goodness_manifold: shepard_goodness(&self.high_dim_dist, &manifold_dist, n),
-            geodesic_distortion_gu2019: geodesic_distortion_gu2019(
-                &self.high_dim_dist,
-                &dist_2d,
-                n,
-            ),
-            geodesic_distortion_mse: geodesic_distortion_mse(&self.high_dim_dist, &dist_2d, n),
             davies_bouldin_ratio: davies_bouldin_ratio(
                 &self.high_dim_dist,
                 &projected.coords,
@@ -205,12 +195,6 @@ impl Evaluator {
             "shepard_goodness_manifold" => {
                 shepard_goodness(&self.high_dim_dist, &manifold_dist(), n)
             }
-            "geodesic_distortion_gu2019" => {
-                geodesic_distortion_gu2019(&self.high_dim_dist, &dist_2d(), n)
-            }
-            "geodesic_distortion_mse" => {
-                geodesic_distortion_mse(&self.high_dim_dist, &dist_2d(), n)
-            }
             "dunn_index" => dunn_index(&dist_2d(), &self.dataset.labels, n),
             "davies_bouldin_ratio" => davies_bouldin_ratio(
                 &self.high_dim_dist,
@@ -228,7 +212,6 @@ impl Evaluator {
                 "Unknown metric: {metric}. Options: trustworthiness[_manifold], \
                  continuity[_manifold], knn_overlap[_manifold], neighborhood_hit[_manifold], \
                  normalized_stress[_manifold], shepard_goodness[_manifold], \
-                 geodesic_distortion_gu2019, geodesic_distortion_mse, \
                  davies_bouldin_ratio, dunn_index, class_density_measure, cluster_density_measure"
             ),
         }
