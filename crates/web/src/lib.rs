@@ -330,15 +330,27 @@ impl EmbeddingRunner {
     pub fn compute_metrics(&self) -> Result<JsValue, JsValue> {
         let snap = self.state.compute_snapshot();
         let obj = js_sys::Object::new();
-        set_prop(&obj, "trustworthiness_manifold", snap.trustworthiness_manifold)?;
+        set_prop(
+            &obj,
+            "trustworthiness_manifold",
+            snap.trustworthiness_manifold,
+        )?;
         set_prop(&obj, "trustworthiness_2d", snap.trustworthiness_2d)?;
         set_prop(&obj, "continuity_manifold", snap.continuity_manifold)?;
         set_prop(&obj, "continuity_2d", snap.continuity_2d)?;
         set_prop(&obj, "knn_overlap_manifold", snap.knn_overlap_manifold)?;
         set_prop(&obj, "knn_overlap_2d", snap.knn_overlap_2d)?;
-        set_prop(&obj, "normalized_stress_manifold", snap.normalized_stress_manifold)?;
+        set_prop(
+            &obj,
+            "normalized_stress_manifold",
+            snap.normalized_stress_manifold,
+        )?;
         set_prop(&obj, "normalized_stress_2d", snap.normalized_stress_2d)?;
-        set_prop(&obj, "shepard_goodness_manifold", snap.shepard_goodness_manifold)?;
+        set_prop(
+            &obj,
+            "shepard_goodness_manifold",
+            snap.shepard_goodness_manifold,
+        )?;
         set_prop(&obj, "shepard_goodness_2d", snap.shepard_goodness_2d)?;
         if let Some(v) = snap.neighborhood_hit_manifold {
             set_prop(&obj, "neighborhood_hit_manifold", v)?;
