@@ -22,7 +22,7 @@ impl fmt::Display for OptimizeDirection {
 pub const DEFAULT_CURVATURE_MAG_MIN: f64 = 0.001;
 
 pub const LR_MIN: f64 = 0.5;
-pub const LR_MAX: f64 = 20.0;
+pub const LR_MAX: f64 = 30.0;
 pub const PERP_MIN: f64 = 0.0004;
 pub const PERP_MAX: f64 = 0.03;
 pub const MOM_MIN: f64 = 0.60;
