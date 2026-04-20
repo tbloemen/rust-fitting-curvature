@@ -494,8 +494,6 @@ function renderHeatmap(
   xParamIdx,
   yParamIdx,
   predictions,
-  xVals,
-  yVals,
   vmin,
   vmax,
   paretoFront,
@@ -612,7 +610,7 @@ function renderHeatmap(
   }
 }
 
-function renderColorbar(canvas, vmin, vmax) {
+function renderColorbar(canvas) {
   const ctx = canvas.getContext("2d");
   const W = canvas.width,
     H = canvas.height;
@@ -835,8 +833,6 @@ async function onRender() {
     xParamIdx,
     yParamIdx,
     predictions,
-    xVals,
-    yVals,
     vmin,
     vmax,
     paretoFront,
@@ -866,8 +862,6 @@ function drawAll({
   xParamIdx,
   yParamIdx,
   predictions,
-  xVals,
-  yVals,
   vmin,
   vmax,
   paretoFront,
@@ -880,8 +874,6 @@ function drawAll({
     xParamIdx,
     yParamIdx,
     predictions,
-    xVals,
-    yVals,
     vmin,
     vmax,
     paretoFront,
@@ -890,7 +882,7 @@ function drawAll({
   // Match colorbar height to the actual plot area height
   const cbCanvas = document.getElementById("colorbar");
   cbCanvas.height = Math.max(1, canvas.height - MARGIN.top - MARGIN.bottom);
-  renderColorbar(cbCanvas, vmin, vmax);
+  renderColorbar(cbCanvas);
 
   document.getElementById("cb-max").textContent = vmax.toFixed(4);
   document.getElementById("cb-min").textContent = vmin.toFixed(4);

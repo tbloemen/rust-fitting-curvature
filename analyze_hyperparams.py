@@ -925,7 +925,7 @@ def _prepare_gp_state(state: dict) -> dict:
     obs = state["observations"]
     xs_norm = np.array([o["x_norm"] for o in obs])
     n = len(xs_norm)
-    l = state["length_scale"]
+    length_scale = state["length_scale"]
 
     metrics = np.array([o["metric"] for o in obs])
     if state["direction"] == "minimize":
@@ -933,7 +933,7 @@ def _prepare_gp_state(state: dict) -> dict:
     y_norm = (metrics - state["y_mean"]) / state["y_std"]
 
     diffs = xs_norm[:, None, :] - xs_norm[None, :, :]
-    K = np.exp(-np.sum(diffs**2, axis=-1) / (2 * l**2)) + 1e-4 * np.eye(n)
+    K = np.exp(-np.sum(diffs**2, axis=-1) / (2 * length_scale**2)) + 1e-4 * np.eye(n)
     L = np.linalg.cholesky(K)
     alpha = np.linalg.solve(L.T, np.linalg.solve(L, y_norm))
 
@@ -964,11 +964,11 @@ def _gp_posterior_norm(state: dict, X_enc: np.ndarray) -> tuple[np.ndarray, np.n
     X_norm = (X_enc - x_means) / x_stds
 
     xs_norm = np.array([obs["x_norm"] for obs in state["observations"]])
-    l = state["length_scale"]
+    length_scale = state["length_scale"]
     L, alpha = state["L"], state["alpha"]
 
     diffs = X_norm[:, None, :] - xs_norm[None, :, :]
-    K_star = np.exp(-np.sum(diffs**2, axis=-1) / (2 * l**2))
+    K_star = np.exp(-np.sum(diffs**2, axis=-1) / (2 * length_scale**2))
 
     mu_norm = K_star @ alpha  # (n_test,)
     v = np.linalg.solve(L, K_star.T)  # (n_train, n_test)
@@ -1886,7 +1886,7 @@ def plot_pareto_objectives(
     )
     ax.set_title(
         "Pareto front — objective breakdown\n"
-        f"left: 2D metrics  |  right ★: manifold metrics  |  sorted by manifold score",
+        "left: 2D metrics  |  right ★: manifold metrics  |  sorted by manifold score",
         fontsize=9,
     )
     fig.tight_layout()
