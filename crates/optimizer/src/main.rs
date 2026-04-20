@@ -469,16 +469,6 @@ fn run_pareto(
     pb.finish_with_message(format!("{} ({}) done", dataset_name, geometry));
 
     let front = optimizer.pareto_trials();
-    pb.println(format!("\n=== Pareto front: {} configs ===", front.len()));
-    for t in &front {
-        let metrics_str: Vec<String> = optimizer
-            .metrics
-            .iter()
-            .zip(&t.metrics)
-            .map(|(spec, &v)| format!("{}={:.4}", spec.name(), v))
-            .collect();
-        pb.println(format!("  {}", metrics_str.join("  ")));
-    }
 
     let stem = out_path
         .trim_end_matches(".jsonl")
