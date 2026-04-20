@@ -401,6 +401,15 @@ impl GpModel {
         let (mu, sigma) = self.predict(&x_norm);
         expected_improvement(mu, sigma, self.f_best_norm)
     }
+
+    /// Posterior mean at `config` de-standardised back to the raw metric space.
+    /// Used by the Kriging Believer hallucination step in qParEGO.
+    fn predict_mean_raw(&self, config: &TrialConfig) -> f64 {
+        let x_raw = config_to_gp_input(config, self.optimize_curvature);
+        let x_norm = standardize(&x_raw, &self.x_means, &self.x_stds);
+        let (mu_norm, _) = self.predict(&x_norm);
+        mu_norm * self.y_std + self.y_mean
+    }
 }
 
 // ─── MLE for length-scale (Frazier §3.2) ─────────────────────────────────────
@@ -690,13 +699,19 @@ impl ParEgoOptimizer {
             .collect()
     }
 
-    /// Suggest a batch of `n` configs following Algorithm 1 (Knowles 2006):
+    /// Suggest a batch of `n` configs following qParEGO (Kriging Believer variant):
     ///
     /// 1. **Init phase** (first call): generate `11d−1` LHS points and queue them.
     /// 2. **LHS drain**: return queued points until the queue is empty.
-    /// 3. **GP phase**: for each member draw λ ~ NEWLAMBDA(k, s), build a GP on
-    ///    the scalarised observations (with DACE subset selection when n ≥ 25),
-    ///    then run EVOLALG to find the config maximising EI.
+    /// 3. **GP phase** (qParEGO): for each of the `n` members:
+    ///    a. Draw λ ~ NEWLAMBDA(k, s).
+    ///    b. Fit a GP on real observations + any Kriging Believer hallucinations
+    ///       from earlier members of this batch.
+    ///    c. Run EVOLALG to find the config maximising EI under this GP.
+    ///    d. Hallucinate: predict the GP posterior mean at the chosen config and
+    ///       add it as a fake observation so the next member avoids the same region.
+    ///
+    /// With `n = 1` this degenerates to standard (sequential) ParEGO.
     pub fn suggest_batch(&mut self, n: usize, rng: &mut Rng) -> Vec<TrialConfig> {
         if !self.lhs_initialized {
             let dim = if self.optimize_curvature { 7 } else { 6 };
@@ -724,12 +739,18 @@ impl ParEgoOptimizer {
             return result;
         }
 
+        // qParEGO GP phase: Kriging Believer hallucinations accumulate across the batch.
+        let mut hallucinated: Vec<Trial> = Vec::with_capacity(n);
         let mut result = Vec::with_capacity(n);
         for _ in 0..n {
             let weights = sample_discrete_simplex(self.metrics.len(), self.s, rng);
-            let scalar_trials = self.scalarize_trials_subset(&weights, rng);
+            let mut scalar_trials = self.scalarize_trials_subset(&weights, rng);
+            scalar_trials.extend_from_slice(&hallucinated);
             let gp = GpModel::fit(&scalar_trials, OptimizeDirection::Maximize, self.optimize_curvature);
-            result.push(self.evolalg(&gp, &weights, rng));
+            let next = self.evolalg(&gp, &weights, rng);
+            // KB hallucination: substitute the GP posterior mean for the unknown true metric.
+            hallucinated.push(Trial { config: next.clone(), metric: gp.predict_mean_raw(&next) });
+            result.push(next);
         }
         result
     }
