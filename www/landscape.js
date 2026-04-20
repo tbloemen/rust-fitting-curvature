@@ -1,6 +1,13 @@
 // GP Landscape visualization
-// Loads results/results.jsonl, fits a GP for the selected (dataset, curvature, metric),
-// and renders a 2D posterior-mean heatmap for any two chosen hyperparameters.
+// Loads results/results.jsonl and renders a 2D GP posterior-mean heatmap.
+//
+// Two modes:
+//   single     — GP on one chosen metric, colorbar in metric units.
+//   chebyshev  — GP on augmented-Chebyshev scalarization of the 10 Pareto
+//                objectives (equal weights).  Yellow = closer to ideal.
+//
+// In both modes, Pareto-front configs (from *_pareto_*.json) are drawn as
+// gold circles on top of the regular observation scatter.
 
 const PARAMS = [
   {
@@ -50,8 +57,41 @@ const PARAMS = [
 
 const METRICS = [
   { key: "trustworthiness", label: "Trustworthiness", maximize: true },
+  {
+    key: "trustworthiness_manifold",
+    label: "Trustworthiness (manifold)",
+    maximize: true,
+  },
   { key: "continuity", label: "Continuity", maximize: true },
+  {
+    key: "continuity_manifold",
+    label: "Continuity (manifold)",
+    maximize: true,
+  },
   { key: "knn_overlap", label: "KNN Overlap", maximize: true },
+  {
+    key: "knn_overlap_manifold",
+    label: "KNN Overlap (manifold)",
+    maximize: true,
+  },
+  { key: "neighborhood_hit", label: "Neighborhood Hit", maximize: true },
+  {
+    key: "neighborhood_hit_manifold",
+    label: "Neighborhood Hit (manifold)",
+    maximize: true,
+  },
+  { key: "normalized_stress", label: "Normalized Stress", maximize: false },
+  {
+    key: "normalized_stress_manifold",
+    label: "Normalized Stress (manifold)",
+    maximize: false,
+  },
+  { key: "shepard_goodness", label: "Shepard Goodness", maximize: true },
+  {
+    key: "shepard_goodness_manifold",
+    label: "Shepard Goodness (manifold)",
+    maximize: true,
+  },
   {
     key: "davies_bouldin_ratio",
     label: "Davies-Bouldin Ratio",
@@ -68,6 +108,20 @@ const METRICS = [
     label: "Cluster Density Measure",
     maximize: true,
   },
+];
+
+// The 10 objectives used in --mode pareto (matches default_pareto_metrics() in main.rs).
+const PARETO_OBJECTIVES = [
+  { key: "trustworthiness", maximize: true },
+  { key: "trustworthiness_manifold", maximize: true },
+  { key: "continuity", maximize: true },
+  { key: "continuity_manifold", maximize: true },
+  { key: "normalized_stress", maximize: false },
+  { key: "normalized_stress_manifold", maximize: false },
+  { key: "shepard_goodness", maximize: true },
+  { key: "shepard_goodness_manifold", maximize: true },
+  { key: "neighborhood_hit", maximize: true },
+  { key: "neighborhood_hit_manifold", maximize: true },
 ];
 
 // Viridis colormap — 12-point LUT, linearly interpolated
@@ -178,9 +232,20 @@ async function loadGpState(dataset, geometry) {
   try {
     const resp = await fetch(`/results/results_gp_${dataset}_${geometry}.json`);
     if (resp.ok) return await resp.json();
-  } catch (_) {
-    /* ignore */
-  }
+  } catch (_) {}
+  return null;
+}
+
+// Load Pareto front JSON written by --mode pareto.
+// Returns an array of entries, each with config fields at top level and a
+// `metrics` sub-object.  Returns null if the file doesn't exist.
+async function loadParetoFront(dataset, geometry) {
+  try {
+    const resp = await fetch(
+      `/results/results_pareto_${dataset}_${geometry}.json`,
+    );
+    if (resp.ok) return await resp.json();
+  } catch (_) {}
   return null;
 }
 
@@ -221,30 +286,56 @@ function normalizeVec(encoded, xMeans, xStds) {
   return encoded.map((v, i) => (v - xMeans[i]) / xStds[i]);
 }
 
+// ===== Chebyshev scalarization =====
+
+// Compute per-row augmented-Chebyshev values with equal weights.
+// Returns an array of values (higher = closer to ideal = better).
+// Rows missing any objective get -Infinity.
+function computeChebyshevValues(rows, objectives, rho = 0.05) {
+  const stats = objectives.map((obj) => {
+    const vals = rows.map((r) => +r[obj.key]).filter((v) => isFinite(v));
+    if (vals.length === 0) return { min: 0, range: 1 };
+    const vmin = Math.min(...vals),
+      vmax = Math.max(...vals);
+    return { min: vmin, range: Math.max(vmax - vmin, 1e-8) };
+  });
+
+  const lambda = 1 / objectives.length;
+
+  return rows.map((row) => {
+    const normed = objectives.map((obj, i) => {
+      const v = +row[obj.key];
+      if (!isFinite(v)) return null;
+      const n = (v - stats[i].min) / stats[i].range;
+      return obj.maximize ? n : 1 - n; // flip minimize → all "higher is better"
+    });
+    if (normed.some((v) => v === null)) return -Infinity;
+
+    const diffs = normed.map((n) => lambda * (1 - n));
+    const maxTerm = Math.max(...diffs);
+    const sumTerm = diffs.reduce((a, b) => a + b, 0);
+    return -(maxTerm + rho * sumTerm); // negate: higher y = closer to ideal
+  });
+}
+
 // ===== GP model =====
 
-// Build GP model from a set of result rows for a specific metric.
-// normStats: { xMeans, xStds } — input standardization
-// lengthScale: RBF kernel length scale (in normalized space)
-// params: array of PARAMS entries to use as GP dimensions
-function buildGpModel(rows, metricKey, normStats, lengthScale, params) {
-  const valid = rows.filter(
-    (r) => r[metricKey] != null && isFinite(+r[metricKey]),
-  );
-  if (valid.length < 2) return null;
+// Core GP fit used by both modes.
+// rows:     observation rows (all must be valid for the selected y-values).
+// yValues:  one scalar per row; higher = better (Chebyshev already negated).
+function buildGpModelFromValues(rows, yValues, normStats, lengthScale, params) {
+  if (rows.length < 2) return null;
 
-  const xNorm = valid.map((r) =>
+  const xNorm = rows.map((r) =>
     normalizeVec(encodeRow(r, params), normStats.xMeans, normStats.xStds),
   );
-  const yRaw = valid.map((r) => +r[metricKey]);
 
-  const yMean = mean(yRaw);
-  const yStdRaw = std(yRaw);
+  const yMean = mean(yValues);
+  const yStdRaw = std(yValues);
   const yStd = yStdRaw < 1e-12 ? 1 : yStdRaw;
-  const yNorm = yRaw.map((v) => (v - yMean) / yStd);
+  const yNorm = yValues.map((v) => (v - yMean) / yStd);
 
-  // K(X, X) + jitter
-  const n = valid.length;
+  const n = rows.length;
   const K = Array.from({ length: n }, (_, i) =>
     Array.from({ length: n }, (__, j) =>
       rbfKernel(xNorm[i], xNorm[j], lengthScale),
@@ -255,17 +346,7 @@ function buildGpModel(rows, metricKey, normStats, lengthScale, params) {
   const L = choleskyDecomp(K);
   const alpha = Array.from(solveChol(L, yNorm));
 
-  // Best observation (used to fix the unselected axes when slicing to 2D)
-  const metricInfo = METRICS.find((m) => m.key === metricKey);
-  const bestObs = valid.reduce((b, o) =>
-    (
-      metricInfo.maximize
-        ? +o[metricKey] > +b[metricKey]
-        : +o[metricKey] < +b[metricKey]
-    )
-      ? o
-      : b,
-  );
+  const bestIdx = yValues.reduce((bi, v, i) => (v > yValues[bi] ? i : bi), 0);
 
   return {
     alpha,
@@ -273,19 +354,54 @@ function buildGpModel(rows, metricKey, normStats, lengthScale, params) {
     yMean,
     yStd,
     lengthScale,
-    observations: valid,
+    observations: rows,
     normStats,
-    bestObs,
+    bestObs: rows[bestIdx],
     params,
   };
 }
 
-// Evaluate GP posterior mean at a normalized test point
+// Single-metric mode: build GP on one metric column.
+function buildGpModel(rows, metricKey, normStats, lengthScale, params) {
+  const metricInfo = METRICS.find((m) => m.key === metricKey);
+  const valid = rows.filter(
+    (r) => r[metricKey] != null && isFinite(+r[metricKey]),
+  );
+  if (valid.length < 2) return null;
+  // Store raw values so the colorbar displays metric units.
+  // bestObs picks the best direction-aware extremum.
+  const yValues = valid.map((r) => +r[metricKey]);
+  const model = buildGpModelFromValues(
+    valid,
+    metricInfo.maximize ? yValues : yValues.map((v) => -v),
+    normStats,
+    lengthScale,
+    params,
+  );
+  if (!model) return null;
+  // Overwrite yMean/yStd to reflect raw (non-flipped) units for the colorbar.
+  if (!metricInfo.maximize) {
+    model.yMean = -model.yMean;
+    model.yStd = model.yStd; // magnitude unchanged
+    model._flipForDisplay = true;
+  }
+  return model;
+}
+
+// Chebyshev mode: build GP on the scalarized Pareto objective.
+function buildGpModelCheby(rows, objectives, normStats, lengthScale, params) {
+  const yValues = computeChebyshevValues(rows, objectives);
+  const valid = rows.filter((_, i) => isFinite(yValues[i]));
+  const validY = yValues.filter((v) => isFinite(v));
+  return buildGpModelFromValues(valid, validY, normStats, lengthScale, params);
+}
+
 function predictGP(model, xTestNorm) {
   const kStar = model.xNorm.map((xi) =>
     rbfKernel(xi, xTestNorm, model.lengthScale),
   );
-  return dot(kStar, model.alpha) * model.yStd + model.yMean;
+  const rawPred = dot(kStar, model.alpha) * model.yStd + model.yMean;
+  return model._flipForDisplay ? -rawPred : rawPred;
 }
 
 // Predict at a grid point (xParamIdx and yParamIdx are indices into PARAMS).
@@ -350,6 +466,28 @@ function formatTick(v, log) {
 // Pixel margins reserved for axis labels (must match colorbar-wrapper padding in CSS)
 const MARGIN = { left: 72, right: 12, top: 15, bottom: 54 };
 
+// Draw a filled circle used for observation scatter.
+function drawCircle(ctx, cx, cy, outerR, innerR, fillColor) {
+  ctx.beginPath();
+  ctx.arc(cx, cy, outerR, 0, 2 * Math.PI);
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx, cy, innerR, 0, 2 * Math.PI);
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+}
+
+// Draw a gold circle with a white ring for Pareto front points.
+function drawParetoMarker(ctx, cx, cy) {
+  drawCircle(ctx, cx, cy, 8, 6, "#FFD700");
+  ctx.beginPath();
+  ctx.arc(cx, cy, 6, 0, 2 * Math.PI);
+  ctx.strokeStyle = "white";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
 function renderHeatmap(
   canvas,
   model,
@@ -360,6 +498,7 @@ function renderHeatmap(
   yVals,
   vmin,
   vmax,
+  paretoFront,
 ) {
   const ctx = canvas.getContext("2d");
   const W = canvas.width,
@@ -369,14 +508,13 @@ function renderHeatmap(
 
   ctx.fillStyle = "#1a1a2e";
   ctx.fillRect(0, 0, W, H);
-
   if (plotW <= 0 || plotH <= 0) return;
 
   const xParam = PARAMS[xParamIdx],
     yParam = PARAMS[yParamIdx];
   const range = vmax - vmin;
 
-  // Draw heatmap using ImageData (much faster than per-cell fillRect)
+  // Heatmap via ImageData
   const imgData = ctx.createImageData(plotW, plotH);
   const buf = imgData.data;
   for (let xi = 0; xi < GRID_N; xi++) {
@@ -407,13 +545,12 @@ function renderHeatmap(
   ctx.lineWidth = 1;
   ctx.strokeRect(MARGIN.left + 0.5, MARGIN.top + 0.5, plotW, plotH);
 
-  // X axis ticks and label
+  // X axis
   ctx.fillStyle = "#aaa";
   ctx.font = "11px monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
-  const xTicks = linspace(xParam.min, xParam.max, 5, xParam.log);
-  for (const v of xTicks) {
+  for (const v of linspace(xParam.min, xParam.max, 5, xParam.log)) {
     const fx = valueToFrac(v, xParam.min, xParam.max, xParam.log);
     const px = MARGIN.left + fx * plotW;
     ctx.fillStyle = "#666";
@@ -426,12 +563,11 @@ function renderHeatmap(
   ctx.textBaseline = "bottom";
   ctx.fillText(xParam.label, MARGIN.left + plotW / 2, H - 2);
 
-  // Y axis ticks and label
+  // Y axis
   ctx.font = "11px monospace";
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
-  const yTicks = linspace(yParam.min, yParam.max, 5, yParam.log);
-  for (const v of yTicks) {
+  for (const v of linspace(yParam.min, yParam.max, 5, yParam.log)) {
     const fy = valueToFrac(v, yParam.min, yParam.max, yParam.log);
     const py = MARGIN.top + plotH - fy * plotH;
     ctx.fillStyle = "#666";
@@ -449,7 +585,7 @@ function renderHeatmap(
   ctx.fillText(yParam.label, 0, 0);
   ctx.restore();
 
-  // Observation scatter (white dots with dark shadow)
+  // Regular observation scatter (white dots)
   for (const obs of model.observations) {
     const xv = +obs[xParam.name],
       yv = +obs[yParam.name];
@@ -458,16 +594,21 @@ function renderHeatmap(
     const fy = valueToFrac(yv, yParam.min, yParam.max, yParam.log);
     const px = MARGIN.left + Math.max(0, Math.min(1, fx)) * plotW;
     const py = MARGIN.top + (1 - Math.max(0, Math.min(1, fy))) * plotH;
+    drawCircle(ctx, px, py, 5.5, 4, "white");
+  }
 
-    ctx.beginPath();
-    ctx.arc(px, py, 5.5, 0, 2 * Math.PI);
-    ctx.fillStyle = "rgba(0,0,0,0.5)";
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.arc(px, py, 4, 0, 2 * Math.PI);
-    ctx.fillStyle = "white";
-    ctx.fill();
+  // Pareto front overlay (gold circles with white ring, drawn on top)
+  if (paretoFront) {
+    for (const entry of paretoFront) {
+      const xv = +entry[xParam.name],
+        yv = +entry[yParam.name];
+      if (!isFinite(xv) || !isFinite(yv)) continue;
+      const fx = valueToFrac(xv, xParam.min, xParam.max, xParam.log);
+      const fy = valueToFrac(yv, yParam.min, yParam.max, yParam.log);
+      const px = MARGIN.left + Math.max(0, Math.min(1, fx)) * plotW;
+      const py = MARGIN.top + (1 - Math.max(0, Math.min(1, fy))) * plotH;
+      drawParetoMarker(ctx, px, py);
+    }
   }
 }
 
@@ -515,6 +656,7 @@ async function init() {
     .addEventListener("change", populateCurvatures);
   populateCurvatures();
 
+  document.getElementById("ld-mode").addEventListener("change", onModeChange);
   document.getElementById("ld-render-btn").addEventListener("click", onRender);
   document.getElementById("ld-render-btn").disabled = false;
 
@@ -530,6 +672,12 @@ async function init() {
   setStatus(`${allResults.length} results loaded`);
 }
 
+function onModeChange() {
+  const mode = document.getElementById("ld-mode").value;
+  document.getElementById("metric-control").style.display =
+    mode === "chebyshev" ? "none" : "";
+}
+
 function populateDatasets() {
   const datasets = [...new Set(allResults.map((r) => r.dataset_name))].sort();
   const sel = document.getElementById("ld-dataset");
@@ -540,31 +688,28 @@ function populateDatasets() {
 
 function populateCurvatures() {
   const dataset = document.getElementById("ld-dataset").value;
-  const datasetRows = allResults.filter((r) => r.dataset_name === dataset);
-  const sel = document.getElementById("ld-curvature");
-
+  const rows = allResults.filter((r) => r.dataset_name === dataset);
   const geometries = [
-    ...new Set(datasetRows.filter((r) => r.geometry).map((r) => r.geometry)),
+    ...new Set(rows.filter((r) => r.geometry).map((r) => r.geometry)),
   ].sort();
-  sel.innerHTML = geometries
-    .map((geo) => `<option value="${geo}">${geo}</option>`)
+  document.getElementById("ld-curvature").innerHTML = geometries
+    .map((g) => `<option value="${g}">${g}</option>`)
     .join("");
 }
 
 function populateParams() {
-  const xSel = document.getElementById("ld-x-param");
-  const ySel = document.getElementById("ld-y-param");
   const opts = PARAMS.map(
     (p, i) => `<option value="${i}">${p.label}</option>`,
   ).join("");
+  const xSel = document.getElementById("ld-x-param");
+  const ySel = document.getElementById("ld-y-param");
   xSel.innerHTML = ySel.innerHTML = opts;
   xSel.value = "0"; // learning_rate
   ySel.value = "1"; // perplexity_ratio
 }
 
 function populateMetrics() {
-  const sel = document.getElementById("ld-metric");
-  sel.innerHTML = METRICS.map(
+  document.getElementById("ld-metric").innerHTML = METRICS.map(
     (m) => `<option value="${m.key}">${m.label}</option>`,
   ).join("");
 }
@@ -579,9 +724,10 @@ function syncCanvasSize() {
 
 async function onRender() {
   const dataset = document.getElementById("ld-dataset").value;
-  const curvatureVal = document.getElementById("ld-curvature").value;
+  const geometry = document.getElementById("ld-curvature").value;
   const xParamIdx = parseInt(document.getElementById("ld-x-param").value);
   const yParamIdx = parseInt(document.getElementById("ld-y-param").value);
+  const mode = document.getElementById("ld-mode").value;
   const metricKey = document.getElementById("ld-metric").value;
 
   if (xParamIdx === yParamIdx) {
@@ -589,31 +735,43 @@ async function onRender() {
     return;
   }
 
-  const geometry = curvatureVal;
   const obs = allResults.filter(
     (r) => r.dataset_name === dataset && r.geometry === geometry,
   );
-  const groupLabel = geometry;
-
-  const valid = obs.filter(
-    (r) => r[metricKey] != null && isFinite(+r[metricKey]),
-  );
-  if (valid.length < 2) {
-    setStatus(
-      `Only ${valid.length} valid observation(s) for this metric — need ≥ 2.`,
-    );
-    return;
-  }
 
   document.getElementById("ld-render-btn").disabled = true;
   setStatus("Computing…");
 
-  // Determine active params (those with finite values in the data)
-  const params = activeParams(valid);
+  // Load Pareto front (null if not available)
+  const paretoFront = await loadParetoFront(dataset, geometry);
 
-  // Validate axis param indices are within active params
+  // Determine valid observations for this mode
+  let valid;
+  if (mode === "chebyshev") {
+    valid = obs.filter((r) =>
+      PARETO_OBJECTIVES.every((o) => r[o.key] != null && isFinite(+r[o.key])),
+    );
+    if (valid.length < 2) {
+      setStatus(
+        `Only ${valid.length} rows have all Pareto objectives — need ≥ 2.`,
+      );
+      document.getElementById("ld-render-btn").disabled = false;
+      return;
+    }
+  } else {
+    valid = obs.filter((r) => r[metricKey] != null && isFinite(+r[metricKey]));
+    if (valid.length < 2) {
+      setStatus(
+        `Only ${valid.length} valid obs for "${metricKey}" — need ≥ 2.`,
+      );
+      document.getElementById("ld-render-btn").disabled = false;
+      return;
+    }
+  }
+
   const xParam = PARAMS[xParamIdx],
     yParam = PARAMS[yParamIdx];
+  const params = activeParams(valid);
   if (!params.includes(xParam)) {
     setStatus(`X param "${xParam.label}" has no data for this group.`);
     document.getElementById("ld-render-btn").disabled = false;
@@ -634,7 +792,19 @@ async function onRender() {
 
   // Always compute normalization from the current valid observations
   const normStats = computeNormStats(valid, params);
-  const model = buildGpModel(valid, metricKey, normStats, lengthScale, params);
+  let model;
+  if (mode === "chebyshev") {
+    model = buildGpModelCheby(
+      valid,
+      PARETO_OBJECTIVES,
+      normStats,
+      lengthScale,
+      params,
+    );
+  } else {
+    model = buildGpModel(valid, metricKey, normStats, lengthScale, params);
+  }
+
   if (!model) {
     setStatus("Failed to build GP model.");
     document.getElementById("ld-render-btn").disabled = false;
@@ -644,7 +814,6 @@ async function onRender() {
   // Evaluate GP on GRID_N × GRID_N grid
   const xVals = linspace(xParam.min, xParam.max, GRID_N, xParam.log);
   const yVals = linspace(yParam.min, yParam.max, GRID_N, yParam.log);
-
   const predictions = new Float64Array(GRID_N * GRID_N);
   for (let xi = 0; xi < GRID_N; xi++) {
     for (let yi = 0; yi < GRID_N; yi++) {
@@ -660,7 +829,6 @@ async function onRender() {
 
   const vmin = Math.min(...predictions),
     vmax = Math.max(...predictions);
-  const metricInfo = METRICS.find((m) => m.key === metricKey);
 
   lastRenderState = {
     model,
@@ -671,17 +839,24 @@ async function onRender() {
     yVals,
     vmin,
     vmax,
-    metricInfo,
+    paretoFront,
+    mode,
   };
   drawAll(lastRenderState);
 
   document.getElementById("ld-render-btn").disabled = false;
+
   const lsSource = gpState ? "GP state" : "default";
-  const fixedParams = params.filter(
-    (_, i) => params[i] !== xParam && params[i] !== yParam,
-  );
+  const fixedParams = params.filter((p) => p !== xParam && p !== yParam);
+  const frontNote = paretoFront
+    ? ` · ${paretoFront.length} Pareto pts (gold)`
+    : "";
+  const modeNote =
+    mode === "chebyshev"
+      ? `Chebyshev (${PARETO_OBJECTIVES.length} obj, equal weights)`
+      : `${metricKey}`;
   setStatus(
-    `${valid.length} obs · ls=${lengthScale.toFixed(3)} (${lsSource}) · ${groupLabel}\n` +
+    `${valid.length} obs · ls=${lengthScale.toFixed(3)} (${lsSource}) · ${modeNote}${frontNote}\n` +
       `Fixed at best: ${fixedParams.map((p) => `${p.name}=${(+model.bestObs[p.name]).toFixed(3)}`).join(", ")}`,
   );
 }
@@ -695,6 +870,7 @@ function drawAll({
   yVals,
   vmin,
   vmax,
+  paretoFront,
 }) {
   syncCanvasSize();
   const canvas = document.getElementById("heatmap");
@@ -708,6 +884,7 @@ function drawAll({
     yVals,
     vmin,
     vmax,
+    paretoFront,
   );
 
   // Match colorbar height to the actual plot area height
