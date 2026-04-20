@@ -1003,10 +1003,14 @@ fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &Mul
 fn get_dataset_names(dataset_arg: &Option<String>) -> Vec<String> {
     match dataset_arg {
         Some(name) if name == "all" => vec![
-            "gaussian_blob".to_string(),
-            "concentric_circles".to_string(),
+            "mnist".to_string(),
+            "fashion_mnist".to_string(),
+            "pbmc".to_string(),
+            "wordnet_mammals".to_string(),
+            "sphere".to_string(),
+            "antipodal_clusters".to_string(),
             "tree".to_string(),
-            "grid".to_string(),
+            "hyperbolic_shells".to_string(),
         ],
         Some(name) => vec![name.clone()],
         None => vec!["mnist".to_string()],
@@ -1087,7 +1091,7 @@ fn main() {
             "fashion_mnist" => Dataset::load_fashion_mnist(&format!("{dp}/fashion-mnist"), n),
             "wordnet_mammals" => Dataset::load_wordnet_mammals(&format!("{dp}/wordnet"), n),
             "pbmc" => Dataset::load_pbmc(&format!("{dp}/pbmc"), n),
-            name => Ok(Dataset::load_synthetic(name, n, 42)),
+            name => Dataset::load_synthetic(name, n, 42),
         };
         let dataset = match result {
             Ok(d) => d,
