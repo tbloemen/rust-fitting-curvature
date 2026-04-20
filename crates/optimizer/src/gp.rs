@@ -705,11 +705,9 @@ impl ParEgoOptimizer {
     /// 2. **LHS drain**: return queued points until the queue is empty.
     /// 3. **GP phase** (qParEGO): for each of the `n` members:
     ///    a. Draw λ ~ NEWLAMBDA(k, s).
-    ///    b. Fit a GP on real observations + any Kriging Believer hallucinations
-    ///       from earlier members of this batch.
+    ///    b. Fit a GP on real observations + any Kriging Believer hallucinations from earlier members of this batch.
     ///    c. Run EVOLALG to find the config maximising EI under this GP.
-    ///    d. Hallucinate: predict the GP posterior mean at the chosen config and
-    ///       add it as a fake observation so the next member avoids the same region.
+    ///    d. Hallucinate: predict the GP posterior mean at the chosen config and add it as a fake observation so the next member avoids the same region.
     ///
     /// With `n = 1` this degenerates to standard (sequential) ParEGO.
     pub fn suggest_batch(&mut self, n: usize, rng: &mut Rng) -> Vec<TrialConfig> {
@@ -746,10 +744,17 @@ impl ParEgoOptimizer {
             let weights = sample_discrete_simplex(self.metrics.len(), self.s, rng);
             let mut scalar_trials = self.scalarize_trials_subset(&weights, rng);
             scalar_trials.extend_from_slice(&hallucinated);
-            let gp = GpModel::fit(&scalar_trials, OptimizeDirection::Maximize, self.optimize_curvature);
+            let gp = GpModel::fit(
+                &scalar_trials,
+                OptimizeDirection::Maximize,
+                self.optimize_curvature,
+            );
             let next = self.evolalg(&gp, &weights, rng);
             // KB hallucination: substitute the GP posterior mean for the unknown true metric.
-            hallucinated.push(Trial { config: next.clone(), metric: gp.predict_mean_raw(&next) });
+            hallucinated.push(Trial {
+                config: next.clone(),
+                metric: gp.predict_mean_raw(&next),
+            });
             result.push(next);
         }
         result
@@ -768,10 +773,16 @@ impl ParEgoOptimizer {
         let dim = if self.optimize_curvature { 7 } else { 6 };
 
         // Initialise: top-5 by scalar fitness → 5 mutants; remaining 15 from LHS random.
-        let scalar_vals: Vec<f64> = self.trials.iter().map(|t| self.scalar_value(t, weights)).collect();
+        let scalar_vals: Vec<f64> = self
+            .trials
+            .iter()
+            .map(|t| self.scalar_value(t, weights))
+            .collect();
         let mut sorted_idx: Vec<usize> = (0..self.trials.len()).collect();
         sorted_idx.sort_unstable_by(|&a, &b| {
-            scalar_vals[b].partial_cmp(&scalar_vals[a]).unwrap_or(std::cmp::Ordering::Equal)
+            scalar_vals[b]
+                .partial_cmp(&scalar_vals[a])
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         let mut population: Vec<(f64, TrialConfig)> = Vec::with_capacity(POP_SIZE);
@@ -779,21 +790,30 @@ impl ParEgoOptimizer {
             let cfg = if i < 5 && i < sorted_idx.len() {
                 self.mutate_config(&self.trials[sorted_idx[i]].config, rng)
             } else {
-                lhs_random_config(self.optimize_curvature, self.curvature_mag_min, self.curvature_mag_max, rng)
+                lhs_random_config(
+                    self.optimize_curvature,
+                    self.curvature_mag_min,
+                    self.curvature_mag_max,
+                    rng,
+                )
             };
             let ei = gp.ei(&cfg);
             population.push((ei, cfg));
         }
 
         let mut evals_used = POP_SIZE;
-        while evals_used + 1 <= N_EVALS {
+        while evals_used < N_EVALS {
             // Binary tournament without replacement: pick 2 distinct indices.
             let i = (rng.uniform() * POP_SIZE as f64) as usize % POP_SIZE;
             let mut j = (rng.uniform() * (POP_SIZE - 1) as f64) as usize % (POP_SIZE - 1);
             if j >= i {
                 j += 1;
             }
-            let (winner, loser) = if population[i].0 >= population[j].0 { (i, j) } else { (j, i) };
+            let (winner, loser) = if population[i].0 >= population[j].0 {
+                (i, j)
+            } else {
+                (j, i)
+            };
 
             // Crossover (prob 0.2 SBX) then mutation.
             let offspring = if rng.uniform() < 0.2 {
@@ -806,9 +826,23 @@ impl ParEgoOptimizer {
                     self.curvature_mag_max,
                     rng,
                 );
-                evolalg_mutate(&child, dim, self.optimize_curvature, self.curvature_mag_min, self.curvature_mag_max, rng)
+                evolalg_mutate(
+                    &child,
+                    dim,
+                    self.optimize_curvature,
+                    self.curvature_mag_min,
+                    self.curvature_mag_max,
+                    rng,
+                )
             } else {
-                evolalg_mutate(&population[winner].1, dim, self.optimize_curvature, self.curvature_mag_min, self.curvature_mag_max, rng)
+                evolalg_mutate(
+                    &population[winner].1,
+                    dim,
+                    self.optimize_curvature,
+                    self.curvature_mag_min,
+                    self.curvature_mag_max,
+                    rng,
+                )
             };
 
             let offspring_ei = gp.ei(&offspring);
@@ -892,8 +926,12 @@ impl ParEgoOptimizer {
         let mut maxs = vec![f64::MIN; m];
         for row in &flipped {
             for (d, &v) in row.iter().enumerate() {
-                if v < mins[d] { mins[d] = v; }
-                if v > maxs[d] { maxs[d] = v; }
+                if v < mins[d] {
+                    mins[d] = v;
+                }
+                if v > maxs[d] {
+                    maxs[d] = v;
+                }
             }
         }
         let ranges: Vec<f64> = (0..m).map(|d| (maxs[d] - mins[d]).max(1e-8)).collect();
@@ -981,7 +1019,10 @@ pub fn latin_hypercube_sample(
     curvature_mag_max: f64,
     rng: &mut Rng,
 ) -> Vec<TrialConfig> {
-    use crate::search_space::{CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN, PERP_MAX, PERP_MIN};
+    use crate::search_space::{
+        CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
+        PERP_MAX, PERP_MIN,
+    };
 
     let dim = if optimize_curvature { 7 } else { 6 };
     // Build one stratified [0,1) column per dimension: shuffle bin indices, add
@@ -993,7 +1034,9 @@ pub fn latin_hypercube_sample(
                 let j = (rng.uniform() * (i + 1) as f64) as usize % (i + 1);
                 perm.swap(i, j);
             }
-            perm.iter().map(|&k| (k as f64 + rng.uniform()) / n as f64).collect()
+            perm.iter()
+                .map(|&k| (k as f64 + rng.uniform()) / n as f64)
+                .collect()
         })
         .collect();
 
@@ -1021,8 +1064,14 @@ fn lhs_random_config(
     curvature_mag_max: f64,
     rng: &mut Rng,
 ) -> TrialConfig {
-    latin_hypercube_sample(1, optimize_curvature, curvature_mag_min, curvature_mag_max, rng)
-        .remove(0)
+    latin_hypercube_sample(
+        1,
+        optimize_curvature,
+        curvature_mag_min,
+        curvature_mag_max,
+        rng,
+    )
+    .remove(0)
 }
 
 fn lhs_map_log(t: f64, lo: f64, hi: f64) -> f64 {
@@ -1052,18 +1101,31 @@ pub fn sbx_crossover(
     curvature_mag_max: f64,
     rng: &mut Rng,
 ) -> TrialConfig {
-    use crate::search_space::{CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN, PERP_MAX, PERP_MIN};
+    use crate::search_space::{
+        CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
+        PERP_MAX, PERP_MIN,
+    };
 
-    let lr = sbx_scalar(a.learning_rate.ln(), b.learning_rate.ln(), eta, rng).exp().clamp(LR_MIN, LR_MAX);
-    let perp = sbx_scalar(a.perplexity_ratio.ln(), b.perplexity_ratio.ln(), eta, rng).exp().clamp(PERP_MIN, PERP_MAX);
+    let lr = sbx_scalar(a.learning_rate.ln(), b.learning_rate.ln(), eta, rng)
+        .exp()
+        .clamp(LR_MIN, LR_MAX);
+    let perp = sbx_scalar(a.perplexity_ratio.ln(), b.perplexity_ratio.ln(), eta, rng)
+        .exp()
+        .clamp(PERP_MIN, PERP_MAX);
     let mom = sbx_scalar(a.momentum_main, b.momentum_main, eta, rng).clamp(MOM_MIN, MOM_MAX);
     let cen = sbx_scalar(a.centering_weight, b.centering_weight, eta, rng).clamp(CEN_MIN, CEN_MAX);
-    let glw = sbx_scalar(a.global_loss_weight, b.global_loss_weight, eta, rng).clamp(GLW_MIN, GLW_MAX);
+    let glw =
+        sbx_scalar(a.global_loss_weight, b.global_loss_weight, eta, rng).clamp(GLW_MIN, GLW_MAX);
     let nlw = sbx_scalar(a.norm_loss_weight, b.norm_loss_weight, eta, rng).clamp(NLW_MIN, NLW_MAX);
     let cur = if optimize_curvature {
-        sbx_scalar(a.curvature_magnitude.ln(), b.curvature_magnitude.ln(), eta, rng)
-            .exp()
-            .clamp(curvature_mag_min, curvature_mag_max)
+        sbx_scalar(
+            a.curvature_magnitude.ln(),
+            b.curvature_magnitude.ln(),
+            eta,
+            rng,
+        )
+        .exp()
+        .clamp(curvature_mag_min, curvature_mag_max)
     } else {
         0.0
     };
@@ -1101,7 +1163,10 @@ pub fn evolalg_mutate(
     curvature_mag_max: f64,
     rng: &mut Rng,
 ) -> TrialConfig {
-    use crate::search_space::{CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN, PERP_MAX, PERP_MIN};
+    use crate::search_space::{
+        CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
+        PERP_MAX, PERP_MIN,
+    };
 
     let p = 1.0 / dim as f64;
 
@@ -1110,7 +1175,9 @@ pub fn evolalg_mutate(
             if rng.uniform() < p {
                 let d = rng.uniform() * (1.0 - 0.0001) + 0.0001;
                 let s = if rng.uniform() < 0.5 { 1.0_f64 } else { -1.0 };
-                ($v.ln() + s * d * ($hi.ln() - $lo.ln())).exp().clamp($lo, $hi)
+                ($v.ln() + s * d * ($hi.ln() - $lo.ln()))
+                    .exp()
+                    .clamp($lo, $hi)
             } else {
                 $v
             }
@@ -1136,7 +1203,11 @@ pub fn evolalg_mutate(
         global_loss_weight: mutate_lin!(config.global_loss_weight, GLW_MIN, GLW_MAX),
         norm_loss_weight: mutate_lin!(config.norm_loss_weight, NLW_MIN, NLW_MAX),
         curvature_magnitude: if optimize_curvature {
-            mutate_log!(config.curvature_magnitude, curvature_mag_min, curvature_mag_max)
+            mutate_log!(
+                config.curvature_magnitude,
+                curvature_mag_min,
+                curvature_mag_max
+            )
         } else {
             0.0
         },
@@ -1695,13 +1766,40 @@ mod tests {
     // ─── latin_hypercube_sample ───────────────────────────────────────────────
 
     fn assert_config_in_bounds(cfg: &TrialConfig, label: &str) {
-        use crate::search_space::{CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN, PERP_MAX, PERP_MIN};
-        assert!(cfg.learning_rate >= LR_MIN && cfg.learning_rate <= LR_MAX, "{label}: lr={}", cfg.learning_rate);
-        assert!(cfg.perplexity_ratio >= PERP_MIN && cfg.perplexity_ratio <= PERP_MAX, "{label}: perp={}", cfg.perplexity_ratio);
-        assert!(cfg.momentum_main >= MOM_MIN && cfg.momentum_main <= MOM_MAX, "{label}: mom={}", cfg.momentum_main);
-        assert!(cfg.centering_weight >= CEN_MIN && cfg.centering_weight <= CEN_MAX, "{label}: cen={}", cfg.centering_weight);
-        assert!(cfg.global_loss_weight >= GLW_MIN && cfg.global_loss_weight <= GLW_MAX, "{label}: glw={}", cfg.global_loss_weight);
-        assert!(cfg.norm_loss_weight >= NLW_MIN && cfg.norm_loss_weight <= NLW_MAX, "{label}: nlw={}", cfg.norm_loss_weight);
+        use crate::search_space::{
+            CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
+            PERP_MAX, PERP_MIN,
+        };
+        assert!(
+            cfg.learning_rate >= LR_MIN && cfg.learning_rate <= LR_MAX,
+            "{label}: lr={}",
+            cfg.learning_rate
+        );
+        assert!(
+            cfg.perplexity_ratio >= PERP_MIN && cfg.perplexity_ratio <= PERP_MAX,
+            "{label}: perp={}",
+            cfg.perplexity_ratio
+        );
+        assert!(
+            cfg.momentum_main >= MOM_MIN && cfg.momentum_main <= MOM_MAX,
+            "{label}: mom={}",
+            cfg.momentum_main
+        );
+        assert!(
+            cfg.centering_weight >= CEN_MIN && cfg.centering_weight <= CEN_MAX,
+            "{label}: cen={}",
+            cfg.centering_weight
+        );
+        assert!(
+            cfg.global_loss_weight >= GLW_MIN && cfg.global_loss_weight <= GLW_MAX,
+            "{label}: glw={}",
+            cfg.global_loss_weight
+        );
+        assert!(
+            cfg.norm_loss_weight >= NLW_MIN && cfg.norm_loss_weight <= NLW_MAX,
+            "{label}: nlw={}",
+            cfg.norm_loss_weight
+        );
     }
 
     #[test]
@@ -1730,13 +1828,19 @@ mod tests {
         });
         let log_range = LR_MAX.ln() - LR_MIN.ln();
         let log_covered = max_lr.ln() - min_lr.ln();
-        assert!(log_covered > 0.5 * log_range, "lr log coverage {log_covered:.3} < half of {log_range:.3}");
+        assert!(
+            log_covered > 0.5 * log_range,
+            "lr log coverage {log_covered:.3} < half of {log_range:.3}"
+        );
     }
 
     #[test]
     fn lhs_stratified_per_dim() {
         // Each dimension must have exactly one point per bin (floor(v * n) is a permutation of 0..n).
-        use crate::search_space::{LR_MAX, LR_MIN, PERP_MAX, PERP_MIN, MOM_MAX, MOM_MIN, CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, NLW_MAX, NLW_MIN};
+        use crate::search_space::{
+            CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
+            PERP_MAX, PERP_MIN,
+        };
         let n = 30usize;
         let mut rng = Rng::new(4);
         let pts = latin_hypercube_sample(n, false, 0.001, 5.0, &mut rng);
@@ -1750,12 +1854,42 @@ mod tests {
                 bins[b] = true;
             }
         };
-        check_bins(pts.iter().map(|c| c.learning_rate.ln()).collect(), LR_MIN.ln(), LR_MAX.ln(), "lr");
-        check_bins(pts.iter().map(|c| c.perplexity_ratio.ln()).collect(), PERP_MIN.ln(), PERP_MAX.ln(), "perp");
-        check_bins(pts.iter().map(|c| c.momentum_main).collect(), MOM_MIN, MOM_MAX, "mom");
-        check_bins(pts.iter().map(|c| c.centering_weight).collect(), CEN_MIN, CEN_MAX, "cen");
-        check_bins(pts.iter().map(|c| c.global_loss_weight).collect(), GLW_MIN, GLW_MAX, "glw");
-        check_bins(pts.iter().map(|c| c.norm_loss_weight).collect(), NLW_MIN, NLW_MAX, "nlw");
+        check_bins(
+            pts.iter().map(|c| c.learning_rate.ln()).collect(),
+            LR_MIN.ln(),
+            LR_MAX.ln(),
+            "lr",
+        );
+        check_bins(
+            pts.iter().map(|c| c.perplexity_ratio.ln()).collect(),
+            PERP_MIN.ln(),
+            PERP_MAX.ln(),
+            "perp",
+        );
+        check_bins(
+            pts.iter().map(|c| c.momentum_main).collect(),
+            MOM_MIN,
+            MOM_MAX,
+            "mom",
+        );
+        check_bins(
+            pts.iter().map(|c| c.centering_weight).collect(),
+            CEN_MIN,
+            CEN_MAX,
+            "cen",
+        );
+        check_bins(
+            pts.iter().map(|c| c.global_loss_weight).collect(),
+            GLW_MIN,
+            GLW_MAX,
+            "glw",
+        );
+        check_bins(
+            pts.iter().map(|c| c.norm_loss_weight).collect(),
+            NLW_MIN,
+            NLW_MAX,
+            "nlw",
+        );
     }
 
     #[test]
@@ -1763,7 +1897,10 @@ mod tests {
         let mut rng = Rng::new(5);
         let pts = latin_hypercube_sample(20, false, 0.001, 5.0, &mut rng);
         for cfg in &pts {
-            assert_eq!(cfg.curvature_magnitude, 0.0, "curvature should be 0 when disabled");
+            assert_eq!(
+                cfg.curvature_magnitude, 0.0,
+                "curvature should be 0 when disabled"
+            );
         }
     }
 
@@ -1774,8 +1911,11 @@ mod tests {
         let mut rng = Rng::new(6);
         let pts = latin_hypercube_sample(30, true, k_min, k_max, &mut rng);
         for cfg in &pts {
-            assert!(cfg.curvature_magnitude >= k_min && cfg.curvature_magnitude <= k_max,
-                "curvature {} out of [{k_min},{k_max}]", cfg.curvature_magnitude);
+            assert!(
+                cfg.curvature_magnitude >= k_min && cfg.curvature_magnitude <= k_max,
+                "curvature {} out of [{k_min},{k_max}]",
+                cfg.curvature_magnitude
+            );
         }
     }
 
@@ -1790,7 +1930,11 @@ mod tests {
         let dim7 = 7usize;
         let n7 = 11 * dim7 - 1;
         let pts7 = latin_hypercube_sample(n7, true, 0.001, 5.0, &mut rng);
-        assert_eq!(pts7.len(), n7, "expected 11*7-1=76 LHS points with curvature");
+        assert_eq!(
+            pts7.len(),
+            n7,
+            "expected 11*7-1=76 LHS points with curvature"
+        );
     }
 
     // ─── sample_discrete_simplex ──────────────────────────────────────────────
@@ -1815,7 +1959,10 @@ mod tests {
             let w = sample_discrete_simplex(10, s, &mut rng);
             for &wi in &w {
                 let scaled = wi * s as f64;
-                assert!((scaled - scaled.round()).abs() < 1e-10, "w*s={scaled} not integer");
+                assert!(
+                    (scaled - scaled.round()).abs() < 1e-10,
+                    "w*s={scaled} not integer"
+                );
             }
         }
     }
@@ -1847,8 +1994,12 @@ mod tests {
         for _ in 0..2000 {
             let w = sample_discrete_simplex(5, 5, &mut rng);
             for &wi in &w {
-                if wi == 1.0 { saw_one = true; }
-                if wi == 0.0 { saw_zero = true; }
+                if wi == 1.0 {
+                    saw_one = true;
+                }
+                if wi == 0.0 {
+                    saw_zero = true;
+                }
             }
         }
         assert!(saw_one, "never sampled a weight of 1.0");
@@ -1903,30 +2054,46 @@ mod tests {
             }
         }
         // Identical parents should always produce the parent (SBX: child = 0.5*(1+β)*p + 0.5*(1-β)*p = p).
-        assert!(all_same, "SBX with identical parents should always return the parent");
+        assert!(
+            all_same,
+            "SBX with identical parents should always return the parent"
+        );
     }
 
     #[test]
     fn sbx_not_always_parent_a() {
         let mut rng = Rng::new(22);
         let a = default_config();
-        let b = TrialConfig { learning_rate: 1.0, ..default_config() };
+        let b = TrialConfig {
+            learning_rate: 1.0,
+            ..default_config()
+        };
         let differs: bool = (0..50).any(|_| {
             let child = sbx_crossover(&a, &b, 2.0, false, 0.001, 5.0, &mut rng);
             (child.learning_rate - a.learning_rate).abs() > 1e-9
         });
-        assert!(differs, "SBX should sometimes produce a child different from parent a");
+        assert!(
+            differs,
+            "SBX should sometimes produce a child different from parent a"
+        );
     }
 
     #[test]
     fn sbx_log_params_stay_positive() {
         let mut rng = Rng::new(23);
         let a = default_config();
-        let b = TrialConfig { learning_rate: 0.6, perplexity_ratio: 0.0005, ..default_config() };
+        let b = TrialConfig {
+            learning_rate: 0.6,
+            perplexity_ratio: 0.0005,
+            ..default_config()
+        };
         for _ in 0..200 {
             let child = sbx_crossover(&a, &b, 2.0, false, 0.001, 5.0, &mut rng);
             assert!(child.learning_rate > 0.0, "lr must be positive");
-            assert!(child.perplexity_ratio > 0.0, "perplexity_ratio must be positive");
+            assert!(
+                child.perplexity_ratio > 0.0,
+                "perplexity_ratio must be positive"
+            );
         }
     }
 
@@ -1952,7 +2119,10 @@ mod tests {
                 || (m.momentum_main - cfg.momentum_main).abs() > 1e-9
                 || (m.centering_weight - cfg.centering_weight).abs() > 1e-9
         });
-        assert!(changed, "mutation should change at least one parameter over 100 calls");
+        assert!(
+            changed,
+            "mutation should change at least one parameter over 100 calls"
+        );
     }
 
     #[test]
@@ -1962,7 +2132,10 @@ mod tests {
         for _ in 0..200 {
             let m = evolalg_mutate(&cfg, 6, false, 0.001, 5.0, &mut rng);
             assert!(m.learning_rate > 0.0, "lr must be positive");
-            assert!(m.perplexity_ratio > 0.0, "perplexity_ratio must be positive");
+            assert!(
+                m.perplexity_ratio > 0.0,
+                "perplexity_ratio must be positive"
+            );
         }
     }
 
@@ -1985,7 +2158,8 @@ mod tests {
         let (opt, _) = make_pareto_optimizer_with_trials(10);
         let mut rng = Rng::new(40);
         let weights = sample_discrete_simplex(2, 5, &mut rng);
-        let scalar_trials = opt.scalarize_subset(&(0..opt.trials.len()).collect::<Vec<_>>(), &weights);
+        let scalar_trials =
+            opt.scalarize_subset(&(0..opt.trials.len()).collect::<Vec<_>>(), &weights);
         let gp = GpModel::fit(&scalar_trials, OptimizeDirection::Maximize, false);
         let result = opt.evolalg(&gp, &weights, &mut rng);
         assert_config_in_bounds(&result, "evolalg result");
@@ -1997,7 +2171,8 @@ mod tests {
         let (opt, _) = make_pareto_optimizer_with_trials(15);
         let mut rng = Rng::new(41);
         let weights = sample_discrete_simplex(2, 5, &mut rng);
-        let scalar_trials = opt.scalarize_subset(&(0..opt.trials.len()).collect::<Vec<_>>(), &weights);
+        let scalar_trials =
+            opt.scalarize_subset(&(0..opt.trials.len()).collect::<Vec<_>>(), &weights);
         let gp = GpModel::fit(&scalar_trials, OptimizeDirection::Maximize, false);
 
         let best = opt.evolalg(&gp, &weights, &mut rng);
@@ -2009,8 +2184,10 @@ mod tests {
         random_eis.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
         let median_ei = random_eis[50];
 
-        assert!(best_ei >= median_ei,
-            "EVOLALG EI {best_ei:.6} should be >= median random EI {median_ei:.6}");
+        assert!(
+            best_ei >= median_ei,
+            "EVOLALG EI {best_ei:.6} should be >= median random EI {median_ei:.6}"
+        );
     }
 
     // ─── ParEgoOptimizer::suggest_batch (integration) ─────────────────────────
@@ -2026,7 +2203,11 @@ mod tests {
         // We asked for 200 but only 65 LHS exist; the rest would come from GP phase.
         // However, since we have 0 trials, the GP phase would fail — so the queue
         // just drains. Verify by checking the LHS queue was exactly 65 and all came out.
-        assert_eq!(opt.lhs_queue.len(), 0, "LHS queue should be empty after draining");
+        assert_eq!(
+            opt.lhs_queue.len(),
+            0,
+            "LHS queue should be empty after draining"
+        );
         assert_eq!(batch.len(), 200);
         // First 65 must be LHS (all in bounds).
         for (i, cfg) in batch[..65].iter().enumerate() {
@@ -2042,14 +2223,18 @@ mod tests {
         let mut rng = Rng::new(51);
         // Drain the LHS in small batches.
         let mut all_lhs = Vec::new();
-        while opt.lhs_queue.len() > 0 || !opt.lhs_initialized {
+        while !opt.lhs_queue.is_empty() || !opt.lhs_initialized {
             let batch = opt.suggest_batch(5, &mut rng);
             all_lhs.extend(batch);
             if opt.lhs_queue.is_empty() {
                 break;
             }
         }
-        assert_eq!(all_lhs.len(), 65, "should have drained exactly 65 LHS points");
+        assert_eq!(
+            all_lhs.len(),
+            65,
+            "should have drained exactly 65 LHS points"
+        );
         for (i, cfg) in all_lhs.iter().enumerate() {
             assert_config_in_bounds(cfg, &format!("LHS {i}"));
         }
@@ -2088,11 +2273,18 @@ mod tests {
         let mut opt = ParEgoOptimizer::new(metrics, false, 0.001, 5.0);
         let mut rng = Rng::new(60);
         for _ in 0..20 {
-            opt.observe(TrialConfig::random(&mut rng), vec![rng.uniform(), rng.uniform()]);
+            opt.observe(
+                TrialConfig::random(&mut rng),
+                vec![rng.uniform(), rng.uniform()],
+            );
         }
         let weights = vec![0.5, 0.5];
         let scalar_trials = opt.scalarize_trials_subset(&weights, &mut rng);
-        assert_eq!(scalar_trials.len(), 20, "all 20 trials should be used when n < 25");
+        assert_eq!(
+            scalar_trials.len(),
+            20,
+            "all 20 trials should be used when n < 25"
+        );
     }
 
     #[test]
@@ -2103,10 +2295,17 @@ mod tests {
         let mut rng = Rng::new(61);
         let n = 40usize;
         for _ in 0..n {
-            opt.observe(TrialConfig::random(&mut rng), vec![rng.uniform(), rng.uniform()]);
+            opt.observe(
+                TrialConfig::random(&mut rng),
+                vec![rng.uniform(), rng.uniform()],
+            );
         }
         let weights = vec![0.5, 0.5];
         let scalar_trials = opt.scalarize_trials_subset(&weights, &mut rng);
-        assert_eq!(scalar_trials.len(), n, "subset should equal n trials when n >= 25");
+        assert_eq!(
+            scalar_trials.len(),
+            n,
+            "subset should equal n trials when n >= 25"
+        );
     }
 }

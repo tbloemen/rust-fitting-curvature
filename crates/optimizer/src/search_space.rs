@@ -281,9 +281,9 @@ impl TrialConfig {
                 .clamp(LR_MIN, LR_MAX);
         }
         if rng.uniform() < 0.3 {
-            cfg.perplexity_ratio =
-                (cfg.perplexity_ratio * 2.0_f64.powf((rng.uniform() - 0.5) * 0.8))
-                    .clamp(PERP_MIN, PERP_MAX);
+            cfg.perplexity_ratio = (cfg.perplexity_ratio
+                * 2.0_f64.powf((rng.uniform() - 0.5) * 0.8))
+            .clamp(PERP_MIN, PERP_MAX);
         }
         if rng.uniform() < 0.3 {
             cfg.momentum_main =

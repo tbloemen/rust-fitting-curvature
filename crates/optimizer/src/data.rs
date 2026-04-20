@@ -32,11 +32,13 @@ impl Dataset {
             "antipodal_clusters" => generate_hd_antipodal_clusters(n_samples, 10, seed),
             "tree" => generate_hd_tree(n_samples, 10, seed),
             "hyperbolic_shells" => generate_hd_hyperbolic_shells(n_samples, 10, seed),
-            _ => return Err(format!(
-                "Unknown dataset '{name}'.\n  \
+            _ => {
+                return Err(format!(
+                    "Unknown dataset '{name}'.\n  \
                  Real: mnist, fashion_mnist, pbmc, wordnet_mammals\n  \
                  Synthetic: sphere, antipodal_clusters, tree, hyperbolic_shells"
-            )),
+                ));
+            }
         };
         Ok(sd.into())
     }
