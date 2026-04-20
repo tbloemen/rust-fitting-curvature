@@ -15,7 +15,7 @@ use std::f64::consts::PI;
 use fitting_core::synthetic_data::Rng;
 use serde::Serialize;
 
-use crate::evaluate::Metric;
+use crate::metrics::Metric;
 use crate::search_space::{OptimizeDirection, SearchSpace, TrialConfig};
 
 // ─── Public API ───────────────────────────────────────────────────────────────

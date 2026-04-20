@@ -10,13 +10,15 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::data::Dataset;
-use crate::evaluate::{AllMetrics, Evaluator, Metric};
+use crate::evaluate::Evaluator;
 use crate::gp::{GpOptimizer, GpState, MultiTrial, ParEgoOptimizer};
+use crate::metrics::{AllMetrics, Metric};
 use crate::search_space::{SearchSpace, TrialConfig};
 
 mod data;
 mod evaluate;
 mod gp;
+mod metrics;
 mod search_space;
 
 #[derive(Parser, Debug, Clone)]
@@ -26,7 +28,7 @@ struct Args {
     #[arg(long, default_value = "./www/public/data")]
     data_path: String,
 
-    #[arg(long, default_value = "1000")]
+    #[arg(long, default_value = "400")]
     n_trials: usize,
 
     #[arg(long, default_value = "3")]
@@ -58,11 +60,11 @@ struct Args {
     geometry: Option<String>,
 
     /// For --mode random: lower bound of the continuous curvature range.
-    #[arg(long, default_value = "-25.0")]
+    #[arg(long, default_value = "-5.0")]
     curvature_min: f64,
 
     /// For --mode random: upper bound of the continuous curvature range.
-    #[arg(long, default_value = "25.0")]
+    #[arg(long, default_value = "5.0")]
     curvature_max: f64,
 
     /// For --mode bayes or scan: metric to optimise (e.g. trustworthiness).
