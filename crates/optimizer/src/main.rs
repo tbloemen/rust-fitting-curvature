@@ -302,9 +302,10 @@ fn metrics_to_vec(m: &AllMetrics, metrics: &[Metric]) -> Vec<f64> {
     metrics.iter().map(|metric| metric.value(m)).collect()
 }
 
-fn write_pareto_front(front: &[&MultiTrial], metrics: &[Metric], path: &str) {
+fn write_pareto_front(front: &[&MultiTrial], metrics: &[Metric], n_samples: usize, path: &str) {
     #[derive(Serialize)]
     struct ParetoEntry<'a> {
+        n_samples: usize,
         learning_rate: f64,
         perplexity_ratio: f64,
         momentum_main: f64,
@@ -323,6 +324,7 @@ fn write_pareto_front(front: &[&MultiTrial], metrics: &[Metric], path: &str) {
                 metric_map.insert(metric.name(), v);
             }
             ParetoEntry {
+                n_samples,
                 learning_rate: t.config.learning_rate,
                 perplexity_ratio: t.config.perplexity_ratio,
                 momentum_main: t.config.momentum_main,
@@ -480,7 +482,7 @@ fn run_pareto(
         .trim_end_matches(".jsonl")
         .trim_end_matches(".json");
     let front_path = format!("{}_pareto_{}_{}.json", stem, dataset_name, geometry);
-    write_pareto_front(&front, &optimizer.metrics, &front_path);
+    write_pareto_front(&front, &optimizer.metrics, args.n_samples, &front_path);
     pb.println(format!("Pareto front written to {}", front_path));
 }
 
