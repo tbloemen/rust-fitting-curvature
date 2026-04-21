@@ -209,9 +209,16 @@ def _preprocess(records: list[dict]) -> list[dict]:
     return records
 
 
-def load_results(path: str) -> list[dict]:
-    """Load non-scan trial results from a single JSONL file."""
-    return _preprocess([r for r in _load_jsonl(path) if not r.get("scan_param")])
+def load_results(path: str, dataset: str | None = None) -> list[dict]:
+    """Load non-scan trial results from a single JSONL file.
+
+    If *dataset* is given, only records with a matching ``dataset_name`` field
+    are returned.
+    """
+    records = [r for r in _load_jsonl(path) if not r.get("scan_param")]
+    if dataset:
+        records = [r for r in records if r.get("dataset_name") == dataset]
+    return _preprocess(records)
 
 
 def present_params(records: list[dict]) -> list[str]:
@@ -877,23 +884,32 @@ def plot_good_regions(
 #   mu_orig    = µₙ · y_std + y_mean  (undo standardisation; undo sign-flip if minimize)
 
 
-def load_gp_states(input_prefix: str) -> dict[str, dict]:
+def load_gp_states(input_prefix: str, dataset: str | None = None) -> dict[str, dict]:
     """
     Load all GP state JSON files matching ``<input_prefix>_gp_*.json``.
 
-    Only geometry-keyed files are supported:
-    ``<stem>_gp_<dataset>_<geometry>.json`` where geometry is one of
-    "euclidean", "spherical", "hyperbolic".
+    Expects files of the form ``<stem>_gp_<dataset>_<geometry>.json`` where
+    geometry is one of "euclidean", "spherical", "hyperbolic".
+
+    If *dataset* is given, only files for that dataset are loaded and the
+    returned dict is keyed by geometry alone.  Without a dataset filter the
+    dict is keyed by ``<dataset>_<geometry>`` to avoid collisions when
+    multiple datasets share the same geometry.
     """
     states: dict[str, dict] = {}
     prefix_path = Path(input_prefix)
     search_dir = prefix_path.parent
     name_pattern = f"{prefix_path.stem}_gp_*.json"
     for path in sorted(search_dir.glob(name_pattern)):
-        m = re.search(r"_(euclidean|spherical|hyperbolic)$", path.stem)
+        m = re.search(
+            r"_gp_(.+)_(euclidean|spherical|hyperbolic)$", path.stem
+        )
         if not m:
             continue
-        key = m.group(1)
+        file_dataset, geometry = m.group(1), m.group(2)
+        if dataset and file_dataset != dataset:
+            continue
+        key = geometry if dataset else f"{file_dataset}_{geometry}"
         try:
             with open(path) as f:
                 states[key] = json.load(f)
@@ -1349,12 +1365,19 @@ def plot_gp_ei(
 # ─── Scan data loading ────────────────────────────────────────────────────────
 
 
-def load_scan_results(path: str) -> list[dict]:
-    """Load scan trial records from a single JSONL file (filtered by scan_param presence)."""
-    return _preprocess([r for r in _load_jsonl(path) if r.get("scan_param")])
+def load_scan_results(path: str, dataset: str | None = None) -> list[dict]:
+    """Load scan trial records from a single JSONL file (filtered by scan_param presence).
+
+    If *dataset* is given, only records with a matching ``dataset_name`` field
+    are returned.
+    """
+    records = [r for r in _load_jsonl(path) if r.get("scan_param")]
+    if dataset:
+        records = [r for r in records if r.get("dataset_name") == dataset]
+    return _preprocess(records)
 
 
-def load_pareto_front(input_path: str) -> list[dict]:
+def load_pareto_front(input_path: str, dataset: str | None = None) -> list[dict]:
     """Load Pareto front entries from ``*_pareto_*.json`` files.
 
     Matches files of the form ``<stem>_pareto_<dataset>_<geometry>.json``.
@@ -1362,6 +1385,8 @@ def load_pareto_front(input_path: str) -> list[dict]:
     with the 10 Pareto objectives.  This function flattens the ``metrics``
     sub-dict into the entry and annotates ``geometry`` and ``dataset`` from
     the filename.
+
+    If *dataset* is given, only files for that dataset are loaded.
     """
     entries: list[dict] = []
     prefix_path = Path(input_path)
@@ -1372,7 +1397,9 @@ def load_pareto_front(input_path: str) -> list[dict]:
         m = re.search(r"_pareto_([^_]+)_(euclidean|spherical|hyperbolic)$", path.stem)
         if not m:
             continue
-        dataset, geometry = m.group(1), m.group(2)
+        file_dataset, geometry = m.group(1), m.group(2)
+        if dataset and file_dataset != dataset:
+            continue
         try:
             with open(path) as f:
                 raw = json.load(f)
@@ -1383,7 +1410,7 @@ def load_pareto_front(input_path: str) -> list[dict]:
             flat = {k: v for k, v in entry.items() if k != "metrics"}
             flat.update(entry.get("metrics", {}))
             flat.setdefault("geometry", geometry)
-            flat.setdefault("dataset_name", dataset)
+            flat.setdefault("dataset_name", file_dataset)
             entries.append(flat)
     return _preprocess(entries)
 
@@ -1975,16 +2002,18 @@ def _run_gp(args: "argparse.Namespace") -> None:
     if not args.metric:
         print("Error: --metric is required for --mode gp")
         return
+    dataset: str | None = getattr(args, "dataset", None)
     stem = Path(args.input).stem
-    print(f"Loading GP states matching '{stem}_gp_*.json' ...")
-    states = load_gp_states(args.input)
+    filter_note = f" (dataset={dataset})" if dataset else ""
+    print(f"Loading GP states matching '{stem}_gp_*.json'{filter_note} ...")
+    states = load_gp_states(args.input, dataset)
     if not states:
         print(
             "No GP state files found. Run the optimizer with --mode bayes first.\n"
             f"Expected files matching: {stem}_gp_*.json"
         )
         return
-    print(f"Loaded GP states for {len(states)} curvature(s): {sorted(states)}")
+    print(f"Loaded GP states for {len(states)} geometry/key(s): {sorted(states)}")
     print("Generating GP plots:")
     plot_gp_slices(states, args.metric, os.path.join(args.output, "gp_slices.svg"))
     plot_gp_landscape(
@@ -1995,8 +2024,10 @@ def _run_gp(args: "argparse.Namespace") -> None:
 
 
 def _run_scan(args: "argparse.Namespace") -> None:
-    print(f"Loading scan results from '{args.input}' ...")
-    records = load_scan_results(args.input)
+    dataset: str | None = getattr(args, "dataset", None)
+    filter_note = f" (dataset={dataset})" if dataset else ""
+    print(f"Loading scan results from '{args.input}'{filter_note} ...")
+    records = load_scan_results(args.input, dataset)
     if not records:
         print("No scan results found. Run the optimizer with --mode scan first.")
         return
@@ -2023,8 +2054,10 @@ def _run_scan(args: "argparse.Namespace") -> None:
 
 
 def _run_optimize(args: "argparse.Namespace") -> None:
-    print(f"Loading results from '{args.input}' ...")
-    records = load_results(args.input)
+    dataset: str | None = getattr(args, "dataset", None)
+    filter_note = f" (dataset={dataset})" if dataset else ""
+    print(f"Loading results from '{args.input}'{filter_note} ...")
+    records = load_results(args.input, dataset)
     if not records:
         print("No results found. Check --input path.")
         return
@@ -2076,9 +2109,11 @@ def _run_optimize(args: "argparse.Namespace") -> None:
 
 def _run_pareto(args: "argparse.Namespace") -> None:
     """Analyze Pareto front from --mode pareto optimizer runs."""
-    print(f"Loading results from '{args.input}' ...")
-    all_trials = load_results(args.input)
-    front_entries = load_pareto_front(args.input)
+    dataset: str | None = getattr(args, "dataset", None)
+    filter_note = f" (dataset={dataset})" if dataset else ""
+    print(f"Loading results from '{args.input}'{filter_note} ...")
+    all_trials = load_results(args.input, dataset)
+    front_entries = load_pareto_front(args.input, dataset)
 
     if not all_trials and not front_entries:
         print("No data found. Run the optimizer with --mode pareto first.")
@@ -2145,7 +2180,26 @@ def main() -> None:
         default=0.1,
         help="Fraction of top runs for the good-regions plot (default: 0.1 = top 10%%)",
     )
+    parser.add_argument(
+        "--dataset",
+        default=None,
+        help=(
+            "Filter results to a single dataset (e.g. 'mnist', 'pbmc'). "
+            "Required when the results file contains multiple datasets."
+        ),
+    )
     args = parser.parse_args()
+
+    # Warn if the file looks multi-dataset and no filter was given.
+    if not args.dataset and args.mode != "gp":
+        raw = _load_jsonl(args.input)
+        names: set[str] = {r["dataset_name"] for r in raw if r.get("dataset_name")}
+        if len(names) > 1:
+            print(
+                f"Warning: '{args.input}' contains {len(names)} datasets "
+                f"({', '.join(sorted(names))}).\n"
+                "         Pass --dataset <name> to analyse one at a time.\n"
+            )
     os.makedirs(args.output, exist_ok=True)
 
     dispatch = {
