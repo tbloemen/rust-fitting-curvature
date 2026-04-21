@@ -10,7 +10,7 @@ use indicatif::ProgressBar;
 
 use crate::data::Dataset;
 use crate::metrics::AllMetrics;
-use crate::search_space::HyperParams;
+use crate::search_space::TrialConfig;
 
 pub struct Evaluator {
     dataset: Dataset,
@@ -44,7 +44,7 @@ impl Evaluator {
 
     pub fn compute_all_metrics(
         &self,
-        config: &HyperParams,
+        config: &TrialConfig,
         curvature_sign: f64,
         seed: u64,
         pb_iters: &ProgressBar,
@@ -115,7 +115,7 @@ impl Evaluator {
 
     pub fn evaluate_with_metric(
         &self,
-        config: &HyperParams,
+        config: &TrialConfig,
         curvature_sign: f64,
         metric: &str,
         seed: u64,

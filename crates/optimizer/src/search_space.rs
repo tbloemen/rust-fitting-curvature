@@ -101,13 +101,13 @@ impl ParamSpec {
     }
 }
 
-// ─── HyperParams ──────────────────────────────────────────────────────────────
+// ─── TrialConfig ──────────────────────────────────────────────────────────────
 
 /// Full hyperparameter specification for one experiment.
 ///
 /// Each numeric field is either `Fixed(v)` (held constant) or `Optimize{lo,hi}` (in the
 /// BO search space).  A fully-sampled `HyperParams` (all fields `Fixed`) serves directly
-/// as the trial config — no separate `TrialConfig` struct is needed.
+/// as the trial config.
 ///
 /// `scaling_loss_type` is always `MeanDistance` and `init_method` is always `Pca`
 /// — both are hardcoded in `to_training_config`.
@@ -118,7 +118,7 @@ impl ParamSpec {
 ///   early_exaggeration_factor, n_iterations, early_exaggeration_iterations,
 ///   curvature_magnitude, init_scale, embed_dim
 #[derive(Debug, Clone)]
-pub struct HyperParams {
+pub struct TrialConfig {
     pub learning_rate: ParamSpec,
     /// Fraction of n_points; converted to absolute perplexity in `to_training_config`.
     pub perplexity_ratio: ParamSpec,
@@ -136,7 +136,7 @@ pub struct HyperParams {
     pub embed_dim: ParamSpec,
 }
 
-impl HyperParams {
+impl TrialConfig {
     /// Number of `Optimize` (free) parameters — the dimensionality seen by the GP.
     pub fn free_param_count(&self) -> usize {
         self.specs().iter().filter(|s| s.is_optimized()).count()
@@ -346,17 +346,17 @@ impl HyperParams {
 #[derive(Debug, Clone)]
 pub struct SearchSpace {
     pub direction: OptimizeDirection,
-    pub hyper_params: HyperParams,
+    pub hyper_params: TrialConfig,
 }
 
 impl SearchSpace {
     /// Sample a fresh `HyperParams` (all fields `Fixed`) according to the spec.
-    pub fn sample(&self, rng: &mut Rng) -> HyperParams {
+    pub fn sample(&self, rng: &mut Rng) -> TrialConfig {
         self.hyper_params.sample(rng)
     }
 
     /// Perturb a sampled `HyperParams` according to the spec.
-    pub fn mutate_config(&self, config: &HyperParams, rng: &mut Rng) -> HyperParams {
+    pub fn mutate_config(&self, config: &TrialConfig, rng: &mut Rng) -> TrialConfig {
         self.hyper_params.mutate(config, rng)
     }
 }
@@ -367,7 +367,7 @@ mod tests {
     use fitting_core::synthetic_data::Rng;
 
     fn test_space() -> SearchSpace {
-        let mut hp = HyperParams::all_free();
+        let mut hp = TrialConfig::all_free();
         hp.curvature_magnitude = ParamSpec::Optimize {
             lo: 0.001,
             hi: 25.0,
@@ -496,7 +496,7 @@ mod tests {
 
     #[test]
     fn hyperparams_sample_produces_all_fixed() {
-        let spec = HyperParams::all_free();
+        let spec = TrialConfig::all_free();
         let mut rng = Rng::new(42);
         let sampled = spec.sample(&mut rng);
         // Every field in a sampled HP must be Fixed.
@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn hyperparams_to_training_config_basic() {
-        let mut hp = HyperParams::all_free().sample(&mut Rng::new(7));
+        let mut hp = TrialConfig::all_free().sample(&mut Rng::new(7));
         hp.curvature_magnitude = ParamSpec::Fixed(2.5);
         let tc = hp.to_training_config(500, -1.0, 99);
         assert_eq!(tc.n_points, 500);

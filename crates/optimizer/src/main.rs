@@ -13,7 +13,7 @@ use crate::data::Dataset;
 use crate::evaluate::Evaluator;
 use crate::gp::{GpOptimizer, GpState, MultiTrial, ParEgoOptimizer};
 use crate::metrics::{AllMetrics, Metric};
-use crate::search_space::{HyperParams, SearchSpace};
+use crate::search_space::{SearchSpace, TrialConfig};
 
 mod data;
 mod evaluate;
@@ -142,7 +142,7 @@ struct TrialResult {
 
 impl TrialResult {
     fn new(
-        config: &HyperParams,
+        config: &TrialConfig,
         dataset_name: &str,
         n_samples: usize,
         n_seeds: usize,
@@ -217,13 +217,13 @@ fn write_result(result: &TrialResult, out_path: &str) {
 
 // ─── Experiment variants ──────────────────────────────────────────────────────
 
-fn parse_experiment(name: &str) -> HyperParams {
+fn parse_experiment(name: &str) -> TrialConfig {
     match name {
-        "all_off" => HyperParams::all_off(),
-        "centering_only" => HyperParams::centering_only(),
-        "global_only" => HyperParams::global_only(),
-        "norm_only" => HyperParams::norm_only(),
-        "all_free" => HyperParams::all_free(),
+        "all_off" => TrialConfig::all_off(),
+        "centering_only" => TrialConfig::centering_only(),
+        "global_only" => TrialConfig::global_only(),
+        "norm_only" => TrialConfig::norm_only(),
+        "all_free" => TrialConfig::all_free(),
         other => {
             eprintln!(
                 "Unknown --experiment '{}'. Valid: all_off, centering_only, global_only, \
@@ -250,7 +250,7 @@ fn mean_std(values: &[f64]) -> (f64, f64) {
 
 fn eval_single_metric(
     evaluator: &Evaluator,
-    config: &HyperParams,
+    config: &TrialConfig,
     curvature: f64,
     metric: &str,
     n_seeds: usize,
@@ -273,7 +273,7 @@ fn eval_single_metric(
 
 fn eval_all_metrics(
     evaluator: &Evaluator,
-    config: &HyperParams,
+    config: &TrialConfig,
     curvature: f64,
     n_seeds: usize,
     trial_idx: usize,
@@ -519,7 +519,7 @@ fn run_random(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &M
     let k_hi = args.curvature_max;
     let sample_space = SearchSpace {
         direction: crate::search_space::OptimizeDirection::Maximize,
-        hyper_params: HyperParams::all_free(),
+        hyper_params: TrialConfig::all_free(),
     };
 
     let pb = make_progress_bar(
@@ -610,7 +610,7 @@ fn load_warm_start_trials(
     metric: &str,
     dataset_name: &str,
     geometry: &str,
-) -> Vec<(HyperParams, f64)> {
+) -> Vec<(TrialConfig, f64)> {
     use crate::search_space::ParamSpec;
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
@@ -630,7 +630,7 @@ fn load_warm_start_trials(
             if !metric_val.is_finite() {
                 return None;
             }
-            let mut config = HyperParams::all_free();
+            let mut config = TrialConfig::all_free();
             config.learning_rate = ParamSpec::Fixed(v["learning_rate"].as_f64()?);
             config.perplexity_ratio = ParamSpec::Fixed(v["perplexity_ratio"].as_f64()?);
             config.momentum_main = ParamSpec::Fixed(v["momentum_main"].as_f64()?);
@@ -856,11 +856,11 @@ fn load_best_config_from_jsonl(
     n_points: usize,
     dataset_name: &str,
     geometry: &str,
-) -> Option<HyperParams> {
+) -> Option<TrialConfig> {
     use crate::search_space::ParamSpec;
     let content = std::fs::read_to_string(path).ok()?;
     let mut best_val = f64::NEG_INFINITY;
-    let mut best: Option<HyperParams> = None;
+    let mut best: Option<TrialConfig> = None;
 
     for line in content.lines() {
         let v: serde_json::Value = serde_json::from_str(line).ok()?;
@@ -876,7 +876,7 @@ fn load_best_config_from_jsonl(
             let perp_ratio = v["perplexity_ratio"]
                 .as_f64()
                 .unwrap_or_else(|| v["perplexity"].as_f64().unwrap_or(15.0) / n_points as f64);
-            let mut hp = HyperParams::all_free();
+            let mut hp = TrialConfig::all_free();
             hp.learning_rate = ParamSpec::Fixed(v["learning_rate"].as_f64().unwrap_or(10.0));
             hp.perplexity_ratio = ParamSpec::Fixed(perp_ratio);
             hp.momentum_main = ParamSpec::Fixed(v["momentum_main"].as_f64().unwrap_or(0.8));
@@ -911,7 +911,7 @@ fn sweep_values(lo: f64, hi: f64, n: usize, log: bool) -> Vec<f64> {
         .collect()
 }
 
-fn apply_param(config: &mut HyperParams, param: &str, val: f64) {
+fn apply_param(config: &mut TrialConfig, param: &str, val: f64) {
     use crate::search_space::ParamSpec;
     let fixed = ParamSpec::Fixed(val);
     match param {
