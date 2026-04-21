@@ -41,6 +41,8 @@ struct Args {
     #[arg(long, default_value = "results/results.jsonl")]
     output: String,
 
+    /// Dataset to run. Use "all" for all datasets, "real" for real datasets only
+    /// (mnist, fashion_mnist, pbmc, wordnet_mammals), or a single dataset name.
     #[arg(long)]
     dataset: Option<String>,
 
@@ -409,16 +411,90 @@ fn run_pareto(
     let mut rng = fitting_core::synthetic_data::Rng::new(0xdead_beef_cafe_2222);
 
     let out_path = &args.output;
+    let lhs_total = optimizer.lhs_total();
+
+    // ── Phase 1: LHS init ────────────────────────────────────────────────────
+    let pb = make_progress_bar(
+        mp,
+        lhs_total as u64,
+        "{spinner:.cyan} [LHS] {msg} [{bar:35.cyan/blue}] {pos}/{len} ({eta})",
+    );
+    pb.set_message(format!("{} (sign={:+.0})", geometry, curvature_sign));
+    pb.println(format!(
+        "pareto '{}' ({}) — LHS init phase: {} points, {} objectives",
+        dataset_name, geometry, lhs_total, n_objectives
+    ));
+
+    let mut lhs_completed = 0usize;
+    while !optimizer.lhs_drained() {
+        let remaining_lhs = lhs_total.saturating_sub(lhs_completed);
+        let this_batch = batch_size.min(remaining_lhs.max(1));
+        let configs = optimizer.suggest_batch(this_batch, &mut rng);
+
+        let results: Vec<(f64, AllMetrics, u64)> = thread::scope(|s| {
+            configs
+                .iter()
+                .enumerate()
+                .map(|(i, config)| {
+                    let evaluator = &*evaluator;
+                    let actual_curvature = curvature_sign * config.curvature_magnitude.value();
+                    let trial_idx = lhs_completed + i + 1;
+                    s.spawn(move || {
+                        let pb_iters = ProgressBar::hidden();
+                        let start = std::time::Instant::now();
+                        let all = eval_all_metrics(
+                            evaluator,
+                            config,
+                            curvature_sign,
+                            args.n_seeds,
+                            trial_idx,
+                            &pb_iters,
+                        );
+                        let elapsed = start.elapsed().as_millis() as u64;
+                        (actual_curvature, all, elapsed)
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect()
+        });
+
+        for (config, (actual_curvature, all, elapsed)) in configs.iter().zip(results.iter()) {
+            let metric_vec = metrics_to_vec(all, optimizer.metrics.as_slice());
+            optimizer.observe(config.clone(), metric_vec);
+            lhs_completed += 1;
+
+            let mut result = TrialResult::new(
+                config,
+                dataset_name,
+                args.n_samples,
+                args.n_seeds,
+                *actual_curvature,
+                *elapsed,
+            )
+            .with_all_metrics(all);
+            result.geometry = Some(geometry.to_string());
+            if optimize_curvature {
+                result.curvature_magnitude = Some(config.curvature_magnitude.value());
+            }
+            write_result(&result, out_path);
+            pb.inc(1);
+        }
+    }
+    pb.finish_with_message(format!("{} LHS done ({} points)", geometry, lhs_completed));
+
+    // ── Phase 2: GP optimisation ─────────────────────────────────────────────
     let pb = make_progress_bar(
         mp,
         args.n_trials as u64,
-        "{spinner:.green} pareto={msg} [{bar:35.cyan/blue}] {pos}/{len} | front: {prefix}",
+        "{spinner:.green} [GP]  {msg} [{bar:35.cyan/blue}] {pos}/{len} | front: {prefix} ({eta})",
     );
     pb.set_message(format!("{} (sign={:+.0})", geometry, curvature_sign));
     pb.set_prefix("0");
     pb.println(format!(
-        "pareto '{}' ({}) optimising {} objectives, batch_size={}",
-        dataset_name, geometry, n_objectives, batch_size
+        "pareto '{}' ({}) — GP phase: {} trials, batch_size={}",
+        dataset_name, geometry, args.n_trials, batch_size
     ));
 
     let mut completed = 0usize;
@@ -434,10 +510,8 @@ fn run_pareto(
                 .enumerate()
                 .map(|(i, config)| {
                     let evaluator = &*evaluator;
-                    // actual_curvature is sign * magnitude (for logging/result).
-                    // We pass curvature_sign to eval; to_training_config computes sign * magnitude.
                     let actual_curvature = curvature_sign * config.curvature_magnitude.value();
-                    let trial_idx = completed + i + 1;
+                    let trial_idx = lhs_completed + completed + i + 1;
                     s.spawn(move || {
                         let pb_iters = ProgressBar::hidden();
                         let start = std::time::Instant::now();
@@ -482,7 +556,7 @@ fn run_pareto(
             let front_size = optimizer.pareto_front_indices().len();
             pb.set_prefix(format!("{}", front_size));
             pb.println(format!(
-                "pareto '{}' trial {:3}/{} | front={} | {}ms | k={:.3} lr={:.4} perp={:.4}",
+                "pareto '{}' GP {:3}/{} | front={} | {}ms | k={:.3} lr={:.4} perp={:.4}",
                 dataset_name,
                 completed,
                 args.n_trials,
@@ -1090,6 +1164,12 @@ fn get_dataset_names(dataset_arg: &Option<String>) -> Vec<String> {
             "antipodal_clusters".to_string(),
             "tree".to_string(),
             "hyperbolic_shells".to_string(),
+        ],
+        Some(name) if name == "real" => vec![
+            "mnist".to_string(),
+            "fashion_mnist".to_string(),
+            "pbmc".to_string(),
+            "wordnet_mammals".to_string(),
         ],
         Some(name) => vec![name.clone()],
         None => vec!["mnist".to_string()],

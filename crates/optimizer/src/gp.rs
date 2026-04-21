@@ -707,6 +707,17 @@ impl ParEgoOptimizer {
         self.trials.push(MultiTrial { config, metrics });
     }
 
+    /// Total number of LHS init-phase points (`11d−1`).
+    pub fn lhs_total(&self) -> usize {
+        let d = self.spec.free_param_count();
+        if d == 0 { 0 } else { 11 * d - 1 }
+    }
+
+    /// True once all LHS points have been dequeued (GP phase is active).
+    pub fn lhs_drained(&self) -> bool {
+        self.lhs_initialized && self.lhs_queue.is_empty()
+    }
+
     /// Indices of Pareto-non-dominated trials (all objectives in maximise space).
     pub fn pareto_front_indices(&self) -> Vec<usize> {
         let points: Vec<Vec<f64>> = self
