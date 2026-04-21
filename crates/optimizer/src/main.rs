@@ -28,7 +28,7 @@ struct Args {
     #[arg(long, default_value = "./www/public/data")]
     data_path: String,
 
-    #[arg(long, default_value = "400")]
+    #[arg(long, default_value = "250")]
     n_trials: usize,
 
     #[arg(long, default_value = "3")]
