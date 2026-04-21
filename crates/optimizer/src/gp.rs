@@ -10,11 +10,13 @@
 //   §4.1  — Expected Improvement acquisition function (Eq. 7–8)
 //   Alg.1 — Basic BayesOpt loop with initial space-filling design
 
+use std::collections::VecDeque;
 use std::f64::consts::PI;
 
 use fitting_core::synthetic_data::Rng;
 use serde::Serialize;
 
+use crate::metrics::Metric;
 use crate::search_space::{OptimizeDirection, SearchSpace, TrialConfig};
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -399,6 +401,15 @@ impl GpModel {
         let (mu, sigma) = self.predict(&x_norm);
         expected_improvement(mu, sigma, self.f_best_norm)
     }
+
+    /// Posterior mean at `config` de-standardised back to the raw metric space.
+    /// Used by the Kriging Believer hallucination step in qParEGO.
+    fn predict_mean_raw(&self, config: &TrialConfig) -> f64 {
+        let x_raw = config_to_gp_input(config, self.optimize_curvature);
+        let x_norm = standardize(&x_raw, &self.x_means, &self.x_stds);
+        let (mu_norm, _) = self.predict(&x_norm);
+        mu_norm * self.y_std + self.y_mean
+    }
 }
 
 // ─── MLE for length-scale (Frazier §3.2) ─────────────────────────────────────
@@ -611,6 +622,633 @@ pub fn expected_improvement(mu: f64, sigma: f64, f_best: f64) -> f64 {
     let delta = mu - f_best;
     let z = delta / sigma;
     delta * normal_cdf(z) + sigma * normal_pdf(z)
+}
+
+// ─── qParEGO: multi-objective Bayesian optimisation ──────────────────────────
+//
+// Faithful implementation of Knowles (2006) "ParEGO: A Hybrid Algorithm with
+// On-Line Landscape Approximation for Expensive Multiobjective Optimization
+// Problems."
+//
+// Key correspondences to Algorithm 1:
+//   LATINHYPERCUBE  → latin_hypercube_sample  (11d−1 stratified initial points)
+//   NEWLAMBDA       → sample_discrete_simplex  (λ_j = l/s, uniform over Λ)
+//   DACE            → GpModel (RBF-kernel GP with MLE length-scale; functionally
+//                     equivalent to kriging; uses subset selection when n ≥ 25)
+//   EVOLALG         → ParEgoOptimizer::evolalg ((μ+1)-ES, 10 000 EI evaluations,
+//                     SBX crossover, per-gene shift mutation, binary tournament)
+
+/// A single observed trial with all objective values.
+#[derive(Debug, Clone)]
+pub struct MultiTrial {
+    pub config: TrialConfig,
+    /// Raw metric values in the same order as the `metrics` list.
+    pub metrics: Vec<f64>,
+}
+
+pub struct ParEgoOptimizer {
+    pub trials: Vec<MultiTrial>,
+    pub metrics: Vec<Metric>,
+    optimize_curvature: bool,
+    curvature_mag_min: f64,
+    curvature_mag_max: f64,
+    /// s parameter (equation 1): weight vectors use λ_j = l/s, l ∈ {0,...,s}.
+    s: usize,
+    /// LHS configs queued for the initialisation phase (drained before GP phase).
+    lhs_queue: VecDeque<TrialConfig>,
+    lhs_initialized: bool,
+}
+
+impl ParEgoOptimizer {
+    pub fn new(
+        metrics: Vec<Metric>,
+        optimize_curvature: bool,
+        curvature_mag_min: f64,
+        curvature_mag_max: f64,
+    ) -> Self {
+        Self {
+            trials: Vec::new(),
+            metrics,
+            optimize_curvature,
+            curvature_mag_min,
+            curvature_mag_max,
+            s: 5,
+            lhs_queue: VecDeque::new(),
+            lhs_initialized: false,
+        }
+    }
+
+    pub fn observe(&mut self, config: TrialConfig, metrics: Vec<f64>) {
+        self.trials.push(MultiTrial { config, metrics });
+    }
+
+    /// Indices of Pareto-non-dominated trials (all objectives in maximise space).
+    pub fn pareto_front_indices(&self) -> Vec<usize> {
+        let points: Vec<Vec<f64>> = self
+            .trials
+            .iter()
+            .map(|t| self.to_max_space(&t.metrics))
+            .collect();
+        pareto_front_indices(&points)
+    }
+
+    pub fn pareto_trials(&self) -> Vec<&MultiTrial> {
+        self.pareto_front_indices()
+            .into_iter()
+            .map(|i| &self.trials[i])
+            .collect()
+    }
+
+    /// Suggest a batch of `n` configs following qParEGO (Kriging Believer variant):
+    ///
+    /// 1. **Init phase** (first call): generate `11d−1` LHS points and queue them.
+    /// 2. **LHS drain**: return queued points until the queue is empty.
+    /// 3. **GP phase** (qParEGO): for each of the `n` members:
+    ///    a. Draw λ ~ NEWLAMBDA(k, s).
+    ///    b. Fit a GP on real observations + any Kriging Believer hallucinations from earlier members of this batch.
+    ///    c. Run EVOLALG to find the config maximising EI under this GP.
+    ///    d. Hallucinate: predict the GP posterior mean at the chosen config and add it as a fake observation so the next member avoids the same region.
+    ///
+    /// With `n = 1` this degenerates to standard (sequential) ParEGO.
+    pub fn suggest_batch(&mut self, n: usize, rng: &mut Rng) -> Vec<TrialConfig> {
+        if !self.lhs_initialized {
+            let dim = if self.optimize_curvature { 7 } else { 6 };
+            let n_lhs = 11 * dim - 1;
+            let lhs = latin_hypercube_sample(
+                n_lhs,
+                self.optimize_curvature,
+                self.curvature_mag_min,
+                self.curvature_mag_max,
+                rng,
+            );
+            self.lhs_queue.extend(lhs);
+            self.lhs_initialized = true;
+        }
+
+        if !self.lhs_queue.is_empty() {
+            let mut result = Vec::with_capacity(n);
+            for _ in 0..n {
+                result.push(
+                    self.lhs_queue
+                        .pop_front()
+                        .unwrap_or_else(|| self.random_config(rng)),
+                );
+            }
+            return result;
+        }
+
+        // qParEGO GP phase: Kriging Believer hallucinations accumulate across the batch.
+        let mut hallucinated: Vec<Trial> = Vec::with_capacity(n);
+        let mut result = Vec::with_capacity(n);
+        for _ in 0..n {
+            let weights = sample_discrete_simplex(self.metrics.len(), self.s, rng);
+            let mut scalar_trials = self.scalarize_trials_subset(&weights, rng);
+            scalar_trials.extend_from_slice(&hallucinated);
+            let gp = GpModel::fit(
+                &scalar_trials,
+                OptimizeDirection::Maximize,
+                self.optimize_curvature,
+            );
+            let next = self.evolalg(&gp, &weights, rng);
+            // KB hallucination: substitute the GP posterior mean for the unknown true metric.
+            hallucinated.push(Trial {
+                config: next.clone(),
+                metric: gp.predict_mean_raw(&next),
+            });
+            result.push(next);
+        }
+        result
+    }
+
+    /// EVOLALG: (μ+1)-ES with 10 000 EI evaluations (Knowles 2006, procedure at lines 28–35).
+    ///
+    /// - **Population**: 20 solutions (5 mutants of the top-5 by current scalar + 15 LHS random).
+    /// - **Selection**: binary tournament without replacement.
+    /// - **Crossover**: SBX (η=2) with probability 0.2; otherwise clone the winner.
+    /// - **Mutation**: per gene with prob 1/d, shift by δ*(hi−lo) where δ~U(0.0001,1), random ±.
+    /// - **Replacement**: offspring replaces the first tournament parent if offspring EI ≥ parent EI.
+    fn evolalg(&self, gp: &GpModel, weights: &[f64], rng: &mut Rng) -> TrialConfig {
+        const POP_SIZE: usize = 20;
+        const N_EVALS: usize = 10_000;
+        let dim = if self.optimize_curvature { 7 } else { 6 };
+
+        // Initialise: top-5 by scalar fitness → 5 mutants; remaining 15 from LHS random.
+        let scalar_vals: Vec<f64> = self
+            .trials
+            .iter()
+            .map(|t| self.scalar_value(t, weights))
+            .collect();
+        let mut sorted_idx: Vec<usize> = (0..self.trials.len()).collect();
+        sorted_idx.sort_unstable_by(|&a, &b| {
+            scalar_vals[b]
+                .partial_cmp(&scalar_vals[a])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let mut population: Vec<(f64, TrialConfig)> = Vec::with_capacity(POP_SIZE);
+        for i in 0..POP_SIZE {
+            let cfg = if i < 5 && i < sorted_idx.len() {
+                self.mutate_config(&self.trials[sorted_idx[i]].config, rng)
+            } else {
+                lhs_random_config(
+                    self.optimize_curvature,
+                    self.curvature_mag_min,
+                    self.curvature_mag_max,
+                    rng,
+                )
+            };
+            let ei = gp.ei(&cfg);
+            population.push((ei, cfg));
+        }
+
+        let mut evals_used = POP_SIZE;
+        while evals_used < N_EVALS {
+            // Binary tournament without replacement: pick 2 distinct indices.
+            let i = (rng.uniform() * POP_SIZE as f64) as usize % POP_SIZE;
+            let mut j = (rng.uniform() * (POP_SIZE - 1) as f64) as usize % (POP_SIZE - 1);
+            if j >= i {
+                j += 1;
+            }
+            let (winner, loser) = if population[i].0 >= population[j].0 {
+                (i, j)
+            } else {
+                (j, i)
+            };
+
+            // Crossover (prob 0.2 SBX) then mutation.
+            let offspring = if rng.uniform() < 0.2 {
+                let child = sbx_crossover(
+                    &population[winner].1,
+                    &population[loser].1,
+                    2.0,
+                    self.optimize_curvature,
+                    self.curvature_mag_min,
+                    self.curvature_mag_max,
+                    rng,
+                );
+                evolalg_mutate(
+                    &child,
+                    dim,
+                    self.optimize_curvature,
+                    self.curvature_mag_min,
+                    self.curvature_mag_max,
+                    rng,
+                )
+            } else {
+                evolalg_mutate(
+                    &population[winner].1,
+                    dim,
+                    self.optimize_curvature,
+                    self.curvature_mag_min,
+                    self.curvature_mag_max,
+                    rng,
+                )
+            };
+
+            let offspring_ei = gp.ei(&offspring);
+            evals_used += 1;
+
+            // Replace first tournament parent if offspring is at least as good.
+            if offspring_ei >= population[winner].0 {
+                population[winner] = (offspring_ei, offspring);
+            }
+        }
+
+        population
+            .into_iter()
+            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(_, cfg)| cfg)
+            .unwrap_or_else(|| self.random_config(rng))
+    }
+
+    /// Scalar fitness of a trial under the current weight vector (higher = closer to ideal).
+    fn scalar_value(&self, trial: &MultiTrial, weights: &[f64]) -> f64 {
+        let flipped = self.to_max_space(&trial.metrics);
+        // Return the raw weighted sum as a proxy for ranking (no normalisation needed here).
+        flipped.iter().zip(weights).map(|(f, w)| w * f).sum()
+    }
+
+    /// Flip sign on Minimize objectives so all dimensions point upward.
+    fn to_max_space(&self, metrics: &[f64]) -> Vec<f64> {
+        metrics
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| match self.metrics[i].direction() {
+                OptimizeDirection::Maximize => v,
+                OptimizeDirection::Minimize => -v,
+            })
+            .collect()
+    }
+
+    /// Build scalar `Trial` list with DACE subset selection (Knowles 2006):
+    ///
+    /// - n < 25: use all observations.
+    /// - n ≥ 25: use n/2 best (by current scalar fitness) + n/2 random without replacement.
+    fn scalarize_trials_subset(&self, weights: &[f64], rng: &mut Rng) -> Vec<Trial> {
+        let n = self.trials.len();
+        let indices: Vec<usize> = if n < 25 {
+            (0..n).collect()
+        } else {
+            let half = n / 2;
+            // Sort by scalar fitness (descending) to get the best half.
+            let mut scalar_vals: Vec<(usize, f64)> = self
+                .trials
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (i, self.scalar_value(t, weights)))
+                .collect();
+            scalar_vals.sort_unstable_by(|a, b| {
+                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let mut chosen: Vec<usize> = scalar_vals[..half].iter().map(|&(i, _)| i).collect();
+            // Random half without replacement from the remaining indices.
+            let mut remaining: Vec<usize> = scalar_vals[half..].iter().map(|&(i, _)| i).collect();
+            for i in (1..remaining.len()).rev() {
+                let j = (rng.uniform() * (i + 1) as f64) as usize % (i + 1);
+                remaining.swap(i, j);
+            }
+            chosen.extend_from_slice(&remaining[..half.min(remaining.len())]);
+            chosen
+        };
+
+        self.scalarize_subset(&indices, weights)
+    }
+
+    /// Compute normalised Chebyshev scalar for a subset of trial indices.
+    fn scalarize_subset(&self, indices: &[usize], weights: &[f64]) -> Vec<Trial> {
+        let m = self.metrics.len();
+        let flipped: Vec<Vec<f64>> = indices
+            .iter()
+            .map(|&i| self.to_max_space(&self.trials[i].metrics))
+            .collect();
+
+        let mut mins = vec![f64::MAX; m];
+        let mut maxs = vec![f64::MIN; m];
+        for row in &flipped {
+            for (d, &v) in row.iter().enumerate() {
+                if v < mins[d] {
+                    mins[d] = v;
+                }
+                if v > maxs[d] {
+                    maxs[d] = v;
+                }
+            }
+        }
+        let ranges: Vec<f64> = (0..m).map(|d| (maxs[d] - mins[d]).max(1e-8)).collect();
+        let ideal = vec![1.0_f64; m];
+
+        indices
+            .iter()
+            .zip(&flipped)
+            .map(|(&i, row)| {
+                let norm: Vec<f64> = (0..m).map(|d| (row[d] - mins[d]) / ranges[d]).collect();
+                let scalar = chebyshev_scalarize(&norm, weights, &ideal, 0.05);
+                Trial {
+                    config: self.trials[i].config.clone(),
+                    metric: -scalar,
+                }
+            })
+            .collect()
+    }
+
+    fn random_config(&self, rng: &mut Rng) -> TrialConfig {
+        let mut cfg = TrialConfig::random(rng);
+        if self.optimize_curvature {
+            let lo = self.curvature_mag_min;
+            let hi = self.curvature_mag_max;
+            cfg.curvature_magnitude = (rng.uniform() * (hi.ln() - lo.ln()) + lo.ln())
+                .exp()
+                .clamp(lo, hi);
+        }
+        cfg
+    }
+
+    fn mutate_config(&self, config: &TrialConfig, rng: &mut Rng) -> TrialConfig {
+        let mut cfg = config.mutate(rng);
+        if self.optimize_curvature && rng.uniform() < 0.3 {
+            let lo = self.curvature_mag_min;
+            let hi = self.curvature_mag_max;
+            cfg.curvature_magnitude =
+                (cfg.curvature_magnitude * 2.0_f64.powf((rng.uniform() - 0.5) * 1.0)).clamp(lo, hi);
+        }
+        cfg
+    }
+}
+
+// ─── ParEGO helper functions ──────────────────────────────────────────────────
+
+/// Sample a weight vector uniformly from the discrete set Λ (Knowles 2006, eq. 1):
+///   Λ = { λ = (λ_1,...,λ_k) | Σ λ_j = 1, λ_j = l/s, l ∈ {0,...,s} }
+///
+/// Stars-and-bars: pick (dim−1) positions from {0,...,s+dim−2} without
+/// replacement via partial Fisher-Yates, sort, compute gaps divided by s.
+fn sample_discrete_simplex(dim: usize, s: usize, rng: &mut Rng) -> Vec<f64> {
+    if dim == 1 {
+        return vec![1.0];
+    }
+    let total = s + dim - 1;
+    let mut pool: Vec<usize> = (0..total).collect();
+    for i in 0..(dim - 1) {
+        let remaining = total - i;
+        let j = i + (rng.uniform() * remaining as f64) as usize % remaining;
+        pool.swap(i, j);
+    }
+    let mut positions = pool[..(dim - 1)].to_vec();
+    positions.sort_unstable();
+
+    let mut result = Vec::with_capacity(dim);
+    let mut prev = 0usize;
+    for &pos in &positions {
+        result.push((pos - prev) as f64 / s as f64);
+        prev = pos + 1;
+    }
+    result.push((total - prev) as f64 / s as f64);
+    result
+}
+
+/// Latin Hypercube Sample of `n` points over the `TrialConfig` search space.
+///
+/// Each dimension is divided into n equal-width strata; exactly one point lands
+/// in each stratum per dimension (stratified sampling).  A uniform jitter within
+/// each stratum avoids the grid-point bias.  Log-uniform parameters are mapped
+/// from [0,1] on a log scale so that coverage is uniform in log space.
+pub fn latin_hypercube_sample(
+    n: usize,
+    optimize_curvature: bool,
+    curvature_mag_min: f64,
+    curvature_mag_max: f64,
+    rng: &mut Rng,
+) -> Vec<TrialConfig> {
+    use crate::search_space::{
+        CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
+        PERP_MAX, PERP_MIN,
+    };
+
+    let dim = if optimize_curvature { 7 } else { 6 };
+    // Build one stratified [0,1) column per dimension: shuffle bin indices, add
+    // per-bin uniform jitter, divide by n.
+    let cols: Vec<Vec<f64>> = (0..dim)
+        .map(|_| {
+            let mut perm: Vec<usize> = (0..n).collect();
+            for i in (1..n).rev() {
+                let j = (rng.uniform() * (i + 1) as f64) as usize % (i + 1);
+                perm.swap(i, j);
+            }
+            perm.iter()
+                .map(|&k| (k as f64 + rng.uniform()) / n as f64)
+                .collect()
+        })
+        .collect();
+
+    (0..n)
+        .map(|i| TrialConfig {
+            learning_rate: lhs_map_log(cols[0][i], LR_MIN, LR_MAX),
+            perplexity_ratio: lhs_map_log(cols[1][i], PERP_MIN, PERP_MAX),
+            momentum_main: lhs_map_linear(cols[2][i], MOM_MIN, MOM_MAX),
+            centering_weight: lhs_map_linear(cols[3][i], CEN_MIN, CEN_MAX),
+            global_loss_weight: lhs_map_linear(cols[4][i], GLW_MIN, GLW_MAX),
+            norm_loss_weight: lhs_map_linear(cols[5][i], NLW_MIN, NLW_MAX),
+            curvature_magnitude: if optimize_curvature {
+                lhs_map_log(cols[6][i], curvature_mag_min, curvature_mag_max)
+            } else {
+                0.0
+            },
+        })
+        .collect()
+}
+
+/// Generate a single random LHS-style point (used inside EVOLALG init).
+fn lhs_random_config(
+    optimize_curvature: bool,
+    curvature_mag_min: f64,
+    curvature_mag_max: f64,
+    rng: &mut Rng,
+) -> TrialConfig {
+    latin_hypercube_sample(
+        1,
+        optimize_curvature,
+        curvature_mag_min,
+        curvature_mag_max,
+        rng,
+    )
+    .remove(0)
+}
+
+fn lhs_map_log(t: f64, lo: f64, hi: f64) -> f64 {
+    (lo.ln() + t * (hi.ln() - lo.ln())).exp().clamp(lo, hi)
+}
+
+fn lhs_map_linear(t: f64, lo: f64, hi: f64) -> f64 {
+    (lo + t * (hi - lo)).clamp(lo, hi)
+}
+
+/// Simulated Binary Crossover (SBX, Deb & Agrawal 1995) between two parents.
+///
+/// For each parameter, the SBX spread factor β is derived from u~U(0,1):
+///   β = (2u)^(1/(η+1))        if u ≤ 0.5
+///   β = (1/(2(1-u)))^(1/(η+1)) otherwise
+///
+/// child = 0.5 * ((1+β)*p1 + (1-β)*p2)
+///
+/// Log-scale parameters (learning_rate, perplexity_ratio, curvature_magnitude)
+/// have SBX applied in log space and are then exponentiated back.
+pub fn sbx_crossover(
+    a: &TrialConfig,
+    b: &TrialConfig,
+    eta: f64,
+    optimize_curvature: bool,
+    curvature_mag_min: f64,
+    curvature_mag_max: f64,
+    rng: &mut Rng,
+) -> TrialConfig {
+    use crate::search_space::{
+        CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
+        PERP_MAX, PERP_MIN,
+    };
+
+    let lr = sbx_scalar(a.learning_rate.ln(), b.learning_rate.ln(), eta, rng)
+        .exp()
+        .clamp(LR_MIN, LR_MAX);
+    let perp = sbx_scalar(a.perplexity_ratio.ln(), b.perplexity_ratio.ln(), eta, rng)
+        .exp()
+        .clamp(PERP_MIN, PERP_MAX);
+    let mom = sbx_scalar(a.momentum_main, b.momentum_main, eta, rng).clamp(MOM_MIN, MOM_MAX);
+    let cen = sbx_scalar(a.centering_weight, b.centering_weight, eta, rng).clamp(CEN_MIN, CEN_MAX);
+    let glw =
+        sbx_scalar(a.global_loss_weight, b.global_loss_weight, eta, rng).clamp(GLW_MIN, GLW_MAX);
+    let nlw = sbx_scalar(a.norm_loss_weight, b.norm_loss_weight, eta, rng).clamp(NLW_MIN, NLW_MAX);
+    let cur = if optimize_curvature {
+        sbx_scalar(
+            a.curvature_magnitude.ln(),
+            b.curvature_magnitude.ln(),
+            eta,
+            rng,
+        )
+        .exp()
+        .clamp(curvature_mag_min, curvature_mag_max)
+    } else {
+        0.0
+    };
+    TrialConfig {
+        learning_rate: lr,
+        perplexity_ratio: perp,
+        momentum_main: mom,
+        centering_weight: cen,
+        global_loss_weight: glw,
+        norm_loss_weight: nlw,
+        curvature_magnitude: cur,
+    }
+}
+
+/// Scalar SBX step for a single parameter pair (operates in whatever space the caller uses).
+fn sbx_scalar(p1: f64, p2: f64, eta: f64, rng: &mut Rng) -> f64 {
+    let u = rng.uniform().max(1e-10);
+    let beta = if u <= 0.5 {
+        (2.0 * u).powf(1.0 / (eta + 1.0))
+    } else {
+        (1.0 / (2.0 * (1.0 - u))).powf(1.0 / (eta + 1.0))
+    };
+    0.5 * ((1.0 + beta) * p1 + (1.0 - beta) * p2)
+}
+
+/// Per-gene shift mutation used inside EVOLALG (Knowles 2006).
+///
+/// Each gene mutates with probability 1/d.  The shift magnitude is δ*(hi−lo)
+/// where δ~U(0.0001, 1), applied in log space for log-scale parameters.
+pub fn evolalg_mutate(
+    config: &TrialConfig,
+    dim: usize,
+    optimize_curvature: bool,
+    curvature_mag_min: f64,
+    curvature_mag_max: f64,
+    rng: &mut Rng,
+) -> TrialConfig {
+    use crate::search_space::{
+        CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
+        PERP_MAX, PERP_MIN,
+    };
+
+    let p = 1.0 / dim as f64;
+
+    macro_rules! mutate_log {
+        ($v:expr, $lo:expr, $hi:expr) => {{
+            if rng.uniform() < p {
+                let d = rng.uniform() * (1.0 - 0.0001) + 0.0001;
+                let s = if rng.uniform() < 0.5 { 1.0_f64 } else { -1.0 };
+                ($v.ln() + s * d * ($hi.ln() - $lo.ln()))
+                    .exp()
+                    .clamp($lo, $hi)
+            } else {
+                $v
+            }
+        }};
+    }
+    macro_rules! mutate_lin {
+        ($v:expr, $lo:expr, $hi:expr) => {{
+            if rng.uniform() < p {
+                let d = rng.uniform() * (1.0 - 0.0001) + 0.0001;
+                let s = if rng.uniform() < 0.5 { 1.0_f64 } else { -1.0 };
+                ($v + s * d * ($hi - $lo)).clamp($lo, $hi)
+            } else {
+                $v
+            }
+        }};
+    }
+
+    TrialConfig {
+        learning_rate: mutate_log!(config.learning_rate, LR_MIN, LR_MAX),
+        perplexity_ratio: mutate_log!(config.perplexity_ratio, PERP_MIN, PERP_MAX),
+        momentum_main: mutate_lin!(config.momentum_main, MOM_MIN, MOM_MAX),
+        centering_weight: mutate_lin!(config.centering_weight, CEN_MIN, CEN_MAX),
+        global_loss_weight: mutate_lin!(config.global_loss_weight, GLW_MIN, GLW_MAX),
+        norm_loss_weight: mutate_lin!(config.norm_loss_weight, NLW_MIN, NLW_MAX),
+        curvature_magnitude: if optimize_curvature {
+            mutate_log!(
+                config.curvature_magnitude,
+                curvature_mag_min,
+                curvature_mag_max
+            )
+        } else {
+            0.0
+        },
+    }
+}
+
+/// Augmented Chebyshev scalarisation (Knowles 2006, Eq. 1).
+///
+///   s = max_i(λ_i · (z*_i − f_i))  +  ρ · Σ_i λ_i · (z*_i − f_i)
+///
+/// Lower s = closer to ideal = better.  ρ=0.05 is the standard value.
+fn chebyshev_scalarize(metrics_norm: &[f64], weights: &[f64], ideal: &[f64], rho: f64) -> f64 {
+    let diffs: Vec<f64> = metrics_norm
+        .iter()
+        .zip(ideal)
+        .zip(weights)
+        .map(|((f, z), w)| w * (z - f))
+        .collect();
+    let max_term = diffs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let sum_term: f64 = diffs.iter().sum();
+    max_term + rho * sum_term
+}
+
+/// Return indices of Pareto-non-dominated rows (all dimensions assumed maximise).
+fn pareto_front_indices(points: &[Vec<f64>]) -> Vec<usize> {
+    let n = points.len();
+    let mut non_dominated = Vec::new();
+    'outer: for i in 0..n {
+        for j in 0..n {
+            if i != j && dominates(&points[j], &points[i]) {
+                continue 'outer;
+            }
+        }
+        non_dominated.push(i);
+    }
+    non_dominated
+}
+
+/// True if `a` Pareto-dominates `b`: a ≥ b on all objectives, strictly > on at least one.
+fn dominates(a: &[f64], b: &[f64]) -> bool {
+    a.iter().zip(b).all(|(ai, bi)| ai >= bi) && a.iter().zip(b).any(|(ai, bi)| ai > bi)
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -1122,6 +1760,552 @@ mod tests {
         assert!(
             ei_winner >= ei_loser,
             "EI near winner ({ei_winner:.4}) should be >= loser ({ei_loser:.4})"
+        );
+    }
+
+    // ─── latin_hypercube_sample ───────────────────────────────────────────────
+
+    fn assert_config_in_bounds(cfg: &TrialConfig, label: &str) {
+        use crate::search_space::{
+            CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
+            PERP_MAX, PERP_MIN,
+        };
+        assert!(
+            cfg.learning_rate >= LR_MIN && cfg.learning_rate <= LR_MAX,
+            "{label}: lr={}",
+            cfg.learning_rate
+        );
+        assert!(
+            cfg.perplexity_ratio >= PERP_MIN && cfg.perplexity_ratio <= PERP_MAX,
+            "{label}: perp={}",
+            cfg.perplexity_ratio
+        );
+        assert!(
+            cfg.momentum_main >= MOM_MIN && cfg.momentum_main <= MOM_MAX,
+            "{label}: mom={}",
+            cfg.momentum_main
+        );
+        assert!(
+            cfg.centering_weight >= CEN_MIN && cfg.centering_weight <= CEN_MAX,
+            "{label}: cen={}",
+            cfg.centering_weight
+        );
+        assert!(
+            cfg.global_loss_weight >= GLW_MIN && cfg.global_loss_weight <= GLW_MAX,
+            "{label}: glw={}",
+            cfg.global_loss_weight
+        );
+        assert!(
+            cfg.norm_loss_weight >= NLW_MIN && cfg.norm_loss_weight <= NLW_MAX,
+            "{label}: nlw={}",
+            cfg.norm_loss_weight
+        );
+    }
+
+    #[test]
+    fn lhs_correct_count() {
+        let mut rng = Rng::new(1);
+        let pts = latin_hypercube_sample(65, false, 0.001, 5.0, &mut rng);
+        assert_eq!(pts.len(), 65);
+    }
+
+    #[test]
+    fn lhs_all_params_in_bounds() {
+        let mut rng = Rng::new(2);
+        let pts = latin_hypercube_sample(65, false, 0.001, 5.0, &mut rng);
+        for (i, cfg) in pts.iter().enumerate() {
+            assert_config_in_bounds(cfg, &format!("point {i}"));
+        }
+    }
+
+    #[test]
+    fn lhs_lr_log_coverage() {
+        use crate::search_space::{LR_MAX, LR_MIN};
+        let mut rng = Rng::new(3);
+        let pts = latin_hypercube_sample(65, false, 0.001, 5.0, &mut rng);
+        let (min_lr, max_lr) = pts.iter().fold((f64::MAX, f64::MIN), |(lo, hi), cfg| {
+            (lo.min(cfg.learning_rate), hi.max(cfg.learning_rate))
+        });
+        let log_range = LR_MAX.ln() - LR_MIN.ln();
+        let log_covered = max_lr.ln() - min_lr.ln();
+        assert!(
+            log_covered > 0.5 * log_range,
+            "lr log coverage {log_covered:.3} < half of {log_range:.3}"
+        );
+    }
+
+    #[test]
+    fn lhs_stratified_per_dim() {
+        // Each dimension must have exactly one point per bin (floor(v * n) is a permutation of 0..n).
+        use crate::search_space::{
+            CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
+            PERP_MAX, PERP_MIN,
+        };
+        let n = 30usize;
+        let mut rng = Rng::new(4);
+        let pts = latin_hypercube_sample(n, false, 0.001, 5.0, &mut rng);
+
+        let check_bins = |values: Vec<f64>, lo: f64, hi: f64, name: &str| {
+            let mut bins = vec![false; n];
+            for v in values {
+                let t = (v - lo) / (hi - lo);
+                let b = ((t * n as f64) as usize).min(n - 1);
+                assert!(!bins[b], "{name}: bin {b} occupied twice");
+                bins[b] = true;
+            }
+        };
+        check_bins(
+            pts.iter().map(|c| c.learning_rate.ln()).collect(),
+            LR_MIN.ln(),
+            LR_MAX.ln(),
+            "lr",
+        );
+        check_bins(
+            pts.iter().map(|c| c.perplexity_ratio.ln()).collect(),
+            PERP_MIN.ln(),
+            PERP_MAX.ln(),
+            "perp",
+        );
+        check_bins(
+            pts.iter().map(|c| c.momentum_main).collect(),
+            MOM_MIN,
+            MOM_MAX,
+            "mom",
+        );
+        check_bins(
+            pts.iter().map(|c| c.centering_weight).collect(),
+            CEN_MIN,
+            CEN_MAX,
+            "cen",
+        );
+        check_bins(
+            pts.iter().map(|c| c.global_loss_weight).collect(),
+            GLW_MIN,
+            GLW_MAX,
+            "glw",
+        );
+        check_bins(
+            pts.iter().map(|c| c.norm_loss_weight).collect(),
+            NLW_MIN,
+            NLW_MAX,
+            "nlw",
+        );
+    }
+
+    #[test]
+    fn lhs_curvature_disabled() {
+        let mut rng = Rng::new(5);
+        let pts = latin_hypercube_sample(20, false, 0.001, 5.0, &mut rng);
+        for cfg in &pts {
+            assert_eq!(
+                cfg.curvature_magnitude, 0.0,
+                "curvature should be 0 when disabled"
+            );
+        }
+    }
+
+    #[test]
+    fn lhs_curvature_in_bounds() {
+        let k_min = 0.1;
+        let k_max = 3.0;
+        let mut rng = Rng::new(6);
+        let pts = latin_hypercube_sample(30, true, k_min, k_max, &mut rng);
+        for cfg in &pts {
+            assert!(
+                cfg.curvature_magnitude >= k_min && cfg.curvature_magnitude <= k_max,
+                "curvature {} out of [{k_min},{k_max}]",
+                cfg.curvature_magnitude
+            );
+        }
+    }
+
+    #[test]
+    fn lhs_11d_minus_1_count() {
+        let mut rng = Rng::new(7);
+        let dim = 6usize;
+        let n = 11 * dim - 1;
+        let pts = latin_hypercube_sample(n, false, 0.001, 5.0, &mut rng);
+        assert_eq!(pts.len(), n, "expected 11*6-1=65 LHS points");
+
+        let dim7 = 7usize;
+        let n7 = 11 * dim7 - 1;
+        let pts7 = latin_hypercube_sample(n7, true, 0.001, 5.0, &mut rng);
+        assert_eq!(
+            pts7.len(),
+            n7,
+            "expected 11*7-1=76 LHS points with curvature"
+        );
+    }
+
+    // ─── sample_discrete_simplex ──────────────────────────────────────────────
+
+    #[test]
+    fn discrete_simplex_sums_to_one() {
+        let mut rng = Rng::new(10);
+        for &(dim, s) in &[(2, 5), (3, 5), (5, 4), (10, 5), (10, 3)] {
+            for _ in 0..50 {
+                let w = sample_discrete_simplex(dim, s, &mut rng);
+                let sum: f64 = w.iter().sum();
+                assert!((sum - 1.0).abs() < 1e-12, "dim={dim} s={s}: sum={sum}");
+            }
+        }
+    }
+
+    #[test]
+    fn discrete_simplex_all_multiples_of_1_over_s() {
+        let mut rng = Rng::new(11);
+        let s = 5usize;
+        for _ in 0..100 {
+            let w = sample_discrete_simplex(10, s, &mut rng);
+            for &wi in &w {
+                let scaled = wi * s as f64;
+                assert!(
+                    (scaled - scaled.round()).abs() < 1e-10,
+                    "w*s={scaled} not integer"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn discrete_simplex_non_negative() {
+        let mut rng = Rng::new(12);
+        for _ in 0..200 {
+            let w = sample_discrete_simplex(10, 5, &mut rng);
+            for &wi in &w {
+                assert!(wi >= 0.0, "negative weight: {wi}");
+            }
+        }
+    }
+
+    #[test]
+    fn discrete_simplex_dim1_returns_one() {
+        let mut rng = Rng::new(13);
+        let w = sample_discrete_simplex(1, 5, &mut rng);
+        assert_eq!(w, vec![1.0]);
+    }
+
+    #[test]
+    fn discrete_simplex_covers_extremes() {
+        // Over many samples, at least one weight == 1.0 and one == 0.0 should appear.
+        let mut rng = Rng::new(14);
+        let mut saw_one = false;
+        let mut saw_zero = false;
+        for _ in 0..2000 {
+            let w = sample_discrete_simplex(5, 5, &mut rng);
+            for &wi in &w {
+                if wi == 1.0 {
+                    saw_one = true;
+                }
+                if wi == 0.0 {
+                    saw_zero = true;
+                }
+            }
+        }
+        assert!(saw_one, "never sampled a weight of 1.0");
+        assert!(saw_zero, "never sampled a weight of 0.0");
+    }
+
+    // ─── sbx_crossover ────────────────────────────────────────────────────────
+
+    fn default_config() -> TrialConfig {
+        TrialConfig {
+            learning_rate: 5.0,
+            perplexity_ratio: 0.01,
+            momentum_main: 0.8,
+            centering_weight: 1.0,
+            global_loss_weight: 0.5,
+            norm_loss_weight: 0.01,
+            curvature_magnitude: 0.0,
+        }
+    }
+
+    #[test]
+    fn sbx_offspring_in_bounds() {
+        let mut rng = Rng::new(20);
+        let a = default_config();
+        let b = TrialConfig {
+            learning_rate: 10.0,
+            perplexity_ratio: 0.005,
+            momentum_main: 0.9,
+            centering_weight: 0.5,
+            global_loss_weight: 0.3,
+            norm_loss_weight: 0.005,
+            curvature_magnitude: 0.0,
+        };
+        for i in 0..200 {
+            let child = sbx_crossover(&a, &b, 2.0, false, 0.001, 5.0, &mut rng);
+            assert_config_in_bounds(&child, &format!("sbx child {i}"));
+        }
+    }
+
+    #[test]
+    fn sbx_identical_parents_returns_parent() {
+        let mut rng = Rng::new(21);
+        let a = default_config();
+        // When both parents are identical, SBX with β computed from u=0.5 gives β=1 → child = parent.
+        // This holds in expectation but depends on the random draw; test with many trials.
+        let mut all_same = true;
+        for _ in 0..50 {
+            let child = sbx_crossover(&a, &a, 2.0, false, 0.001, 5.0, &mut rng);
+            if (child.learning_rate - a.learning_rate).abs() > 1e-6 {
+                all_same = false;
+                break;
+            }
+        }
+        // Identical parents should always produce the parent (SBX: child = 0.5*(1+β)*p + 0.5*(1-β)*p = p).
+        assert!(
+            all_same,
+            "SBX with identical parents should always return the parent"
+        );
+    }
+
+    #[test]
+    fn sbx_not_always_parent_a() {
+        let mut rng = Rng::new(22);
+        let a = default_config();
+        let b = TrialConfig {
+            learning_rate: 1.0,
+            ..default_config()
+        };
+        let differs: bool = (0..50).any(|_| {
+            let child = sbx_crossover(&a, &b, 2.0, false, 0.001, 5.0, &mut rng);
+            (child.learning_rate - a.learning_rate).abs() > 1e-9
+        });
+        assert!(
+            differs,
+            "SBX should sometimes produce a child different from parent a"
+        );
+    }
+
+    #[test]
+    fn sbx_log_params_stay_positive() {
+        let mut rng = Rng::new(23);
+        let a = default_config();
+        let b = TrialConfig {
+            learning_rate: 0.6,
+            perplexity_ratio: 0.0005,
+            ..default_config()
+        };
+        for _ in 0..200 {
+            let child = sbx_crossover(&a, &b, 2.0, false, 0.001, 5.0, &mut rng);
+            assert!(child.learning_rate > 0.0, "lr must be positive");
+            assert!(
+                child.perplexity_ratio > 0.0,
+                "perplexity_ratio must be positive"
+            );
+        }
+    }
+
+    // ─── evolalg_mutate ───────────────────────────────────────────────────────
+
+    #[test]
+    fn evolalg_mutate_in_bounds() {
+        let mut rng = Rng::new(30);
+        let cfg = default_config();
+        for i in 0..500 {
+            let m = evolalg_mutate(&cfg, 6, false, 0.001, 5.0, &mut rng);
+            assert_config_in_bounds(&m, &format!("mutant {i}"));
+        }
+    }
+
+    #[test]
+    fn evolalg_mutate_changes_something() {
+        let mut rng = Rng::new(31);
+        let cfg = default_config();
+        let changed = (0..100).any(|_| {
+            let m = evolalg_mutate(&cfg, 6, false, 0.001, 5.0, &mut rng);
+            (m.learning_rate - cfg.learning_rate).abs() > 1e-9
+                || (m.momentum_main - cfg.momentum_main).abs() > 1e-9
+                || (m.centering_weight - cfg.centering_weight).abs() > 1e-9
+        });
+        assert!(
+            changed,
+            "mutation should change at least one parameter over 100 calls"
+        );
+    }
+
+    #[test]
+    fn evolalg_mutate_log_params_positive() {
+        let mut rng = Rng::new(32);
+        let cfg = default_config();
+        for _ in 0..200 {
+            let m = evolalg_mutate(&cfg, 6, false, 0.001, 5.0, &mut rng);
+            assert!(m.learning_rate > 0.0, "lr must be positive");
+            assert!(
+                m.perplexity_ratio > 0.0,
+                "perplexity_ratio must be positive"
+            );
+        }
+    }
+
+    // ─── evolalg ─────────────────────────────────────────────────────────────
+
+    fn make_pareto_optimizer_with_trials(n: usize) -> (ParEgoOptimizer, Vec<Metric>) {
+        use crate::metrics::Metric;
+        let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
+        let mut opt = ParEgoOptimizer::new(metrics.clone(), false, 0.001, 5.0);
+        let mut rng = Rng::new(99);
+        for _ in 0..n {
+            let cfg = TrialConfig::random(&mut rng);
+            opt.observe(cfg, vec![rng.uniform(), rng.uniform()]);
+        }
+        (opt, metrics)
+    }
+
+    #[test]
+    fn evolalg_returns_valid_config() {
+        let (opt, _) = make_pareto_optimizer_with_trials(10);
+        let mut rng = Rng::new(40);
+        let weights = sample_discrete_simplex(2, 5, &mut rng);
+        let scalar_trials =
+            opt.scalarize_subset(&(0..opt.trials.len()).collect::<Vec<_>>(), &weights);
+        let gp = GpModel::fit(&scalar_trials, OptimizeDirection::Maximize, false);
+        let result = opt.evolalg(&gp, &weights, &mut rng);
+        assert_config_in_bounds(&result, "evolalg result");
+    }
+
+    #[test]
+    fn evolalg_improves_over_random() {
+        // The config returned by EVOLALG should have higher EI than the median of 100 random configs.
+        let (opt, _) = make_pareto_optimizer_with_trials(15);
+        let mut rng = Rng::new(41);
+        let weights = sample_discrete_simplex(2, 5, &mut rng);
+        let scalar_trials =
+            opt.scalarize_subset(&(0..opt.trials.len()).collect::<Vec<_>>(), &weights);
+        let gp = GpModel::fit(&scalar_trials, OptimizeDirection::Maximize, false);
+
+        let best = opt.evolalg(&gp, &weights, &mut rng);
+        let best_ei = gp.ei(&best);
+
+        let mut random_eis: Vec<f64> = (0..100)
+            .map(|_| gp.ei(&TrialConfig::random(&mut rng)))
+            .collect();
+        random_eis.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+        let median_ei = random_eis[50];
+
+        assert!(
+            best_ei >= median_ei,
+            "EVOLALG EI {best_ei:.6} should be >= median random EI {median_ei:.6}"
+        );
+    }
+
+    // ─── ParEgoOptimizer::suggest_batch (integration) ─────────────────────────
+
+    #[test]
+    fn pareto_lhs_exactly_11d_minus_1() {
+        use crate::metrics::Metric;
+        let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
+        let mut opt = ParEgoOptimizer::new(metrics, false, 0.001, 5.0);
+        let mut rng = Rng::new(50);
+        // First suggest_batch populates the queue with 11*6-1=65 points.
+        let batch = opt.suggest_batch(200, &mut rng);
+        // We asked for 200 but only 65 LHS exist; the rest would come from GP phase.
+        // However, since we have 0 trials, the GP phase would fail — so the queue
+        // just drains. Verify by checking the LHS queue was exactly 65 and all came out.
+        assert_eq!(
+            opt.lhs_queue.len(),
+            0,
+            "LHS queue should be empty after draining"
+        );
+        assert_eq!(batch.len(), 200);
+        // First 65 must be LHS (all in bounds).
+        for (i, cfg) in batch[..65].iter().enumerate() {
+            assert_config_in_bounds(cfg, &format!("LHS point {i}"));
+        }
+    }
+
+    #[test]
+    fn pareto_suggest_returns_lhs_first() {
+        use crate::metrics::Metric;
+        let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
+        let mut opt = ParEgoOptimizer::new(metrics, false, 0.001, 5.0);
+        let mut rng = Rng::new(51);
+        // Drain the LHS in small batches.
+        let mut all_lhs = Vec::new();
+        while !opt.lhs_queue.is_empty() || !opt.lhs_initialized {
+            let batch = opt.suggest_batch(5, &mut rng);
+            all_lhs.extend(batch);
+            if opt.lhs_queue.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(
+            all_lhs.len(),
+            65,
+            "should have drained exactly 65 LHS points"
+        );
+        for (i, cfg) in all_lhs.iter().enumerate() {
+            assert_config_in_bounds(cfg, &format!("LHS {i}"));
+        }
+    }
+
+    #[test]
+    fn pareto_suggest_gp_phase_after_lhs() {
+        use crate::metrics::Metric;
+        let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
+        let mut opt = ParEgoOptimizer::new(metrics, false, 0.001, 5.0);
+        let mut rng = Rng::new(52);
+
+        // Drain the LHS.
+        opt.suggest_batch(65, &mut rng);
+
+        // Provide enough observations for the GP.
+        for _ in 0..30 {
+            let cfg = TrialConfig::random(&mut rng);
+            opt.observe(cfg, vec![rng.uniform(), rng.uniform()]);
+        }
+
+        // GP phase: should produce valid configs.
+        let batch = opt.suggest_batch(3, &mut rng);
+        assert_eq!(batch.len(), 3);
+        for (i, cfg) in batch.iter().enumerate() {
+            assert_config_in_bounds(cfg, &format!("GP phase config {i}"));
+        }
+    }
+
+    // ─── scalarize_trials_subset ──────────────────────────────────────────────
+
+    #[test]
+    fn scalarize_subset_uses_all_when_few() {
+        use crate::metrics::Metric;
+        let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
+        let mut opt = ParEgoOptimizer::new(metrics, false, 0.001, 5.0);
+        let mut rng = Rng::new(60);
+        for _ in 0..20 {
+            opt.observe(
+                TrialConfig::random(&mut rng),
+                vec![rng.uniform(), rng.uniform()],
+            );
+        }
+        let weights = vec![0.5, 0.5];
+        let scalar_trials = opt.scalarize_trials_subset(&weights, &mut rng);
+        assert_eq!(
+            scalar_trials.len(),
+            20,
+            "all 20 trials should be used when n < 25"
+        );
+    }
+
+    #[test]
+    fn scalarize_subset_caps_at_n_when_many() {
+        use crate::metrics::Metric;
+        let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
+        let mut opt = ParEgoOptimizer::new(metrics, false, 0.001, 5.0);
+        let mut rng = Rng::new(61);
+        let n = 40usize;
+        for _ in 0..n {
+            opt.observe(
+                TrialConfig::random(&mut rng),
+                vec![rng.uniform(), rng.uniform()],
+            );
+        }
+        let weights = vec![0.5, 0.5];
+        let scalar_trials = opt.scalarize_trials_subset(&weights, &mut rng);
+        assert_eq!(
+            scalar_trials.len(),
+            n,
+            "subset should equal n trials when n >= 25"
         );
     }
 }

@@ -21,6 +21,19 @@ impl fmt::Display for OptimizeDirection {
 /// Minimum curvature magnitude — used as a floor when deriving GP bounds from CLI args.
 pub const DEFAULT_CURVATURE_MAG_MIN: f64 = 0.001;
 
+pub const LR_MIN: f64 = 0.5;
+pub const LR_MAX: f64 = 30.0;
+pub const PERP_MIN: f64 = 0.0004;
+pub const PERP_MAX: f64 = 0.03;
+pub const MOM_MIN: f64 = 0.60;
+pub const MOM_MAX: f64 = 1.0;
+pub const CEN_MIN: f64 = 0.0;
+pub const CEN_MAX: f64 = 2.0;
+pub const GLW_MIN: f64 = 0.0;
+pub const GLW_MAX: f64 = 1.0;
+pub const NLW_MIN: f64 = 0.0;
+pub const NLW_MAX: f64 = 0.02;
+
 #[derive(Debug, Clone)]
 pub struct SearchSpace {
     pub direction: OptimizeDirection,
@@ -237,22 +250,16 @@ impl TrialConfig {
     }
 
     pub fn random(rng: &mut fitting_core::synthetic_data::Rng) -> Self {
-        // Log-uniform on [a, b]: exp(uniform() * (ln(b) - ln(a)) + ln(a))
-        let lr = (rng.uniform() * (50.0_f64.ln() - 0.5_f64.ln()) + 0.5_f64.ln())
+        let lr = (rng.uniform() * (LR_MAX.ln() - LR_MIN.ln()) + LR_MIN.ln())
             .exp()
-            .clamp(0.5, 50.0);
-
-        const PERP_RATIO_MIN: f64 = 0.0004;
-        const PERP_RATIO_MAX: f64 = 0.03;
-        let perp_ratio = (rng.uniform() * (PERP_RATIO_MAX.ln() - PERP_RATIO_MIN.ln())
-            + PERP_RATIO_MIN.ln())
-        .exp()
-        .clamp(PERP_RATIO_MIN, PERP_RATIO_MAX);
-
-        let momentum = rng.uniform() * 0.4 + 0.6; // [0.60, 1.00]
-        let centering_weight = rng.uniform() * 2.0;
-        let global_loss_weight = rng.uniform() * 2.0;
-        let norm_loss_weight = rng.uniform() * 0.02;
+            .clamp(LR_MIN, LR_MAX);
+        let perp_ratio = (rng.uniform() * (PERP_MAX.ln() - PERP_MIN.ln()) + PERP_MIN.ln())
+            .exp()
+            .clamp(PERP_MIN, PERP_MAX);
+        let momentum = rng.uniform() * (MOM_MAX - MOM_MIN) + MOM_MIN;
+        let centering_weight = rng.uniform() * CEN_MAX;
+        let global_loss_weight = rng.uniform() * GLW_MAX;
+        let norm_loss_weight = rng.uniform() * NLW_MAX;
 
         Self {
             learning_rate: lr,
@@ -270,28 +277,29 @@ impl TrialConfig {
     pub fn mutate(&self, rng: &mut fitting_core::synthetic_data::Rng) -> Self {
         let mut cfg = self.clone();
         if rng.uniform() < 0.3 {
-            cfg.learning_rate =
-                (cfg.learning_rate * 2.0_f64.powf((rng.uniform() - 0.5) * 1.0)).clamp(0.5, 50.0);
+            cfg.learning_rate = (cfg.learning_rate * 2.0_f64.powf((rng.uniform() - 0.5) * 1.0))
+                .clamp(LR_MIN, LR_MAX);
         }
         if rng.uniform() < 0.3 {
             cfg.perplexity_ratio = (cfg.perplexity_ratio
                 * 2.0_f64.powf((rng.uniform() - 0.5) * 0.8))
-            .clamp(0.0004, 0.03);
+            .clamp(PERP_MIN, PERP_MAX);
         }
         if rng.uniform() < 0.3 {
-            cfg.momentum_main = (cfg.momentum_main + (rng.uniform() - 0.5) * 0.2).clamp(0.60, 1.0);
+            cfg.momentum_main =
+                (cfg.momentum_main + (rng.uniform() - 0.5) * 0.2).clamp(MOM_MIN, MOM_MAX);
         }
         if rng.uniform() < 0.3 {
             cfg.centering_weight =
-                (cfg.centering_weight + (rng.uniform() - 0.5) * 0.5).clamp(0.0, 2.0);
+                (cfg.centering_weight + (rng.uniform() - 0.5) * 0.5).clamp(CEN_MIN, CEN_MAX);
         }
         if rng.uniform() < 0.3 {
             cfg.global_loss_weight =
-                (cfg.global_loss_weight + (rng.uniform() - 0.5) * 0.8).clamp(0.0, 2.0);
+                (cfg.global_loss_weight + (rng.uniform() - 0.5) * 0.4).clamp(GLW_MIN, GLW_MAX);
         }
         if rng.uniform() < 0.3 {
             cfg.norm_loss_weight =
-                (cfg.norm_loss_weight + (rng.uniform() - 0.5) * 0.008).clamp(0.0, 0.02);
+                (cfg.norm_loss_weight + (rng.uniform() - 0.5) * 0.008).clamp(NLW_MIN, NLW_MAX);
         }
         cfg
     }

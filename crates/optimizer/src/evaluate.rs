@@ -7,33 +7,10 @@ use fitting_core::metrics::{
 };
 use fitting_core::visualisation::{SphericalProjection, project_to_2d};
 use indicatif::ProgressBar;
-use serde::Serialize;
 
 use crate::data::Dataset;
+use crate::metrics::AllMetrics;
 use crate::search_space::TrialConfig;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AllMetrics {
-    // Local structure — 2D (after projection) and manifold (before projection)
-    pub trustworthiness: f64,
-    pub trustworthiness_manifold: f64,
-    pub continuity: f64,
-    pub continuity_manifold: f64,
-    pub knn_overlap: f64,
-    pub knn_overlap_manifold: f64,
-    pub neighborhood_hit: f64,
-    pub neighborhood_hit_manifold: f64,
-    // Distance preservation — 2D and manifold
-    pub normalized_stress: f64,
-    pub normalized_stress_manifold: f64,
-    pub shepard_goodness: f64,
-    pub shepard_goodness_manifold: f64,
-    // Class separation (2D only)
-    pub davies_bouldin_ratio: f64,
-    pub dunn_index: f64,
-    pub class_density_measure: f64,
-    pub cluster_density_measure: f64,
-}
 
 pub struct Evaluator {
     dataset: Dataset,

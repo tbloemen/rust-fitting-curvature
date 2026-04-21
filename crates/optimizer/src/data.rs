@@ -25,18 +25,22 @@ impl From<DataPoints> for Dataset {
 }
 
 impl Dataset {
-    pub fn load_synthetic(name: &str, n_samples: usize, seed: u64) -> Self {
+    pub fn load_synthetic(name: &str, n_samples: usize, seed: u64) -> Result<Self, String> {
         use fitting_core::synthetic_data::*;
         let sd = match name {
             "sphere" => generate_hd_sphere(n_samples, 10, seed),
             "antipodal_clusters" => generate_hd_antipodal_clusters(n_samples, 10, seed),
             "tree" => generate_hd_tree(n_samples, 10, seed),
             "hyperbolic_shells" => generate_hd_hyperbolic_shells(n_samples, 10, seed),
-            _ => panic!(
-                "Unknown synthetic dataset: {name}. Options: sphere, antipodal_clusters, tree, hyperbolic_shells"
-            ),
+            _ => {
+                return Err(format!(
+                    "Unknown dataset '{name}'.\n  \
+                 Real: mnist, fashion_mnist, pbmc, wordnet_mammals\n  \
+                 Synthetic: sphere, antipodal_clusters, tree, hyperbolic_shells"
+                ));
+            }
         };
-        sd.into()
+        Ok(sd.into())
     }
 
     pub fn load_mnist(path: &str, n_samples: usize) -> Result<Self, String> {

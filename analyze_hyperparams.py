@@ -69,6 +69,7 @@ ALL_PARAMS = [
     "centering_weight",
     "global_loss_weight",
     "norm_loss_weight",
+    "curvature",  # signed: negative=hyperbolic, positive=spherical (converted from curvature_magnitude)
     "n_iterations",  # old format (now fixed)
     "early_exaggeration_iterations",  # old format (now fixed)
 ]
@@ -78,13 +79,42 @@ CATEGORICAL_PARAMS: set[str] = set()
 
 ALL_METRICS = [
     "trustworthiness",
+    "trustworthiness_manifold",
     "continuity",
+    "continuity_manifold",
     "knn_overlap",
+    "knn_overlap_manifold",
+    "neighborhood_hit",
+    "neighborhood_hit_manifold",
+    "normalized_stress",
+    "normalized_stress_manifold",
+    "shepard_goodness",
+    "shepard_goodness_manifold",
     "davies_bouldin_ratio",
     "dunn_index",
     "class_density_measure",
     "cluster_density_measure",
 ]
+
+# Symmetric 5-metric pairs used in Pareto analysis
+PROJECTION_METRICS = [  # post-projection (2D Euclidean space)
+    "trustworthiness",
+    "continuity",
+    "normalized_stress",
+    "shepard_goodness",
+    "neighborhood_hit",
+]
+MANIFOLD_METRICS = [  # pre-projection (on the embedding manifold)
+    "trustworthiness_manifold",
+    "continuity_manifold",
+    "normalized_stress_manifold",
+    "shepard_goodness_manifold",
+    "neighborhood_hit_manifold",
+]
+# True = higher is better, False = lower is better
+METRIC_DIRECTIONS: dict[str, bool] = {
+    m: m not in {"normalized_stress", "normalized_stress_manifold"} for m in ALL_METRICS
+}
 
 
 def get_metric_value(record: dict, metric: str | None) -> float | None:
@@ -120,6 +150,24 @@ def geo_color(geometry: str, all_geos: list[str]) -> tuple:
     return _CMAP_K(idx / max(len(all_geos) - 1, 1))
 
 
+# ─── Layout helpers ───────────────────────────────────────────────────────────
+
+
+def _create_subplot_grid(
+    n: int, ncols: int = 3, w: float = 4.5, h: float = 3.4
+) -> tuple:
+    """Create an n-cell subplot grid and return (fig, flat_axes_array).
+
+    Uses squeeze=False so axes.flatten() is always valid, even for n=1.
+    """
+    ncols = min(ncols, n)
+    nrows = math.ceil(n / ncols)
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(ncols * w, nrows * h), squeeze=False
+    )
+    return fig, axes.flatten()
+
+
 # ─── Data loading ─────────────────────────────────────────────────────────────
 
 
@@ -140,9 +188,30 @@ def _load_jsonl(path: str) -> list[dict]:
     return records
 
 
+_GEO_SIGN = {"hyperbolic": -1.0, "spherical": 1.0, "euclidean": 0.0}
+
+
+def _preprocess(records: list[dict]) -> list[dict]:
+    """Normalise raw optimizer records for display.
+
+    - perplexity_ratio → perplexity  (multiply by n_samples)
+    - curvature_magnitude → curvature (multiply by geometry sign)
+    """
+    for r in records:
+        if "perplexity_ratio" in r:
+            n = r.get("n_samples") or 1000
+            r["perplexity"] = r["perplexity_ratio"] * n
+            del r["perplexity_ratio"]
+        if "curvature_magnitude" in r and "geometry" in r:
+            sign = _GEO_SIGN.get(r["geometry"], 0.0)
+            r["curvature"] = r["curvature_magnitude"] * sign
+            del r["curvature_magnitude"]
+    return records
+
+
 def load_results(path: str) -> list[dict]:
     """Load non-scan trial results from a single JSONL file."""
-    return [r for r in _load_jsonl(path) if not r.get("scan_param")]
+    return _preprocess([r for r in _load_jsonl(path) if not r.get("scan_param")])
 
 
 def present_params(records: list[dict]) -> list[str]:
@@ -326,8 +395,6 @@ def plot_param_vs_metric(
     metric_label = metric or "metric"
 
     for param in params:
-        is_log = param in LOG_SCALE_PARAMS
-
         fig, ax = plt.subplots(figsize=(7, 4.5))
         for geo in all_geos:
             group = [
@@ -359,9 +426,7 @@ def plot_param_vs_metric(
                     alpha=0.9,
                 )
 
-        if is_log:
-            ax.set_xscale("log")
-        ax.set_xlabel(param + (" (log scale)" if is_log else ""))
+        ax.set_xlabel(param)
         ax.legend(fontsize=7, ncol=3, loc="best", markerscale=1.2)
 
         ax.set_ylabel(metric_label)
@@ -549,10 +614,7 @@ def plot_marginal_effects(
     metric_label = metric or "metric"
 
     n_p = len(continuous_params)
-    ncols = min(3, n_p)
-    nrows = math.ceil(n_p / ncols)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 4.5, nrows * 3.4))
-    axes_flat = np.array(axes).flatten() if n_p > 1 else [axes]
+    fig, axes_flat = _create_subplot_grid(n_p, w=4.5, h=3.4)
 
     for ax, param in zip(axes_flat, continuous_params):
         is_log = param in LOG_SCALE_PARAMS
@@ -610,10 +672,8 @@ def plot_marginal_effects(
             )
             ax.fill_between(bx, my - ci_arr, my + ci_arr, color=col, alpha=0.18)
 
-        if is_log:
-            ax.set_xscale("log")
         ax.set_title(param, fontsize=9)
-        ax.set_xlabel(param + (" (log)" if is_log else ""), fontsize=7)
+        ax.set_xlabel(param, fontsize=7)
 
         ax.set_ylabel(metric_label, fontsize=7)
         ax.tick_params(labelsize=7)
@@ -865,7 +925,7 @@ def _prepare_gp_state(state: dict) -> dict:
     obs = state["observations"]
     xs_norm = np.array([o["x_norm"] for o in obs])
     n = len(xs_norm)
-    l = state["length_scale"]
+    length_scale = state["length_scale"]
 
     metrics = np.array([o["metric"] for o in obs])
     if state["direction"] == "minimize":
@@ -873,7 +933,7 @@ def _prepare_gp_state(state: dict) -> dict:
     y_norm = (metrics - state["y_mean"]) / state["y_std"]
 
     diffs = xs_norm[:, None, :] - xs_norm[None, :, :]
-    K = np.exp(-np.sum(diffs**2, axis=-1) / (2 * l**2)) + 1e-4 * np.eye(n)
+    K = np.exp(-np.sum(diffs**2, axis=-1) / (2 * length_scale**2)) + 1e-4 * np.eye(n)
     L = np.linalg.cholesky(K)
     alpha = np.linalg.solve(L.T, np.linalg.solve(L, y_norm))
 
@@ -892,69 +952,58 @@ def _best_x_enc(state: dict) -> np.ndarray:
     return np.array(best["x_encoded"])
 
 
-def _gp_predict_batch(state: dict, X_enc: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Vectorized GP posterior mean and std from an exported Rust GP state.
+def _gp_posterior_norm(state: dict, X_enc: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """GP posterior mean and std in *normalised* output space.
 
-    Parameters
-    ----------
-    state : dict
-        GP state loaded from a ``*_gp_state.json`` file.
-    X_enc : (n_test, d) ndarray
-        Log-transformed (but not yet standardised) GP inputs, in the same
-        order as ``state["param_names"]``.
-
-    Returns
-    -------
-    mu, sigma : (n_test,) arrays in original (non-sign-flipped) metric units.
+    Shared by ``_gp_predict_batch`` and ``_gp_ei_batch`` to avoid duplicating
+    the kernel computation.  Caller is responsible for calling
+    ``_prepare_gp_state`` first.
     """
-    _prepare_gp_state(state)
     x_means = np.array(state["x_means"])
     x_stds = np.array(state["x_stds"])
     X_norm = (X_enc - x_means) / x_stds
 
     xs_norm = np.array([obs["x_norm"] for obs in state["observations"]])
-    l = state["length_scale"]
+    length_scale = state["length_scale"]
     L, alpha = state["L"], state["alpha"]
 
-    # K_star[i, j] = k(X_norm[i], xs_norm[j])
     diffs = X_norm[:, None, :] - xs_norm[None, :, :]
-    K_star = np.exp(-np.sum(diffs**2, axis=-1) / (2 * l**2))
+    K_star = np.exp(-np.sum(diffs**2, axis=-1) / (2 * length_scale**2))
 
     mu_norm = K_star @ alpha  # (n_test,)
     v = np.linalg.solve(L, K_star.T)  # (n_train, n_test)
     sigma_norm = np.sqrt(np.maximum(1.0 - np.sum(v**2, axis=0), 0.0))
+    return mu_norm, sigma_norm
 
+
+def _gp_predict_batch(state: dict, X_enc: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorized GP posterior mean and std in original metric units.
+
+    Parameters
+    ----------
+    state : dict  GP state from ``*_gp_state.json``.
+    X_enc : (n_test, d)  Log-transformed (not yet standardised) GP inputs.
+
+    Returns
+    -------
+    mu, sigma : (n_test,) arrays in original metric units (sign-flip undone).
+    """
+    _prepare_gp_state(state)
+    mu_norm, sigma_norm = _gp_posterior_norm(state, X_enc)
     mu = mu_norm * state["y_std"] + state["y_mean"]
     sigma = sigma_norm * state["y_std"]
     if state["direction"] == "minimize":
-        mu = -mu  # undo the sign-flip applied during fitting
+        mu = -mu
     return mu, sigma
 
 
 def _gp_ei_batch(state: dict, X_enc: np.ndarray) -> np.ndarray:
-    """
-    Vectorized Expected Improvement from an exported Rust GP state (Frazier Eq. 7):
-      EI = max(Δ·Φ(Δ/σ) + σ·φ(Δ/σ), 0)  where Δ = µₙ(x) − f*ₙ
+    """Vectorized Expected Improvement (Frazier Eq. 7): EI = Δ·Φ(Δ/σ) + σ·φ(Δ/σ).
 
     Operates in normalised space (matching gp.rs), then scales to metric units.
     """
     _prepare_gp_state(state)
-    x_means = np.array(state["x_means"])
-    x_stds = np.array(state["x_stds"])
-    X_norm = (X_enc - x_means) / x_stds
-
-    xs_norm = np.array([obs["x_norm"] for obs in state["observations"]])
-    l = state["length_scale"]
-    L, alpha = state["L"], state["alpha"]
-
-    diffs = X_norm[:, None, :] - xs_norm[None, :, :]
-    K_star = np.exp(-np.sum(diffs**2, axis=-1) / (2 * l**2))
-
-    mu_norm = K_star @ alpha
-    v = np.linalg.solve(L, K_star.T)
-    sigma_norm = np.sqrt(np.maximum(1.0 - np.sum(v**2, axis=0), 0.0))
-
+    mu_norm, sigma_norm = _gp_posterior_norm(state, X_enc)
     delta = mu_norm - state["f_best_norm"]
     z = np.where(sigma_norm > 1e-10, delta / sigma_norm, 0.0)
     ei = delta * stats.norm.cdf(z) + sigma_norm * stats.norm.pdf(z)
@@ -987,13 +1036,7 @@ def plot_gp_slices(
     minimize = first["direction"] == "minimize"
     all_geos = sorted(states.keys())
     n_p = len(gp_params)
-    ncols = min(3, n_p)
-    nrows = math.ceil(n_p / ncols)
-
-    fig, axes = plt.subplots(
-        nrows, ncols, figsize=(ncols * 4.5, nrows * 3.5), squeeze=False
-    )
-    axes_flat = axes.flatten()
+    fig, axes_flat = _create_subplot_grid(n_p, w=4.5, h=3.5)
 
     for ax, sweep_param in zip(axes_flat, gp_params):
         is_log = sweep_param in log_params
@@ -1044,10 +1087,8 @@ def plot_gp_slices(
                 x_plot, mu - 2 * sigma, mu + 2 * sigma, color=col, alpha=0.12, zorder=2
             )
 
-        if is_log:
-            ax.set_xscale("log")
         ax.set_title(sweep_param, fontsize=9)
-        ax.set_xlabel(sweep_param + (" (log scale)" if is_log else ""), fontsize=7)
+        ax.set_xlabel(sweep_param, fontsize=7)
         direction_note = " (lower=better)" if minimize else ""
         ax.set_ylabel(metric + direction_note, fontsize=7)
         ax.tick_params(labelsize=7)
@@ -1198,11 +1239,6 @@ def plot_gp_landscape(
         ]
         ax.scatter(obs_x, obs_y, c="white", s=6, alpha=0.35, linewidths=0, zorder=5)
 
-        if px in log_params:
-            ax.set_xscale("log")
-        if py in log_params:
-            ax.set_yscale("log")
-
         ax.set_xlabel(px, fontsize=7)
         ax.set_ylabel(py, fontsize=7)
         ax.set_title(f"{state_label(geo)}  (l={state['length_scale']:.2f})", fontsize=8)
@@ -1250,13 +1286,7 @@ def plot_gp_ei(
     log_params = set(first["log_scale_params"])
     all_geos = sorted(states.keys())
     n_p = len(gp_params)
-    ncols = min(3, n_p)
-    nrows = math.ceil(n_p / ncols)
-
-    fig, axes = plt.subplots(
-        nrows, ncols, figsize=(ncols * 4.5, nrows * 3.0), squeeze=False
-    )
-    axes_flat = axes.flatten()
+    fig, axes_flat = _create_subplot_grid(n_p, w=4.5, h=3.0)
 
     for ax, sweep_param in zip(axes_flat, gp_params):
         is_log = sweep_param in log_params
@@ -1284,10 +1314,8 @@ def plot_gp_ei(
                 x_plot, ei, color=col, linewidth=1.8, label=state_label(geo), alpha=0.9
             )
 
-        if is_log:
-            ax.set_xscale("log")
         ax.set_title(sweep_param, fontsize=9)
-        ax.set_xlabel(sweep_param + (" (log scale)" if is_log else ""), fontsize=7)
+        ax.set_xlabel(sweep_param, fontsize=7)
         ax.set_ylabel("Expected Improvement", fontsize=7)
         ax.set_ylim(bottom=0)
         ax.tick_params(labelsize=7)
@@ -1323,7 +1351,41 @@ def plot_gp_ei(
 
 def load_scan_results(path: str) -> list[dict]:
     """Load scan trial records from a single JSONL file (filtered by scan_param presence)."""
-    return [r for r in _load_jsonl(path) if r.get("scan_param")]
+    return _preprocess([r for r in _load_jsonl(path) if r.get("scan_param")])
+
+
+def load_pareto_front(input_path: str) -> list[dict]:
+    """Load Pareto front entries from ``*_pareto_*.json`` files.
+
+    Matches files of the form ``<stem>_pareto_<dataset>_<geometry>.json``.
+    Each entry has config fields at the top level and a ``metrics`` sub-dict
+    with the 10 Pareto objectives.  This function flattens the ``metrics``
+    sub-dict into the entry and annotates ``geometry`` and ``dataset`` from
+    the filename.
+    """
+    entries: list[dict] = []
+    prefix_path = Path(input_path)
+    search_dir = prefix_path.parent
+    stem = re.sub(r"\.(jsonl?|json)$", "", prefix_path.stem)
+    pattern = f"{stem}_pareto_*.json"
+    for path in sorted(search_dir.glob(pattern)):
+        m = re.search(r"_pareto_([^_]+)_(euclidean|spherical|hyperbolic)$", path.stem)
+        if not m:
+            continue
+        dataset, geometry = m.group(1), m.group(2)
+        try:
+            with open(path) as f:
+                raw = json.load(f)
+        except Exception as e:
+            print(f"  Warning: could not load {path}: {e}")
+            continue
+        for entry in raw:
+            flat = {k: v for k, v in entry.items() if k != "metrics"}
+            flat.update(entry.get("metrics", {}))
+            flat.setdefault("geometry", geometry)
+            flat.setdefault("dataset_name", dataset)
+            entries.append(flat)
+    return _preprocess(entries)
 
 
 def _scan_params_ordered(records: list[dict]) -> list[str]:
@@ -1366,14 +1428,9 @@ def plot_scan_effects(
         print(f"  {out_path} (skipped — no scan_param field found)")
         return
 
-    ncols = min(3, n_params)
-    nrows = math.ceil(n_params / ncols)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 4.5, nrows * 3.4))
-    axes_flat = np.array(axes).flatten() if n_params > 1 else [axes]
+    fig, axes_flat = _create_subplot_grid(n_params, w=4.5, h=3.4)
 
     for ax, param in zip(axes_flat, sweep_params):
-        is_log = param in LOG_SCALE_PARAMS
-
         for geo in all_geos:
             group = sorted(
                 [
@@ -1413,11 +1470,8 @@ def plot_scan_effects(
                 label="base config",
             )
 
-        if is_log:
-            ax.set_xscale("log")
-
         ax.set_title(param, fontsize=9)
-        ax.set_xlabel(param + (" (log)" if is_log else ""), fontsize=7)
+        ax.set_xlabel(param, fontsize=7)
         ax.set_ylabel(metric_label, fontsize=7)
         ax.tick_params(labelsize=7)
 
@@ -1626,6 +1680,431 @@ def plot_scan_optimal(
     print(f"  {out_path}")
 
 
+# ─── Pareto mode: score helpers ───────────────────────────────────────────────
+
+
+def _compute_group_scores(
+    records: list[dict],
+    group: list[str],
+) -> list[float | None]:
+    """Return a mean score ∈ [0, 1] per record for a metric group.
+
+    All metrics in PROJECTION_METRICS and MANIFOLD_METRICS already live in
+    [0, 1] by definition, so no range normalisation is needed.  Minimize
+    metrics (normalized_stress variants) are flipped to 1 − value so that
+    higher is always better.  Records missing any metric get None.
+    """
+    scores: list[float | None] = []
+    for r in records:
+        parts: list[float] = []
+        ok = True
+        for metric in group:
+            v = r.get(metric)
+            if v is None:
+                ok = False
+                break
+            parts.append(float(v) if METRIC_DIRECTIONS[metric] else 1.0 - float(v))
+        scores.append(float(np.mean(parts)) if ok else None)
+    return scores
+
+
+# ─── Pareto plot 1: 2D vs manifold tradeoff scatter ───────────────────────────
+
+
+def plot_pareto_tradeoff(
+    all_trials: list[dict],
+    front_entries: list[dict],
+    out_path: str,
+) -> None:
+    """Scatter of post-projection score vs pre-projection (manifold) score.
+
+    Background: all trials (semi-transparent, colored by geometry).
+    Foreground: Pareto-front configs as gold markers.
+    A y = x diagonal shows where manifold and projection quality are equal.
+    """
+    if not all_trials and not front_entries:
+        print(f"  {out_path} (skipped — no data)")
+        return
+
+    pool = all_trials or front_entries
+    proj_all = _compute_group_scores(pool, PROJECTION_METRICS)
+    mani_all = _compute_group_scores(pool, MANIFOLD_METRICS)
+
+    proj_front = _compute_group_scores(front_entries, PROJECTION_METRICS)
+    mani_front = _compute_group_scores(front_entries, MANIFOLD_METRICS)
+
+    all_geos = sorted({r.get("geometry", "unknown") for r in pool})
+
+    fig, ax = plt.subplots(figsize=(5.5, 5.0))
+
+    # Background: all trials
+    for geo in all_geos:
+        col = geo_color(geo, all_geos)
+        xs = [
+            p
+            for r, p, m in zip(pool, proj_all, mani_all)
+            if r.get("geometry") == geo and p is not None and m is not None
+        ]
+        ys = [
+            m
+            for r, p, m in zip(pool, proj_all, mani_all)
+            if r.get("geometry") == geo and p is not None and m is not None
+        ]
+        if xs:
+            ax.scatter(xs, ys, color=col, alpha=0.25, s=12, linewidths=0, label=geo)
+
+    # Foreground: Pareto front (gold circles)
+    fxs = [p for p, m in zip(proj_front, mani_front) if p is not None and m is not None]
+    fys = [m for p, m in zip(proj_front, mani_front) if p is not None and m is not None]
+    if fxs:
+        ax.scatter(
+            fxs,
+            fys,
+            color="#FFD700",
+            s=60,
+            linewidths=1.2,
+            edgecolors="white",
+            zorder=5,
+            label="Pareto front",
+        )
+
+    # Symmetry diagonal
+    ax.plot([0, 1], [0, 1], color="#666", linewidth=1.0, linestyle="--", alpha=0.6)
+
+    # Quadrant annotations
+    ax.text(
+        0.26,
+        0.72,
+        "better on\nmanifold",
+        fontsize=7,
+        color="#888",
+        ha="center",
+        va="center",
+        alpha=0.7,
+    )
+    ax.text(
+        0.72,
+        0.26,
+        "better after\nprojection",
+        fontsize=7,
+        color="#888",
+        ha="center",
+        va="center",
+        alpha=0.7,
+    )
+
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("Post-projection score  (mean of 5 2D metrics)", fontsize=8)
+    ax.set_ylabel("Manifold score  (mean of 5 manifold metrics)", fontsize=8)
+    ax.set_title(
+        "Tradeoff: pre-projection vs post-projection quality\n"
+        "gold = Pareto front  |  diagonal = equal quality",
+        fontsize=9,
+    )
+    ax.tick_params(labelsize=7)
+    ax.legend(fontsize=7, loc="upper left")
+
+    fig.tight_layout()
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
+# ─── Pareto plot 2: per-objective breakdown ────────────────────────────────────
+
+
+def plot_pareto_objectives(
+    front_entries: list[dict],
+    out_path: str,
+) -> None:
+    """Heatmap of all 10 Pareto objective values per Pareto-front config.
+
+    Rows = configs (sorted by manifold score desc), columns = objectives
+    (2D group first, then manifold group, separated by a vertical divider).
+    Cell color = normalized value in [0, 1], higher = better for all cells.
+    """
+    objectives = PROJECTION_METRICS + MANIFOLD_METRICS
+    if not front_entries:
+        print(f"  {out_path} (skipped — no Pareto front entries)")
+        return
+
+    # Build matrix: flip minimize metrics so higher = always better
+    n_entries = len(front_entries)
+    n_obj = len(objectives)
+    matrix = np.full((n_entries, n_obj), np.nan)
+    for j, metric in enumerate(objectives):
+        vals = np.array(
+            [
+                float(e[metric]) if e.get(metric) is not None else np.nan
+                for e in front_entries
+            ]
+        )
+        matrix[:, j] = vals if METRIC_DIRECTIONS[metric] else 1.0 - vals
+
+    # Sort rows by mean manifold score (descending)
+    mani_cols = [objectives.index(m) for m in MANIFOLD_METRICS]
+    sort_key = np.nanmean(matrix[:, mani_cols], axis=1)
+    order = np.argsort(sort_key)[::-1]
+    matrix = matrix[order]
+    sorted_geos = [front_entries[i].get("geometry", "?") for i in order]
+
+    col_labels_short = [
+        m.replace("_manifold", " ★").replace("_", " ") for m in objectives
+    ]
+
+    fig_h = max(3.0, 0.35 * n_entries + 1.5)
+    fig, ax = plt.subplots(figsize=(10.0, fig_h))
+
+    im = ax.imshow(matrix, aspect="auto", cmap="viridis", vmin=0, vmax=1)
+
+    # Vertical divider between 2D and manifold groups
+    n_proj = len(PROJECTION_METRICS)
+    ax.axvline(n_proj - 0.5, color="white", linewidth=2.5)
+
+    # Group labels above the columns
+    ax.set_xticks(range(n_obj))
+    ax.set_xticklabels(col_labels_short, fontsize=7, rotation=35, ha="right")
+    ax.set_yticks(range(n_entries))
+    ax.set_yticklabels(
+        [f"{g} {i + 1}" for i, g in enumerate(sorted_geos)],
+        fontsize=7,
+    )
+
+    # Cell text (normalized value)
+    for i in range(n_entries):
+        for j in range(n_obj):
+            v = matrix[i, j]
+            if not np.isnan(v):
+                color = "black" if v > 0.55 else "white"
+                ax.text(
+                    j, i, f"{v:.2f}", ha="center", va="center", fontsize=6, color=color
+                )
+
+    plt.colorbar(
+        im, ax=ax, fraction=0.03, pad=0.02, label="Normalized score (1 = best)"
+    )
+    ax.set_title(
+        "Pareto front — objective breakdown\n"
+        "left: 2D metrics  |  right ★: manifold metrics  |  sorted by manifold score",
+        fontsize=9,
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
+# ─── Pareto plot 3: hyperparameters by manifold preference ────────────────────
+
+
+def plot_pareto_hyperparam_split(
+    front_entries: list[dict],
+    out_path: str,
+) -> None:
+    """Compare hyperparameters of manifold-preferring vs projection-preferring configs.
+
+    Splits the Pareto front by sign of (manifold_score − projection_score) and
+    shows a box plot per hyperparameter for both halves.
+    """
+    if len(front_entries) < 4:
+        print(f"  {out_path} (skipped — fewer than 4 Pareto entries)")
+        return
+
+    proj = _compute_group_scores(front_entries, PROJECTION_METRICS)
+    mani = _compute_group_scores(front_entries, MANIFOLD_METRICS)
+    diffs = [
+        (m - p) if m is not None and p is not None else None for m, p in zip(mani, proj)
+    ]
+
+    manifold_group = [
+        e for e, d in zip(front_entries, diffs) if d is not None and d >= 0
+    ]
+    proj_group = [e for e, d in zip(front_entries, diffs) if d is not None and d < 0]
+
+    if not manifold_group or not proj_group:
+        print(f"  {out_path} (skipped — all configs on same side of diagonal)")
+        return
+
+    params = [p for p in ALL_PARAMS if any(e.get(p) is not None for e in front_entries)]
+    if not params:
+        print(f"  {out_path} (skipped — no hyperparameter data in Pareto entries)")
+        return
+
+    n_p = len(params)
+    fig, axes_flat = _create_subplot_grid(n_p, w=3.5, h=3.2)
+
+    for ax, param in zip(axes_flat, params):
+        m_vals = [float(e[param]) for e in manifold_group if e.get(param) is not None]
+        p_vals = [float(e[param]) for e in proj_group if e.get(param) is not None]
+
+        bp = ax.boxplot(
+            [m_vals, p_vals],
+            tick_labels=["manifold\npref.", "proj.\npref."],
+            patch_artist=True,
+            widths=0.5,
+        )
+        bp["boxes"][0].set_facecolor("#4c9be8")
+        bp["boxes"][1].set_facecolor("#e6553a")
+        for element in ("whiskers", "caps", "medians"):
+            for line in bp[element]:
+                line.set_color("#555")
+
+        ax.set_title(param, fontsize=8)
+        ax.set_ylabel(param, fontsize=7)
+        ax.tick_params(labelsize=7)
+
+    for ax in axes_flat[n_p:]:
+        ax.set_visible(False)
+
+    fig.suptitle(
+        f"Hyperparameters: manifold-preferring ({len(manifold_group)} configs, blue) "
+        f"vs projection-preferring ({len(proj_group)} configs, red)",
+        fontsize=9,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
+# ─── Mode handlers ─────────────────────────────────────────────────────────────
+
+
+def _run_gp(args: "argparse.Namespace") -> None:
+    if not args.metric:
+        print("Error: --metric is required for --mode gp")
+        return
+    stem = Path(args.input).stem
+    print(f"Loading GP states matching '{stem}_gp_*.json' ...")
+    states = load_gp_states(args.input)
+    if not states:
+        print(
+            "No GP state files found. Run the optimizer with --mode bayes first.\n"
+            f"Expected files matching: {stem}_gp_*.json"
+        )
+        return
+    print(f"Loaded GP states for {len(states)} curvature(s): {sorted(states)}")
+    print("Generating GP plots:")
+    plot_gp_slices(states, args.metric, os.path.join(args.output, "gp_slices.svg"))
+    plot_gp_landscape(
+        states, args.metric, os.path.join(args.output, "gp_landscape.svg")
+    )
+    plot_gp_ei(states, args.metric, os.path.join(args.output, "gp_ei.svg"))
+    print(f"\nDone. All plots saved to '{args.output}/'.")
+
+
+def _run_scan(args: "argparse.Namespace") -> None:
+    print(f"Loading scan results from '{args.input}' ...")
+    records = load_scan_results(args.input)
+    if not records:
+        print("No scan results found. Run the optimizer with --mode scan first.")
+        return
+    n_geometries = len({r.get("geometry", "unknown") for r in records})
+    sweep_params = _scan_params_ordered(records)
+    print(f"Loaded {len(records)} scan records across {n_geometries} geometries.")
+    print(f"Parameters swept: {sweep_params}")
+    print(f"Metric: {args.metric or 'not specified — scan plots will be skipped'}\n")
+
+    if args.metric is not None:
+        print("Generating scan plots:")
+        plot_scan_effects(
+            records, os.path.join(args.output, "scan_effects.svg"), args.metric
+        )
+        plot_scan_sensitivity(
+            records, os.path.join(args.output, "scan_sensitivity.svg"), args.metric
+        )
+        plot_scan_optimal(
+            records, os.path.join(args.output, "scan_optimal.svg"), args.metric
+        )
+    else:
+        print("No plots generated (pass --metric to enable scan plots).")
+    print(f"\nDone. All plots saved to '{args.output}/'.")
+
+
+def _run_optimize(args: "argparse.Namespace") -> None:
+    print(f"Loading results from '{args.input}' ...")
+    records = load_results(args.input)
+    if not records:
+        print("No results found. Check --input path.")
+        return
+    print(
+        f"Loaded {len(records)} trials across "
+        f"{len({r['curvature'] for r in records})} curvatures."
+    )
+    print(
+        f"Metric: {args.metric or 'not specified — metric-specific plots will be skipped'}\n"
+    )
+
+    params = present_params(records)
+    print(f"Parameters: {params}\n")
+    print("Generating plots:")
+
+    plot_metric_correlation(
+        records, os.path.join(args.output, "metric_correlation.svg")
+    )
+    plot_variable_importance_heatmap(
+        records, params, os.path.join(args.output, "importance_heatmap.svg")
+    )
+
+    if args.metric is not None:
+        correlations = compute_correlations(records, params, args.metric)
+        plot_spearman_heatmap(
+            correlations, params, os.path.join(args.output, "spearman_heatmap.svg")
+        )
+        plot_param_importance(
+            correlations, params, os.path.join(args.output, "param_importance.svg")
+        )
+        plot_param_vs_metric(records, params, args.output, args.metric)
+        plot_marginal_effects(
+            records,
+            params,
+            os.path.join(args.output, "marginal_effects.svg"),
+            args.metric,
+        )
+        plot_good_regions(
+            records,
+            params,
+            os.path.join(args.output, "good_regions.svg"),
+            args.metric,
+            top_pct=args.top_pct,
+        )
+        print_good_regions(records, params, args.metric, args.top_pct)
+
+    print(f"\nDone. All plots saved to '{args.output}/'.")
+
+
+def _run_pareto(args: "argparse.Namespace") -> None:
+    """Analyze Pareto front from --mode pareto optimizer runs."""
+    print(f"Loading results from '{args.input}' ...")
+    all_trials = load_results(args.input)
+    front_entries = load_pareto_front(args.input)
+
+    if not all_trials and not front_entries:
+        print("No data found. Run the optimizer with --mode pareto first.")
+        return
+
+    print(
+        f"Loaded {len(all_trials)} background trials, "
+        f"{len(front_entries)} Pareto-front entries."
+    )
+    geos = sorted({r.get("geometry", "?") for r in front_entries})
+    print(f"Pareto front geometries: {geos}\n")
+
+    print("Generating Pareto analysis plots:")
+    pool = all_trials if all_trials else front_entries
+    plot_pareto_tradeoff(
+        pool, front_entries, os.path.join(args.output, "pareto_tradeoff.svg")
+    )
+    plot_pareto_objectives(
+        front_entries, os.path.join(args.output, "pareto_objectives.svg")
+    )
+    plot_pareto_hyperparam_split(
+        front_entries, os.path.join(args.output, "pareto_hyperparam_split.svg")
+    )
+    print(f"\nDone. All plots saved to '{args.output}/'.")
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 
@@ -1636,8 +2115,8 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         default="optimize",
-        choices=["optimize", "scan", "gp"],
-        help="Analysis mode: 'optimize' (default), 'scan', or 'gp'",
+        choices=["optimize", "scan", "gp", "pareto"],
+        help="Analysis mode: 'optimize' (default), 'scan', 'gp', or 'pareto'",
     )
     parser.add_argument(
         "--input",
@@ -1652,129 +2131,30 @@ def main() -> None:
     parser.add_argument(
         "--metric",
         default=None,
-        help="Metric column to analyze, e.g. 'davies_bouldin_ratio'. Auto-detected from present columns if not set.",
+        help="Metric to analyze, e.g. 'trustworthiness'. Required for --mode gp.",
     )
     parser.add_argument(
         "--top-pairs",
         type=int,
         default=5,
-        help="Number of top-importance parameters to include in pairwise plot (default: 5)",
+        help="Number of top-importance parameters for pairwise plot (default: 5)",
     )
     parser.add_argument(
         "--top-pct",
         type=float,
         default=0.1,
-        help="Fraction of top runs used in the consensus plot, e.g. 0.1 = top 10% (default: 0.1)",
+        help="Fraction of top runs for the good-regions plot (default: 0.1 = top 10%%)",
     )
     args = parser.parse_args()
-
     os.makedirs(args.output, exist_ok=True)
-    metric = args.metric
 
-    if args.mode == "gp":
-        if not metric:
-            print("Error: --metric is required for --mode gp")
-            return
-        stem = Path(args.input).stem
-        print(f"Loading GP states matching '{stem}_gp_*.json' ...")
-        states = load_gp_states(args.input)
-        if not states:
-            print(
-                "No GP state files found. Run the optimizer with --mode bayes first.\n"
-                f"Expected files matching: {stem}_gp_*.json"
-            )
-            return
-        print(f"Loaded GP states for {len(states)} curvature(s): {sorted(states)}")
-        print("Generating GP plots:")
-        plot_gp_slices(states, metric, os.path.join(args.output, "gp_slices.svg"))
-        plot_gp_landscape(states, metric, os.path.join(args.output, "gp_landscape.svg"))
-        plot_gp_ei(states, metric, os.path.join(args.output, "gp_ei.svg"))
-        print(f"\nDone. All plots saved to '{args.output}/'.")
-        return
-
-    if args.mode == "scan":
-        print(f"Loading scan results from '{args.input}' ...")
-        records = load_scan_results(args.input)
-        if not records:
-            print("No scan results found. Run the optimizer with --mode scan first.")
-            return
-        n_geometries = len({r.get("geometry", "unknown") for r in records})
-        sweep_params = _scan_params_ordered(records)
-        print(f"Loaded {len(records)} scan records across {n_geometries} geometries.")
-        print(f"Parameters swept: {sweep_params}")
-        print(f"Metric: {metric or 'not specified — scan plots will be skipped'}\n")
-
-        if metric is not None:
-            print("Generating scan plots:")
-            plot_scan_effects(
-                records, os.path.join(args.output, "scan_effects.svg"), metric
-            )
-            plot_scan_sensitivity(
-                records, os.path.join(args.output, "scan_sensitivity.svg"), metric
-            )
-            plot_scan_optimal(
-                records, os.path.join(args.output, "scan_optimal.svg"), metric
-            )
-        else:
-            print("No plots generated (pass --metric to enable scan plots).")
-
-        print(f"\nDone. All plots saved to '{args.output}/'.")
-        return
-
-    # ── optimize mode ──────────────────────────────────────────────────────────
-    print(f"Loading results from '{args.input}' ...")
-    records = load_results(args.input)
-    if not records:
-        print("No results found. Check --input path.")
-        return
-    print(
-        f"Loaded {len(records)} trials across {len({r['curvature'] for r in records})} curvatures."
-    )
-
-    print(
-        f"Metric: {metric or 'not specified — metric-specific plots will be skipped'}\n"
-    )
-
-    params = present_params(records)
-    print(f"Parameters: {params}\n")
-
-    print("Generating plots:")
-    # Metric-independent plots (always generated)
-    plot_metric_correlation(
-        records, os.path.join(args.output, "metric_correlation.svg")
-    )
-    plot_variable_importance_heatmap(
-        records, params, os.path.join(args.output, "importance_heatmap.svg")
-    )
-
-    if metric is not None:
-        # Metric-specific plots (skipped when --metric is not given)
-        correlations = compute_correlations(records, params, metric)
-
-        plot_spearman_heatmap(
-            correlations, params, os.path.join(args.output, "spearman_heatmap.svg")
-        )
-        plot_param_importance(
-            correlations, params, os.path.join(args.output, "param_importance.svg")
-        )
-        plot_param_vs_metric(records, params, args.output, metric)
-
-        plot_marginal_effects(
-            records,
-            params,
-            os.path.join(args.output, "marginal_effects.svg"),
-            metric,
-        )
-        plot_good_regions(
-            records,
-            params,
-            os.path.join(args.output, "good_regions.svg"),
-            metric,
-            top_pct=args.top_pct,
-        )
-        print_good_regions(records, params, metric, args.top_pct)
-
-    print(f"\nDone. All plots saved to '{args.output}/'.")
+    dispatch = {
+        "gp": _run_gp,
+        "scan": _run_scan,
+        "optimize": _run_optimize,
+        "pareto": _run_pareto,
+    }
+    dispatch[args.mode](args)
 
 
 if __name__ == "__main__":
