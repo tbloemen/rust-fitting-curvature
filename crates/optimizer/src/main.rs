@@ -86,6 +86,13 @@ struct Args {
     /// Number of worker threads. Defaults to the number of logical CPUs.
     #[arg(long)]
     threads: Option<usize>,
+
+    /// Experiment variant controlling which loss weights are optimized vs fixed to 0.
+    /// Values: all_off, centering_only, global_only, norm_only, all_free (default).
+    /// In all variants: lr, perplexity, early_exaggeration_factor are always optimized;
+    /// momentum_main is always fixed at 0.8; scaling_loss_type is always MeanDistance.
+    #[arg(long, default_value = "all_free")]
+    experiment: String,
 }
 
 // ─── Trial result ─────────────────────────────────────────────────────────────
@@ -108,6 +115,7 @@ struct TrialResult {
     centering_weight: f64,
     global_loss_weight: f64,
     norm_loss_weight: f64,
+    early_exaggeration_factor: f64,
 
     trustworthiness: Option<f64>,
     trustworthiness_manifold: Option<f64>,
@@ -148,12 +156,13 @@ impl TrialResult {
             curvature,
             geometry: None,
             curvature_magnitude: None,
-            learning_rate: config.learning_rate,
-            perplexity_ratio: config.perplexity_ratio,
-            momentum_main: config.momentum_main,
-            centering_weight: config.centering_weight,
-            global_loss_weight: config.global_loss_weight,
-            norm_loss_weight: config.norm_loss_weight,
+            learning_rate: config.learning_rate.value(),
+            perplexity_ratio: config.perplexity_ratio.value(),
+            momentum_main: config.momentum_main.value(),
+            centering_weight: config.centering_weight.value(),
+            global_loss_weight: config.global_loss_weight.value(),
+            norm_loss_weight: config.norm_loss_weight.value(),
+            early_exaggeration_factor: config.early_exaggeration_factor.value(),
             trustworthiness: None,
             trustworthiness_manifold: None,
             continuity: None,
@@ -204,6 +213,26 @@ fn write_result(result: &TrialResult, out_path: &str) {
         .unwrap();
     let json = serde_json::to_string(result).unwrap();
     writeln!(file, "{}", json).ok();
+}
+
+// ─── Experiment variants ──────────────────────────────────────────────────────
+
+fn parse_experiment(name: &str) -> TrialConfig {
+    match name {
+        "all_off" => TrialConfig::all_off(),
+        "centering_only" => TrialConfig::centering_only(),
+        "global_only" => TrialConfig::global_only(),
+        "norm_only" => TrialConfig::norm_only(),
+        "all_free" => TrialConfig::all_free(),
+        other => {
+            eprintln!(
+                "Unknown --experiment '{}'. Valid: all_off, centering_only, global_only, \
+                 norm_only, all_free.",
+                other
+            );
+            std::process::exit(1);
+        }
+    }
 }
 
 // ─── Shared evaluation helpers ────────────────────────────────────────────────
@@ -314,6 +343,7 @@ fn write_pareto_front(front: &[&MultiTrial], metrics: &[Metric], n_samples: usiz
         centering_weight: f64,
         global_loss_weight: f64,
         norm_loss_weight: f64,
+        early_exaggeration_factor: f64,
         curvature_magnitude: f64,
         metrics: HashMap<&'a str, f64>,
     }
@@ -327,13 +357,14 @@ fn write_pareto_front(front: &[&MultiTrial], metrics: &[Metric], n_samples: usiz
             }
             ParetoEntry {
                 n_samples,
-                learning_rate: t.config.learning_rate,
-                perplexity_ratio: t.config.perplexity_ratio,
-                momentum_main: t.config.momentum_main,
-                centering_weight: t.config.centering_weight,
-                global_loss_weight: t.config.global_loss_weight,
-                norm_loss_weight: t.config.norm_loss_weight,
-                curvature_magnitude: t.config.curvature_magnitude,
+                learning_rate: t.config.learning_rate.value(),
+                perplexity_ratio: t.config.perplexity_ratio.value(),
+                momentum_main: t.config.momentum_main.value(),
+                centering_weight: t.config.centering_weight.value(),
+                global_loss_weight: t.config.global_loss_weight.value(),
+                norm_loss_weight: t.config.norm_loss_weight.value(),
+                early_exaggeration_factor: t.config.early_exaggeration_factor.value(),
+                curvature_magnitude: t.config.curvature_magnitude.value(),
                 metrics: metric_map,
             }
         })
@@ -364,14 +395,17 @@ fn run_pareto(
         .max(args.curvature_min.abs())
         .max(curvature_mag_min);
 
+    let mut hp = parse_experiment(&args.experiment);
+    if optimize_curvature {
+        hp.curvature_magnitude = crate::search_space::ParamSpec::Optimize {
+            lo: curvature_mag_min,
+            hi: curvature_mag_max,
+            log_scale: true,
+        };
+    }
     let metrics = default_pareto_metrics();
     let n_objectives = metrics.len();
-    let mut optimizer = ParEgoOptimizer::new(
-        metrics,
-        optimize_curvature,
-        curvature_mag_min,
-        curvature_mag_max,
-    );
+    let mut optimizer = ParEgoOptimizer::new(metrics, hp);
     let mut rng = fitting_core::synthetic_data::Rng::new(0xdead_beef_cafe_2222);
 
     let out_path = &args.output;
@@ -400,11 +434,9 @@ fn run_pareto(
                 .enumerate()
                 .map(|(i, config)| {
                     let evaluator = &*evaluator;
-                    let actual_curvature = if optimize_curvature {
-                        curvature_sign * config.curvature_magnitude
-                    } else {
-                        0.0
-                    };
+                    // actual_curvature is sign * magnitude (for logging/result).
+                    // We pass curvature_sign to eval; to_training_config computes sign * magnitude.
+                    let actual_curvature = curvature_sign * config.curvature_magnitude.value();
                     let trial_idx = completed + i + 1;
                     s.spawn(move || {
                         let pb_iters = ProgressBar::hidden();
@@ -412,7 +444,7 @@ fn run_pareto(
                         let all = eval_all_metrics(
                             evaluator,
                             config,
-                            actual_curvature,
+                            curvature_sign,
                             args.n_seeds,
                             trial_idx,
                             &pb_iters,
@@ -443,7 +475,7 @@ fn run_pareto(
             .with_all_metrics(all);
             result.geometry = Some(geometry.to_string());
             if optimize_curvature {
-                result.curvature_magnitude = Some(config.curvature_magnitude);
+                result.curvature_magnitude = Some(config.curvature_magnitude.value());
             }
             write_result(&result, out_path);
 
@@ -457,8 +489,8 @@ fn run_pareto(
                 front_size,
                 *elapsed,
                 actual_curvature,
-                config.learning_rate,
-                config.perplexity_ratio,
+                config.learning_rate.value(),
+                config.perplexity_ratio.value(),
             ));
             pb.inc(1);
         }
@@ -485,6 +517,10 @@ fn run_random(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &M
     let out_path = &args.output;
     let k_lo = args.curvature_min;
     let k_hi = args.curvature_max;
+    let sample_space = SearchSpace {
+        direction: crate::search_space::OptimizeDirection::Maximize,
+        hyper_params: TrialConfig::all_free(),
+    };
 
     let pb = make_progress_bar(
         mp,
@@ -496,13 +532,20 @@ fn run_random(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &M
 
     for trial_idx in 1..=args.n_trials {
         let start = std::time::Instant::now();
-        // Sample curvature uniformly from [k_lo, k_hi] and config randomly.
         let curvature = rng.uniform() * (k_hi - k_lo) + k_lo;
-        let config = TrialConfig::random(&mut rng);
+        let curvature_sign = if curvature < 0.0 {
+            -1.0
+        } else if curvature > 0.0 {
+            1.0
+        } else {
+            0.0
+        };
+        let mut config = sample_space.sample(&mut rng);
+        config.curvature_magnitude = crate::search_space::ParamSpec::Fixed(curvature.abs());
         let agg = eval_all_metrics(
             &evaluator,
             &config,
-            curvature,
+            curvature_sign,
             args.n_seeds,
             trial_idx,
             &pb_iters,
@@ -568,6 +611,7 @@ fn load_warm_start_trials(
     dataset_name: &str,
     geometry: &str,
 ) -> Vec<(TrialConfig, f64)> {
+    use crate::search_space::ParamSpec;
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(_) => return vec![],
@@ -586,15 +630,20 @@ fn load_warm_start_trials(
             if !metric_val.is_finite() {
                 return None;
             }
-            let config = TrialConfig {
-                learning_rate: v["learning_rate"].as_f64()?,
-                perplexity_ratio: v["perplexity_ratio"].as_f64()?,
-                momentum_main: v["momentum_main"].as_f64()?,
-                centering_weight: v["centering_weight"].as_f64().unwrap_or(0.0),
-                global_loss_weight: v["global_loss_weight"].as_f64().unwrap_or(0.0),
-                norm_loss_weight: v["norm_loss_weight"].as_f64().unwrap_or(0.0),
-                curvature_magnitude: v["curvature_magnitude"].as_f64().unwrap_or(0.0),
-            };
+            let mut config = TrialConfig::all_free();
+            config.learning_rate = ParamSpec::Fixed(v["learning_rate"].as_f64()?);
+            config.perplexity_ratio = ParamSpec::Fixed(v["perplexity_ratio"].as_f64()?);
+            config.momentum_main = ParamSpec::Fixed(v["momentum_main"].as_f64()?);
+            config.centering_weight =
+                ParamSpec::Fixed(v["centering_weight"].as_f64().unwrap_or(0.0));
+            config.global_loss_weight =
+                ParamSpec::Fixed(v["global_loss_weight"].as_f64().unwrap_or(0.0));
+            config.norm_loss_weight =
+                ParamSpec::Fixed(v["norm_loss_weight"].as_f64().unwrap_or(0.0));
+            config.early_exaggeration_factor =
+                ParamSpec::Fixed(v["early_exaggeration_factor"].as_f64().unwrap_or(12.0));
+            config.curvature_magnitude =
+                ParamSpec::Fixed(v["curvature_magnitude"].as_f64().unwrap_or(0.0));
             Some((config, metric_val))
         })
         .collect()
@@ -630,11 +679,17 @@ fn run_bayes(
         .abs()
         .max(args.curvature_min.abs())
         .max(curvature_mag_min);
+    let mut hp = parse_experiment(&args.experiment);
+    if optimize_curvature {
+        hp.curvature_magnitude = crate::search_space::ParamSpec::Optimize {
+            lo: curvature_mag_min,
+            hi: curvature_mag_max,
+            log_scale: true,
+        };
+    }
     let mut optimizer = GpOptimizer::new(SearchSpace {
         direction,
-        optimize_curvature,
-        curvature_mag_min,
-        curvature_mag_max,
+        hyper_params: hp,
     });
     let mut rng = fitting_core::synthetic_data::Rng::new(0xdead_beef_cafe_0000);
 
@@ -685,11 +740,7 @@ fn run_bayes(
                 .enumerate()
                 .map(|(i, config)| {
                     let evaluator = &*evaluator;
-                    let actual_curvature = if optimize_curvature {
-                        curvature_sign * config.curvature_magnitude
-                    } else {
-                        0.0
-                    };
+                    let actual_curvature = curvature_sign * config.curvature_magnitude.value();
                     let trial_idx = completed + i + 1;
                     s.spawn(move || {
                         let pb_iters = ProgressBar::hidden();
@@ -697,7 +748,7 @@ fn run_bayes(
                         let all = eval_all_metrics(
                             evaluator,
                             config,
-                            actual_curvature,
+                            curvature_sign,
                             args.n_seeds,
                             trial_idx,
                             &pb_iters,
@@ -729,7 +780,7 @@ fn run_bayes(
             .with_all_metrics(all);
             result.geometry = Some(geometry.to_string());
             if optimize_curvature {
-                result.curvature_magnitude = Some(config.curvature_magnitude);
+                result.curvature_magnitude = Some(config.curvature_magnitude.value());
             }
             write_result(&result, out_path);
 
@@ -746,8 +797,8 @@ fn run_bayes(
                 best,
                 *elapsed,
                 actual_curvature,
-                config.learning_rate,
-                config.perplexity_ratio,
+                config.learning_rate.value(),
+                config.perplexity_ratio.value(),
             ));
             pb.inc(1);
         }
@@ -766,13 +817,13 @@ fn run_bayes(
             geometry,
             metric.name(),
             optimizer.best_trial(),
-            curvature_sign * best.curvature_magnitude,
-            best.learning_rate,
-            best.perplexity_ratio,
-            best.momentum_main,
-            best.centering_weight,
-            best.global_loss_weight,
-            best.norm_loss_weight,
+            curvature_sign * best.curvature_magnitude.value(),
+            best.learning_rate.value(),
+            best.perplexity_ratio.value(),
+            best.momentum_main.value(),
+            best.centering_weight.value(),
+            best.global_loss_weight.value(),
+            best.norm_loss_weight.value(),
         ));
     }
 
@@ -806,6 +857,7 @@ fn load_best_config_from_jsonl(
     dataset_name: &str,
     geometry: &str,
 ) -> Option<TrialConfig> {
+    use crate::search_space::ParamSpec;
     let content = std::fs::read_to_string(path).ok()?;
     let mut best_val = f64::NEG_INFINITY;
     let mut best: Option<TrialConfig> = None;
@@ -821,18 +873,22 @@ fn load_best_config_from_jsonl(
         let metric = v["metric_mean"].as_f64().unwrap_or(f64::NEG_INFINITY);
         if metric > best_val {
             best_val = metric;
-            let perplexity_ratio = v["perplexity_ratio"]
+            let perp_ratio = v["perplexity_ratio"]
                 .as_f64()
                 .unwrap_or_else(|| v["perplexity"].as_f64().unwrap_or(15.0) / n_points as f64);
-            best = Some(TrialConfig {
-                learning_rate: v["learning_rate"].as_f64().unwrap_or(10.0),
-                perplexity_ratio,
-                momentum_main: v["momentum_main"].as_f64().unwrap_or(0.8),
-                centering_weight: v["centering_weight"].as_f64().unwrap_or(0.0),
-                global_loss_weight: v["global_loss_weight"].as_f64().unwrap_or(0.0),
-                norm_loss_weight: v["norm_loss_weight"].as_f64().unwrap_or(0.0),
-                curvature_magnitude: v["curvature_magnitude"].as_f64().unwrap_or(0.0),
-            });
+            let mut hp = TrialConfig::all_free();
+            hp.learning_rate = ParamSpec::Fixed(v["learning_rate"].as_f64().unwrap_or(10.0));
+            hp.perplexity_ratio = ParamSpec::Fixed(perp_ratio);
+            hp.momentum_main = ParamSpec::Fixed(v["momentum_main"].as_f64().unwrap_or(0.8));
+            hp.centering_weight = ParamSpec::Fixed(v["centering_weight"].as_f64().unwrap_or(0.0));
+            hp.global_loss_weight =
+                ParamSpec::Fixed(v["global_loss_weight"].as_f64().unwrap_or(0.0));
+            hp.norm_loss_weight = ParamSpec::Fixed(v["norm_loss_weight"].as_f64().unwrap_or(0.0));
+            hp.early_exaggeration_factor =
+                ParamSpec::Fixed(v["early_exaggeration_factor"].as_f64().unwrap_or(12.0));
+            hp.curvature_magnitude =
+                ParamSpec::Fixed(v["curvature_magnitude"].as_f64().unwrap_or(0.0));
+            best = Some(hp);
         }
     }
     best
@@ -856,14 +912,17 @@ fn sweep_values(lo: f64, hi: f64, n: usize, log: bool) -> Vec<f64> {
 }
 
 fn apply_param(config: &mut TrialConfig, param: &str, val: f64) {
+    use crate::search_space::ParamSpec;
+    let fixed = ParamSpec::Fixed(val);
     match param {
-        "learning_rate" => config.learning_rate = val,
-        "perplexity_ratio" => config.perplexity_ratio = val,
-        "momentum_main" => config.momentum_main = val,
-        "centering_weight" => config.centering_weight = val,
-        "global_loss_weight" => config.global_loss_weight = val,
-        "norm_loss_weight" => config.norm_loss_weight = val,
-        "curvature_magnitude" => config.curvature_magnitude = val,
+        "learning_rate" => config.learning_rate = fixed,
+        "perplexity_ratio" => config.perplexity_ratio = fixed,
+        "momentum_main" => config.momentum_main = fixed,
+        "centering_weight" => config.centering_weight = fixed,
+        "global_loss_weight" => config.global_loss_weight = fixed,
+        "norm_loss_weight" => config.norm_loss_weight = fixed,
+        "early_exaggeration_factor" => config.early_exaggeration_factor = fixed,
+        "curvature_magnitude" => config.curvature_magnitude = fixed,
         _ => unreachable!(),
     }
 }
@@ -879,15 +938,16 @@ fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &Mul
     let (geometry, curvature_sign) = resolve_geometry(args, &evaluator);
     let optimize_curvature = curvature_sign != 0.0;
 
-    let default_config = TrialConfig {
-        learning_rate: 10.0,
-        perplexity_ratio: 0.003,
-        momentum_main: 0.85,
-        centering_weight: 0.5,
-        global_loss_weight: 0.0,
-        norm_loss_weight: 0.0,
-        curvature_magnitude: if optimize_curvature { 1.0 } else { 0.0 },
-    };
+    let hp = parse_experiment(&args.experiment);
+    use crate::search_space::ParamSpec;
+    let mut default_config = hp.clone();
+    // Override with sensible scan baseline values for the free parameters.
+    default_config.learning_rate = ParamSpec::Fixed(10.0);
+    default_config.perplexity_ratio = ParamSpec::Fixed(0.003);
+    default_config.momentum_main = ParamSpec::Fixed(0.8);
+    default_config.early_exaggeration_factor = ParamSpec::Fixed(12.0);
+    default_config.curvature_magnitude =
+        ParamSpec::Fixed(if optimize_curvature { 1.0 } else { 0.0 });
 
     let base = if let Some(scan_file) = &args.scan_from {
         match load_best_config_from_jsonl(scan_file, n_points, dataset_name, geometry) {
@@ -920,14 +980,38 @@ fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &Mul
         .abs()
         .max(crate::search_space::DEFAULT_CURVATURE_MAG_MIN);
     let curvature_mag_max = args.curvature_max.abs().max(curvature_mag_min);
-    let mut params: Vec<(&str, Vec<f64>)> = vec![
-        ("learning_rate", sweep_values(0.5, 50.0, n, true)),
-        ("perplexity_ratio", sweep_values(0.0004, 0.03, n, true)),
-        ("momentum_main", sweep_values(0.60, 1.0, n, false)),
-        ("centering_weight", sweep_values(0.0, 2.0, n, false)),
-        ("global_loss_weight", sweep_values(0.0, 1.0, n, false)),
-        ("norm_loss_weight", sweep_values(0.0, 0.02, n, false)),
-    ];
+    use crate::search_space::{
+        CEN_MAX, CEN_MIN, EEF_MAX, EEF_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, NLW_MAX, NLW_MIN,
+        PERP_MAX, PERP_MIN,
+    };
+    let mut params: Vec<(&str, Vec<f64>)> = Vec::new();
+    if hp.learning_rate.is_optimized() {
+        params.push(("learning_rate", sweep_values(LR_MIN, LR_MAX, n, true)));
+    }
+    if hp.perplexity_ratio.is_optimized() {
+        params.push((
+            "perplexity_ratio",
+            sweep_values(PERP_MIN, PERP_MAX, n, true),
+        ));
+    }
+    if hp.centering_weight.is_optimized() {
+        params.push(("centering_weight", sweep_values(CEN_MIN, CEN_MAX, n, false)));
+    }
+    if hp.global_loss_weight.is_optimized() {
+        params.push((
+            "global_loss_weight",
+            sweep_values(GLW_MIN, GLW_MAX, n, false),
+        ));
+    }
+    if hp.norm_loss_weight.is_optimized() {
+        params.push(("norm_loss_weight", sweep_values(NLW_MIN, NLW_MAX, n, false)));
+    }
+    if hp.early_exaggeration_factor.is_optimized() {
+        params.push((
+            "early_exaggeration_factor",
+            sweep_values(EEF_MIN, EEF_MAX, n, false),
+        ));
+    }
     if optimize_curvature {
         params.push((
             "curvature_magnitude",
@@ -953,18 +1037,13 @@ fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &Mul
             let mut config = base.clone();
             apply_param(&mut config, param_name, val);
 
-            // Resolve actual curvature from config.
-            let actual_curvature = if optimize_curvature {
-                curvature_sign * config.curvature_magnitude
-            } else {
-                0.0
-            };
+            let actual_curvature = curvature_sign * config.curvature_magnitude.value();
 
             let start = std::time::Instant::now();
             let (mean, std) = eval_single_metric(
                 &evaluator,
                 &config,
-                actual_curvature,
+                curvature_sign,
                 metric,
                 args.n_seeds,
                 trial_idx,
@@ -982,7 +1061,7 @@ fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &Mul
             );
             result.geometry = Some(geometry.to_string());
             if optimize_curvature {
-                result.curvature_magnitude = Some(config.curvature_magnitude);
+                result.curvature_magnitude = Some(config.curvature_magnitude.value());
             }
             result.scan_param = Some(param_name.to_string());
             write_result(&result, out_path);

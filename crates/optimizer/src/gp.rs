@@ -17,7 +17,7 @@ use fitting_core::synthetic_data::Rng;
 use serde::Serialize;
 
 use crate::metrics::Metric;
-use crate::search_space::{OptimizeDirection, SearchSpace, TrialConfig};
+use crate::search_space::{OptimizeDirection, ParamSpec, SearchSpace, TrialConfig};
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -42,24 +42,12 @@ impl GpOptimizer {
         }
     }
 
-    /// Sample a random config, including curvature magnitude when enabled.
     fn random_config(&self, rng: &mut Rng) -> TrialConfig {
-        let mut cfg = TrialConfig::random(rng);
-        if self.space.optimize_curvature {
-            cfg.curvature_magnitude = self.space.sample_curvature_magnitude(rng);
-        }
-        cfg
+        self.space.sample(rng)
     }
 
-    /// Perturb a config, including curvature magnitude when enabled.
     fn mutate_config(&self, config: &TrialConfig, rng: &mut Rng) -> TrialConfig {
-        let mut cfg = config.mutate(rng);
-        if self.space.optimize_curvature && rng.uniform() < 0.3 {
-            cfg.curvature_magnitude = self
-                .space
-                .mutate_curvature_magnitude(cfg.curvature_magnitude, rng);
-        }
-        cfg
+        self.space.mutate_config(config, rng)
     }
 
     pub fn observe(&mut self, config: TrialConfig, metric: f64) {
@@ -81,11 +69,7 @@ impl GpOptimizer {
             return (0..n).map(|_| self.random_config(rng)).collect();
         }
 
-        let gp = GpModel::fit(
-            &self.trials,
-            self.space.direction,
-            self.space.optimize_curvature,
-        );
+        let gp = GpModel::fit(&self.trials, self.space.direction, &self.space.hyper_params);
 
         // Score all candidates, keeping track of the top-n by EI.
         let mut scored: Vec<(f64, TrialConfig)> = (0..self.n_ei_candidates)
@@ -158,11 +142,7 @@ impl GpOptimizer {
         if self.trials.len() < 2 {
             return None;
         }
-        let gp = GpModel::fit(
-            &self.trials,
-            self.space.direction,
-            self.space.optimize_curvature,
-        );
+        let gp = GpModel::fit(&self.trials, self.space.direction, &self.space.hyper_params);
         Some(gp.to_state(&self.trials, self.space.direction))
     }
 
@@ -217,7 +197,7 @@ struct GpModel {
     y_mean: f64,
     y_std: f64,
     n: usize,
-    optimize_curvature: bool,
+    spec: TrialConfig,
 }
 
 // ─── GP state export (for Python plotting) ───────────────────────────────────
@@ -273,11 +253,10 @@ pub struct GpState {
 const JITTER: f64 = 1e-4;
 
 impl GpModel {
-    fn fit(trials: &[Trial], direction: OptimizeDirection, optimize_curvature: bool) -> Self {
-        // Encode configs as real-valued GP inputs (log-transform log-uniform params).
+    fn fit(trials: &[Trial], direction: OptimizeDirection, spec: &TrialConfig) -> Self {
         let raw_xs: Vec<Vec<f64>> = trials
             .iter()
-            .map(|t| config_to_gp_input(&t.config, optimize_curvature))
+            .map(|t| config_to_gp_input(&t.config, spec))
             .collect();
 
         // Internally always maximise; flip sign for minimisation objectives.
@@ -325,7 +304,7 @@ impl GpModel {
             y_mean,
             y_std,
             n,
-            optimize_curvature,
+            spec: spec.clone(),
         }
     }
 
@@ -364,20 +343,7 @@ impl GpModel {
             })
             .collect();
 
-        let mut param_names = vec![
-            "learning_rate".to_string(),
-            "perplexity_ratio".to_string(),
-            "momentum_main".to_string(),
-            "centering_weight".to_string(),
-            "global_loss_weight".to_string(),
-            "norm_loss_weight".to_string(),
-        ];
-        let mut log_scale_params =
-            vec!["learning_rate".to_string(), "perplexity_ratio".to_string()];
-        if self.optimize_curvature {
-            param_names.push("curvature_magnitude".to_string());
-            log_scale_params.push("curvature_magnitude".to_string());
-        }
+        let (param_names, log_scale_params) = gp_param_names(&self.spec);
 
         GpState {
             param_names,
@@ -396,7 +362,7 @@ impl GpModel {
 
     /// Expected Improvement for a candidate config (Frazier Eq. 7 / Eq. 8).
     fn ei(&self, config: &TrialConfig) -> f64 {
-        let x_raw = config_to_gp_input(config, self.optimize_curvature);
+        let x_raw = config_to_gp_input(config, &self.spec);
         let x_norm = standardize(&x_raw, &self.x_means, &self.x_stds);
         let (mu, sigma) = self.predict(&x_norm);
         expected_improvement(mu, sigma, self.f_best_norm)
@@ -405,7 +371,7 @@ impl GpModel {
     /// Posterior mean at `config` de-standardised back to the raw metric space.
     /// Used by the Kriging Believer hallucination step in qParEGO.
     fn predict_mean_raw(&self, config: &TrialConfig) -> f64 {
-        let x_raw = config_to_gp_input(config, self.optimize_curvature);
+        let x_raw = config_to_gp_input(config, &self.spec);
         let x_norm = standardize(&x_raw, &self.x_means, &self.x_stds);
         let (mu_norm, _) = self.predict(&x_norm);
         mu_norm * self.y_std + self.y_mean
@@ -461,25 +427,93 @@ fn log_marginal_likelihood(xs_norm: &[Vec<f64>], ys_norm: &[f64], length_scale: 
 
 // ─── Input encoding ───────────────────────────────────────────────────────────
 
-/// Encode a TrialConfig as a real-valued GP input vector.
+/// Encode a TrialConfig as a real-valued GP input vector containing only the
+/// `Optimize` (free) parameters from `hp`, in canonical order.
 ///
-/// Parameters that were sampled log-uniformly (learning_rate, perplexity_ratio)
-/// are log-transformed so that the GP sees an approximately uniform distribution
-/// over the input space — a standard preprocessing step for log-scale parameters.
+/// Log-uniform parameters (learning_rate, perplexity_ratio) are log-transformed.
+/// Fixed parameters are excluded so the GP dimensionality matches the search space.
 /// When `optimize_curvature` is true, `curvature_magnitude` is appended (log-transformed).
-fn config_to_gp_input(config: &TrialConfig, optimize_curvature: bool) -> Vec<f64> {
-    let mut v = vec![
-        config.learning_rate.ln(),
-        config.perplexity_ratio.ln(),
-        config.momentum_main,
-        config.centering_weight,
-        config.global_loss_weight,
-        config.norm_loss_weight,
-    ];
-    if optimize_curvature {
-        v.push(config.curvature_magnitude.ln());
+/// Encode a sampled `HyperParams` as a GP input vector, including only `Optimize` fields.
+/// The canonical order matches `gp_param_names` and `HyperParams::specs()`.
+fn config_to_gp_input(config: &TrialConfig, spec: &TrialConfig) -> Vec<f64> {
+    let mut v = Vec::new();
+    if spec.learning_rate.is_optimized() {
+        v.push(config.learning_rate.value().ln());
+    }
+    if spec.perplexity_ratio.is_optimized() {
+        v.push(config.perplexity_ratio.value().ln());
+    }
+    if spec.momentum_main.is_optimized() {
+        v.push(config.momentum_main.value());
+    }
+    if spec.momentum_early.is_optimized() {
+        v.push(config.momentum_early.value());
+    }
+    if spec.centering_weight.is_optimized() {
+        v.push(config.centering_weight.value());
+    }
+    if spec.global_loss_weight.is_optimized() {
+        v.push(config.global_loss_weight.value());
+    }
+    if spec.norm_loss_weight.is_optimized() {
+        v.push(config.norm_loss_weight.value());
+    }
+    if spec.early_exaggeration_factor.is_optimized() {
+        v.push(config.early_exaggeration_factor.value());
+    }
+    if spec.n_iterations.is_optimized() {
+        v.push(config.n_iterations.value());
+    }
+    if spec.early_exaggeration_iterations.is_optimized() {
+        v.push(config.early_exaggeration_iterations.value());
+    }
+    if spec.curvature_magnitude.is_optimized() {
+        v.push(config.curvature_magnitude.value().ln());
+    }
+    if spec.init_scale.is_optimized() {
+        v.push(config.init_scale.value());
+    }
+    if spec.embed_dim.is_optimized() {
+        v.push(config.embed_dim.value());
     }
     v
+}
+
+fn gp_param_names(spec: &TrialConfig) -> (Vec<String>, Vec<String>) {
+    let mut names = Vec::new();
+    let mut log_params = Vec::new();
+    macro_rules! push {
+        ($field:expr, $name:expr, $log:expr) => {
+            if $field.is_optimized() {
+                names.push($name.to_string());
+                if $log {
+                    log_params.push($name.to_string());
+                }
+            }
+        };
+    }
+    push!(spec.learning_rate, "learning_rate", true);
+    push!(spec.perplexity_ratio, "perplexity_ratio", true);
+    push!(spec.momentum_main, "momentum_main", false);
+    push!(spec.momentum_early, "momentum_early", false);
+    push!(spec.centering_weight, "centering_weight", false);
+    push!(spec.global_loss_weight, "global_loss_weight", false);
+    push!(spec.norm_loss_weight, "norm_loss_weight", false);
+    push!(
+        spec.early_exaggeration_factor,
+        "early_exaggeration_factor",
+        false
+    );
+    push!(spec.n_iterations, "n_iterations", false);
+    push!(
+        spec.early_exaggeration_iterations,
+        "early_exaggeration_iterations",
+        false
+    );
+    push!(spec.curvature_magnitude, "curvature_magnitude", true);
+    push!(spec.init_scale, "init_scale", false);
+    push!(spec.embed_dim, "embed_dim", false);
+    (names, log_params)
 }
 
 // ─── Normalisation helpers ────────────────────────────────────────────────────
@@ -649,9 +683,7 @@ pub struct MultiTrial {
 pub struct ParEgoOptimizer {
     pub trials: Vec<MultiTrial>,
     pub metrics: Vec<Metric>,
-    optimize_curvature: bool,
-    curvature_mag_min: f64,
-    curvature_mag_max: f64,
+    spec: TrialConfig,
     /// s parameter (equation 1): weight vectors use λ_j = l/s, l ∈ {0,...,s}.
     s: usize,
     /// LHS configs queued for the initialisation phase (drained before GP phase).
@@ -660,18 +692,11 @@ pub struct ParEgoOptimizer {
 }
 
 impl ParEgoOptimizer {
-    pub fn new(
-        metrics: Vec<Metric>,
-        optimize_curvature: bool,
-        curvature_mag_min: f64,
-        curvature_mag_max: f64,
-    ) -> Self {
+    pub fn new(metrics: Vec<Metric>, spec: TrialConfig) -> Self {
         Self {
             trials: Vec::new(),
             metrics,
-            optimize_curvature,
-            curvature_mag_min,
-            curvature_mag_max,
+            spec,
             s: 5,
             lhs_queue: VecDeque::new(),
             lhs_initialized: false,
@@ -712,15 +737,8 @@ impl ParEgoOptimizer {
     /// With `n = 1` this degenerates to standard (sequential) ParEGO.
     pub fn suggest_batch(&mut self, n: usize, rng: &mut Rng) -> Vec<TrialConfig> {
         if !self.lhs_initialized {
-            let dim = if self.optimize_curvature { 7 } else { 6 };
-            let n_lhs = 11 * dim - 1;
-            let lhs = latin_hypercube_sample(
-                n_lhs,
-                self.optimize_curvature,
-                self.curvature_mag_min,
-                self.curvature_mag_max,
-                rng,
-            );
+            let n_lhs = 11 * self.spec.free_param_count() - 1;
+            let lhs = latin_hypercube_sample(n_lhs, &self.spec, rng);
             self.lhs_queue.extend(lhs);
             self.lhs_initialized = true;
         }
@@ -744,13 +762,8 @@ impl ParEgoOptimizer {
             let weights = sample_discrete_simplex(self.metrics.len(), self.s, rng);
             let mut scalar_trials = self.scalarize_trials_subset(&weights, rng);
             scalar_trials.extend_from_slice(&hallucinated);
-            let gp = GpModel::fit(
-                &scalar_trials,
-                OptimizeDirection::Maximize,
-                self.optimize_curvature,
-            );
+            let gp = GpModel::fit(&scalar_trials, OptimizeDirection::Maximize, &self.spec);
             let next = self.evolalg(&gp, &weights, rng);
-            // KB hallucination: substitute the GP posterior mean for the unknown true metric.
             hallucinated.push(Trial {
                 config: next.clone(),
                 metric: gp.predict_mean_raw(&next),
@@ -770,9 +783,8 @@ impl ParEgoOptimizer {
     fn evolalg(&self, gp: &GpModel, weights: &[f64], rng: &mut Rng) -> TrialConfig {
         const POP_SIZE: usize = 20;
         const N_EVALS: usize = 10_000;
-        let dim = if self.optimize_curvature { 7 } else { 6 };
+        let dim = self.spec.free_param_count();
 
-        // Initialise: top-5 by scalar fitness → 5 mutants; remaining 15 from LHS random.
         let scalar_vals: Vec<f64> = self
             .trials
             .iter()
@@ -790,12 +802,7 @@ impl ParEgoOptimizer {
             let cfg = if i < 5 && i < sorted_idx.len() {
                 self.mutate_config(&self.trials[sorted_idx[i]].config, rng)
             } else {
-                lhs_random_config(
-                    self.optimize_curvature,
-                    self.curvature_mag_min,
-                    self.curvature_mag_max,
-                    rng,
-                )
+                lhs_random_config(&self.spec, rng)
             };
             let ei = gp.ei(&cfg);
             population.push((ei, cfg));
@@ -803,7 +810,6 @@ impl ParEgoOptimizer {
 
         let mut evals_used = POP_SIZE;
         while evals_used < N_EVALS {
-            // Binary tournament without replacement: pick 2 distinct indices.
             let i = (rng.uniform() * POP_SIZE as f64) as usize % POP_SIZE;
             let mut j = (rng.uniform() * (POP_SIZE - 1) as f64) as usize % (POP_SIZE - 1);
             if j >= i {
@@ -815,34 +821,17 @@ impl ParEgoOptimizer {
                 (j, i)
             };
 
-            // Crossover (prob 0.2 SBX) then mutation.
             let offspring = if rng.uniform() < 0.2 {
                 let child = sbx_crossover(
                     &population[winner].1,
                     &population[loser].1,
                     2.0,
-                    self.optimize_curvature,
-                    self.curvature_mag_min,
-                    self.curvature_mag_max,
+                    &self.spec,
                     rng,
                 );
-                evolalg_mutate(
-                    &child,
-                    dim,
-                    self.optimize_curvature,
-                    self.curvature_mag_min,
-                    self.curvature_mag_max,
-                    rng,
-                )
+                evolalg_mutate(&child, dim, &self.spec, rng)
             } else {
-                evolalg_mutate(
-                    &population[winner].1,
-                    dim,
-                    self.optimize_curvature,
-                    self.curvature_mag_min,
-                    self.curvature_mag_max,
-                    rng,
-                )
+                evolalg_mutate(&population[winner].1, dim, &self.spec, rng)
             };
 
             let offspring_ei = gp.ei(&offspring);
@@ -952,26 +941,11 @@ impl ParEgoOptimizer {
     }
 
     fn random_config(&self, rng: &mut Rng) -> TrialConfig {
-        let mut cfg = TrialConfig::random(rng);
-        if self.optimize_curvature {
-            let lo = self.curvature_mag_min;
-            let hi = self.curvature_mag_max;
-            cfg.curvature_magnitude = (rng.uniform() * (hi.ln() - lo.ln()) + lo.ln())
-                .exp()
-                .clamp(lo, hi);
-        }
-        cfg
+        self.spec.sample(rng)
     }
 
     fn mutate_config(&self, config: &TrialConfig, rng: &mut Rng) -> TrialConfig {
-        let mut cfg = config.mutate(rng);
-        if self.optimize_curvature && rng.uniform() < 0.3 {
-            let lo = self.curvature_mag_min;
-            let hi = self.curvature_mag_max;
-            cfg.curvature_magnitude =
-                (cfg.curvature_magnitude * 2.0_f64.powf((rng.uniform() - 0.5) * 1.0)).clamp(lo, hi);
-        }
-        cfg
+        self.spec.mutate(config, rng)
     }
 }
 
@@ -1006,27 +980,13 @@ fn sample_discrete_simplex(dim: usize, s: usize, rng: &mut Rng) -> Vec<f64> {
     result
 }
 
-/// Latin Hypercube Sample of `n` points over the `TrialConfig` search space.
+/// Latin Hypercube Sample of `n` points over the search space defined by `spec`.
 ///
-/// Each dimension is divided into n equal-width strata; exactly one point lands
-/// in each stratum per dimension (stratified sampling).  A uniform jitter within
-/// each stratum avoids the grid-point bias.  Log-uniform parameters are mapped
-/// from [0,1] on a log scale so that coverage is uniform in log space.
-pub fn latin_hypercube_sample(
-    n: usize,
-    optimize_curvature: bool,
-    curvature_mag_min: f64,
-    curvature_mag_max: f64,
-    rng: &mut Rng,
-) -> Vec<TrialConfig> {
-    use crate::search_space::{
-        CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
-        PERP_MAX, PERP_MIN,
-    };
+/// Returns `Vec<HyperParams>` where every field is `Fixed`. Only `Optimize` fields
+/// in `spec` consume LHS columns; `Fixed` fields keep their fixed values in every row.
+pub fn latin_hypercube_sample(n: usize, spec: &TrialConfig, rng: &mut Rng) -> Vec<TrialConfig> {
+    let dim = spec.free_param_count();
 
-    let dim = if optimize_curvature { 7 } else { 6 };
-    // Build one stratified [0,1) column per dimension: shuffle bin indices, add
-    // per-bin uniform jitter, divide by n.
     let cols: Vec<Vec<f64>> = (0..dim)
         .map(|_| {
             let mut perm: Vec<usize> = (0..n).collect();
@@ -1040,38 +1000,70 @@ pub fn latin_hypercube_sample(
         })
         .collect();
 
+    let mut col_iter = cols.iter();
+    macro_rules! lhs_col {
+        ($field:expr) => {
+            match &$field {
+                ParamSpec::Fixed(v) => vec![*v; n],
+                ParamSpec::Optimize {
+                    lo,
+                    hi,
+                    log_scale: true,
+                } => col_iter
+                    .next()
+                    .unwrap()
+                    .iter()
+                    .map(|&t| lhs_map_log(t, *lo, *hi))
+                    .collect(),
+                ParamSpec::Optimize {
+                    lo,
+                    hi,
+                    log_scale: false,
+                } => col_iter
+                    .next()
+                    .unwrap()
+                    .iter()
+                    .map(|&t| lhs_map_linear(t, *lo, *hi))
+                    .collect(),
+            }
+        };
+    }
+
+    let lr_col = lhs_col!(spec.learning_rate);
+    let perp_col = lhs_col!(spec.perplexity_ratio);
+    let mom_col = lhs_col!(spec.momentum_main);
+    let mome_col = lhs_col!(spec.momentum_early);
+    let cen_col = lhs_col!(spec.centering_weight);
+    let glw_col = lhs_col!(spec.global_loss_weight);
+    let nlw_col = lhs_col!(spec.norm_loss_weight);
+    let eef_col = lhs_col!(spec.early_exaggeration_factor);
+    let nit_col = lhs_col!(spec.n_iterations);
+    let eei_col = lhs_col!(spec.early_exaggeration_iterations);
+    let cur_col = lhs_col!(spec.curvature_magnitude);
+    let isc_col = lhs_col!(spec.init_scale);
+    let edim_col = lhs_col!(spec.embed_dim);
+
     (0..n)
         .map(|i| TrialConfig {
-            learning_rate: lhs_map_log(cols[0][i], LR_MIN, LR_MAX),
-            perplexity_ratio: lhs_map_log(cols[1][i], PERP_MIN, PERP_MAX),
-            momentum_main: lhs_map_linear(cols[2][i], MOM_MIN, MOM_MAX),
-            centering_weight: lhs_map_linear(cols[3][i], CEN_MIN, CEN_MAX),
-            global_loss_weight: lhs_map_linear(cols[4][i], GLW_MIN, GLW_MAX),
-            norm_loss_weight: lhs_map_linear(cols[5][i], NLW_MIN, NLW_MAX),
-            curvature_magnitude: if optimize_curvature {
-                lhs_map_log(cols[6][i], curvature_mag_min, curvature_mag_max)
-            } else {
-                0.0
-            },
+            learning_rate: ParamSpec::Fixed(lr_col[i]),
+            perplexity_ratio: ParamSpec::Fixed(perp_col[i]),
+            momentum_main: ParamSpec::Fixed(mom_col[i]),
+            momentum_early: ParamSpec::Fixed(mome_col[i]),
+            centering_weight: ParamSpec::Fixed(cen_col[i]),
+            global_loss_weight: ParamSpec::Fixed(glw_col[i]),
+            norm_loss_weight: ParamSpec::Fixed(nlw_col[i]),
+            early_exaggeration_factor: ParamSpec::Fixed(eef_col[i]),
+            n_iterations: ParamSpec::Fixed(nit_col[i]),
+            early_exaggeration_iterations: ParamSpec::Fixed(eei_col[i]),
+            curvature_magnitude: ParamSpec::Fixed(cur_col[i]),
+            init_scale: ParamSpec::Fixed(isc_col[i]),
+            embed_dim: ParamSpec::Fixed(edim_col[i]),
         })
         .collect()
 }
 
-/// Generate a single random LHS-style point (used inside EVOLALG init).
-fn lhs_random_config(
-    optimize_curvature: bool,
-    curvature_mag_min: f64,
-    curvature_mag_max: f64,
-    rng: &mut Rng,
-) -> TrialConfig {
-    latin_hypercube_sample(
-        1,
-        optimize_curvature,
-        curvature_mag_min,
-        curvature_mag_max,
-        rng,
-    )
-    .remove(0)
+fn lhs_random_config(spec: &TrialConfig, rng: &mut Rng) -> TrialConfig {
+    latin_hypercube_sample(1, spec, rng).remove(0)
 }
 
 fn lhs_map_log(t: f64, lo: f64, hi: f64) -> f64 {
@@ -1092,51 +1084,91 @@ fn lhs_map_linear(t: f64, lo: f64, hi: f64) -> f64 {
 ///
 /// Log-scale parameters (learning_rate, perplexity_ratio, curvature_magnitude)
 /// have SBX applied in log space and are then exponentiated back.
+/// SBX crossover between two sampled (all-Fixed) `HyperParams`. Returns a new sampled HP.
 pub fn sbx_crossover(
     a: &TrialConfig,
     b: &TrialConfig,
     eta: f64,
-    optimize_curvature: bool,
-    curvature_mag_min: f64,
-    curvature_mag_max: f64,
+    spec: &TrialConfig,
     rng: &mut Rng,
 ) -> TrialConfig {
-    use crate::search_space::{
-        CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
-        PERP_MAX, PERP_MIN,
-    };
-
-    let lr = sbx_scalar(a.learning_rate.ln(), b.learning_rate.ln(), eta, rng)
-        .exp()
-        .clamp(LR_MIN, LR_MAX);
-    let perp = sbx_scalar(a.perplexity_ratio.ln(), b.perplexity_ratio.ln(), eta, rng)
-        .exp()
-        .clamp(PERP_MIN, PERP_MAX);
-    let mom = sbx_scalar(a.momentum_main, b.momentum_main, eta, rng).clamp(MOM_MIN, MOM_MAX);
-    let cen = sbx_scalar(a.centering_weight, b.centering_weight, eta, rng).clamp(CEN_MIN, CEN_MAX);
-    let glw =
-        sbx_scalar(a.global_loss_weight, b.global_loss_weight, eta, rng).clamp(GLW_MIN, GLW_MAX);
-    let nlw = sbx_scalar(a.norm_loss_weight, b.norm_loss_weight, eta, rng).clamp(NLW_MIN, NLW_MAX);
-    let cur = if optimize_curvature {
-        sbx_scalar(
-            a.curvature_magnitude.ln(),
-            b.curvature_magnitude.ln(),
-            eta,
-            rng,
-        )
-        .exp()
-        .clamp(curvature_mag_min, curvature_mag_max)
-    } else {
-        0.0
-    };
+    macro_rules! cross {
+        ($field:expr, $av:expr, $bv:expr) => {
+            ParamSpec::Fixed(match &$field {
+                ParamSpec::Fixed(v) => *v,
+                ParamSpec::Optimize {
+                    lo,
+                    hi,
+                    log_scale: true,
+                } => sbx_scalar($av.ln(), $bv.ln(), eta, rng)
+                    .exp()
+                    .clamp(*lo, *hi),
+                ParamSpec::Optimize {
+                    lo,
+                    hi,
+                    log_scale: false,
+                } => sbx_scalar($av, $bv, eta, rng).clamp(*lo, *hi),
+            })
+        };
+    }
     TrialConfig {
-        learning_rate: lr,
-        perplexity_ratio: perp,
-        momentum_main: mom,
-        centering_weight: cen,
-        global_loss_weight: glw,
-        norm_loss_weight: nlw,
-        curvature_magnitude: cur,
+        learning_rate: cross!(
+            spec.learning_rate,
+            a.learning_rate.value(),
+            b.learning_rate.value()
+        ),
+        perplexity_ratio: cross!(
+            spec.perplexity_ratio,
+            a.perplexity_ratio.value(),
+            b.perplexity_ratio.value()
+        ),
+        momentum_main: cross!(
+            spec.momentum_main,
+            a.momentum_main.value(),
+            b.momentum_main.value()
+        ),
+        momentum_early: cross!(
+            spec.momentum_early,
+            a.momentum_early.value(),
+            b.momentum_early.value()
+        ),
+        centering_weight: cross!(
+            spec.centering_weight,
+            a.centering_weight.value(),
+            b.centering_weight.value()
+        ),
+        global_loss_weight: cross!(
+            spec.global_loss_weight,
+            a.global_loss_weight.value(),
+            b.global_loss_weight.value()
+        ),
+        norm_loss_weight: cross!(
+            spec.norm_loss_weight,
+            a.norm_loss_weight.value(),
+            b.norm_loss_weight.value()
+        ),
+        early_exaggeration_factor: cross!(
+            spec.early_exaggeration_factor,
+            a.early_exaggeration_factor.value(),
+            b.early_exaggeration_factor.value()
+        ),
+        n_iterations: cross!(
+            spec.n_iterations,
+            a.n_iterations.value(),
+            b.n_iterations.value()
+        ),
+        early_exaggeration_iterations: cross!(
+            spec.early_exaggeration_iterations,
+            a.early_exaggeration_iterations.value(),
+            b.early_exaggeration_iterations.value()
+        ),
+        curvature_magnitude: cross!(
+            spec.curvature_magnitude,
+            a.curvature_magnitude.value(),
+            b.curvature_magnitude.value()
+        ),
+        init_scale: cross!(spec.init_scale, a.init_scale.value(), b.init_scale.value()),
+        embed_dim: cross!(spec.embed_dim, a.embed_dim.value(), b.embed_dim.value()),
     }
 }
 
@@ -1155,62 +1187,71 @@ fn sbx_scalar(p1: f64, p2: f64, eta: f64, rng: &mut Rng) -> f64 {
 ///
 /// Each gene mutates with probability 1/d.  The shift magnitude is δ*(hi−lo)
 /// where δ~U(0.0001, 1), applied in log space for log-scale parameters.
+/// Per-gene shift mutation for a sampled (all-Fixed) `HyperParams`. Returns a new sampled HP.
 pub fn evolalg_mutate(
     config: &TrialConfig,
     dim: usize,
-    optimize_curvature: bool,
-    curvature_mag_min: f64,
-    curvature_mag_max: f64,
+    spec: &TrialConfig,
     rng: &mut Rng,
 ) -> TrialConfig {
-    use crate::search_space::{
-        CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
-        PERP_MAX, PERP_MIN,
-    };
-
     let p = 1.0 / dim as f64;
 
-    macro_rules! mutate_log {
-        ($v:expr, $lo:expr, $hi:expr) => {{
-            if rng.uniform() < p {
-                let d = rng.uniform() * (1.0 - 0.0001) + 0.0001;
-                let s = if rng.uniform() < 0.5 { 1.0_f64 } else { -1.0 };
-                ($v.ln() + s * d * ($hi.ln() - $lo.ln()))
-                    .exp()
-                    .clamp($lo, $hi)
-            } else {
-                $v
-            }
-        }};
-    }
-    macro_rules! mutate_lin {
-        ($v:expr, $lo:expr, $hi:expr) => {{
-            if rng.uniform() < p {
-                let d = rng.uniform() * (1.0 - 0.0001) + 0.0001;
-                let s = if rng.uniform() < 0.5 { 1.0_f64 } else { -1.0 };
-                ($v + s * d * ($hi - $lo)).clamp($lo, $hi)
-            } else {
-                $v
-            }
-        }};
+    macro_rules! mutate {
+        ($field:expr, $v:expr) => {
+            ParamSpec::Fixed(match &$field {
+                ParamSpec::Fixed(fv) => *fv,
+                ParamSpec::Optimize {
+                    lo,
+                    hi,
+                    log_scale: true,
+                } => {
+                    if rng.uniform() < p {
+                        let d = rng.uniform() * (1.0 - 0.0001) + 0.0001;
+                        let s = if rng.uniform() < 0.5 { 1.0_f64 } else { -1.0 };
+                        ($v.ln() + s * d * (hi.ln() - lo.ln()))
+                            .exp()
+                            .clamp(*lo, *hi)
+                    } else {
+                        $v
+                    }
+                }
+                ParamSpec::Optimize {
+                    lo,
+                    hi,
+                    log_scale: false,
+                } => {
+                    if rng.uniform() < p {
+                        let d = rng.uniform() * (1.0 - 0.0001) + 0.0001;
+                        let s = if rng.uniform() < 0.5 { 1.0_f64 } else { -1.0 };
+                        ($v + s * d * (hi - lo)).clamp(*lo, *hi)
+                    } else {
+                        $v
+                    }
+                }
+            })
+        };
     }
 
     TrialConfig {
-        learning_rate: mutate_log!(config.learning_rate, LR_MIN, LR_MAX),
-        perplexity_ratio: mutate_log!(config.perplexity_ratio, PERP_MIN, PERP_MAX),
-        momentum_main: mutate_lin!(config.momentum_main, MOM_MIN, MOM_MAX),
-        centering_weight: mutate_lin!(config.centering_weight, CEN_MIN, CEN_MAX),
-        global_loss_weight: mutate_lin!(config.global_loss_weight, GLW_MIN, GLW_MAX),
-        norm_loss_weight: mutate_lin!(config.norm_loss_weight, NLW_MIN, NLW_MAX),
-        curvature_magnitude: if optimize_curvature {
-            mutate_log!(
-                config.curvature_magnitude,
-                curvature_mag_min,
-                curvature_mag_max
-            )
-        } else {
-            0.0
-        },
+        learning_rate: mutate!(spec.learning_rate, config.learning_rate.value()),
+        perplexity_ratio: mutate!(spec.perplexity_ratio, config.perplexity_ratio.value()),
+        momentum_main: mutate!(spec.momentum_main, config.momentum_main.value()),
+        momentum_early: mutate!(spec.momentum_early, config.momentum_early.value()),
+        centering_weight: mutate!(spec.centering_weight, config.centering_weight.value()),
+        global_loss_weight: mutate!(spec.global_loss_weight, config.global_loss_weight.value()),
+        norm_loss_weight: mutate!(spec.norm_loss_weight, config.norm_loss_weight.value()),
+        early_exaggeration_factor: mutate!(
+            spec.early_exaggeration_factor,
+            config.early_exaggeration_factor.value()
+        ),
+        n_iterations: mutate!(spec.n_iterations, config.n_iterations.value()),
+        early_exaggeration_iterations: mutate!(
+            spec.early_exaggeration_iterations,
+            config.early_exaggeration_iterations.value()
+        ),
+        curvature_magnitude: mutate!(spec.curvature_magnitude, config.curvature_magnitude.value()),
+        init_scale: mutate!(spec.init_scale, config.init_scale.value()),
+        embed_dim: mutate!(spec.embed_dim, config.embed_dim.value()),
     }
 }
 
@@ -1261,9 +1302,7 @@ mod tests {
     fn maximize_space() -> SearchSpace {
         SearchSpace {
             direction: OptimizeDirection::Maximize,
-            optimize_curvature: false,
-            curvature_mag_min: 0.001,
-            curvature_mag_max: 5.0,
+            hyper_params: TrialConfig::all_free(),
         }
     }
 
@@ -1272,15 +1311,18 @@ mod tests {
     }
 
     fn make_config(lr: f64, perp_ratio: f64) -> TrialConfig {
-        TrialConfig {
-            learning_rate: lr,
-            perplexity_ratio: perp_ratio,
-            momentum_main: 0.8,
-            centering_weight: 0.0,
-            global_loss_weight: 0.0,
-            norm_loss_weight: 0.0,
-            curvature_magnitude: 0.0,
-        }
+        let mut hp = TrialConfig::all_free().sample(&mut fitting_core::synthetic_data::Rng::new(0));
+        hp.learning_rate = ParamSpec::Fixed(lr);
+        hp.perplexity_ratio = ParamSpec::Fixed(perp_ratio);
+        hp.centering_weight = ParamSpec::Fixed(0.0);
+        hp.global_loss_weight = ParamSpec::Fixed(0.0);
+        hp.norm_loss_weight = ParamSpec::Fixed(0.0);
+        hp.early_exaggeration_factor = ParamSpec::Fixed(12.0);
+        hp
+    }
+
+    fn random_config(rng: &mut Rng) -> TrialConfig {
+        maximize_space().sample(rng)
     }
 
     // ─── normal_pdf ───────────────────────────────────────────────────────────
@@ -1601,7 +1643,8 @@ mod tests {
     #[test]
     fn test_config_to_gp_input_log_transforms_lr_and_perp() {
         let cfg = make_config(1.0_f64.exp(), 2.0_f64.exp()); // lr = e, perp = e²
-        let v = config_to_gp_input(&cfg, false);
+        let hp = TrialConfig::all_free();
+        let v = config_to_gp_input(&cfg, &hp);
         assert!(close(v[0], 1.0, 1e-10)); // ln(e) = 1
         assert!(close(v[1], 2.0, 1e-10)); // ln(e²) = 2
     }
@@ -1609,27 +1652,28 @@ mod tests {
     #[test]
     fn test_config_to_gp_input_passthrough_fields() {
         let cfg = make_config(1.0, 10.0);
-        let v = config_to_gp_input(&cfg, false);
-        assert!(close(v[2], cfg.momentum_main, 1e-15));
-        assert!(close(v[3], cfg.centering_weight, 1e-15));
-        assert!(close(v[4], cfg.global_loss_weight, 1e-15));
-        assert!(close(v[5], cfg.norm_loss_weight, 1e-15));
+        let hp = TrialConfig::all_free();
+        let v = config_to_gp_input(&cfg, &hp);
+        // all_free: lr(0), perp(1), cen(2), glw(3), nlw(4), eef(5) — momentum is Fixed so skipped
+        assert!(close(v[2], cfg.centering_weight.value(), 1e-15));
+        assert!(close(v[3], cfg.global_loss_weight.value(), 1e-15));
+        assert!(close(v[4], cfg.norm_loss_weight.value(), 1e-15));
     }
 
     // ─── GpModel ──────────────────────────────────────────────────────────────
 
     #[test]
     fn test_gp_predict_low_variance_near_observations() {
-        // Posterior variance should be small at observed locations.
         let mut rng = Rng::new(42);
+        let hp = TrialConfig::all_free();
         let trials: Vec<Trial> = (0..10)
             .map(|_| Trial {
-                config: TrialConfig::random(&mut rng),
+                config: random_config(&mut rng),
                 metric: rng.uniform(),
             })
             .collect();
-        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize, false);
-        let x_raw = config_to_gp_input(&trials[0].config, false);
+        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize, &hp);
+        let x_raw = config_to_gp_input(&trials[0].config, &hp);
         let x_norm = standardize(&x_raw, &gp.x_means, &gp.x_stds);
         let (_, sigma) = gp.predict(&x_norm);
         assert!(
@@ -1641,15 +1685,17 @@ mod tests {
     #[test]
     fn test_gp_predict_returns_finite_values() {
         let mut rng = Rng::new(7);
+        let hp = TrialConfig::all_free();
         let trials: Vec<Trial> = (0..8)
             .map(|_| Trial {
-                config: TrialConfig::random(&mut rng),
+                config: random_config(&mut rng),
                 metric: rng.uniform(),
             })
             .collect();
-        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize, false);
+        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize, &hp);
         for _ in 0..20 {
-            let x_raw = config_to_gp_input(&TrialConfig::random(&mut rng), false);
+            let cfg_tmp = random_config(&mut rng);
+            let x_raw = config_to_gp_input(&cfg_tmp, &hp);
             let x_norm = standardize(&x_raw, &gp.x_means, &gp.x_stds);
             let (mu, sigma) = gp.predict(&x_norm);
             assert!(mu.is_finite(), "mu should be finite");
@@ -1663,15 +1709,16 @@ mod tests {
     #[test]
     fn test_gp_ei_nonnegative() {
         let mut rng = Rng::new(123);
+        let hp = TrialConfig::all_free();
         let trials: Vec<Trial> = (0..8)
             .map(|_| Trial {
-                config: TrialConfig::random(&mut rng),
+                config: random_config(&mut rng),
                 metric: rng.uniform(),
             })
             .collect();
-        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize, false);
+        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize, &hp);
         for _ in 0..30 {
-            let cfg = TrialConfig::random(&mut rng);
+            let cfg = random_config(&mut rng);
             assert!(gp.ei(&cfg) >= 0.0, "EI must be non-negative");
         }
     }
@@ -1694,7 +1741,7 @@ mod tests {
         opt.observe(make_config(10.0, 20.0), 0.9);
         opt.observe(make_config(5.0, 5.0), 0.3);
         let best = opt.best_config().unwrap();
-        assert!(close(best.learning_rate, 10.0, 1e-10));
+        assert!(close(best.learning_rate.value(), 10.0, 1e-10));
     }
 
     #[test]
@@ -1721,13 +1768,13 @@ mod tests {
         let mut opt = GpOptimizer::new(maximize_space());
         let mut rng = Rng::new(42);
         for i in 0..10 {
-            let cfg = TrialConfig::random(&mut rng);
+            let cfg = random_config(&mut rng);
             opt.observe(cfg, i as f64 * 0.1);
         }
         let cfg = opt.suggest_batch(1, &mut rng).remove(0);
-        assert!(cfg.learning_rate > 0.0);
-        assert!(cfg.perplexity_ratio >= 0.0004);
-        assert!(cfg.momentum_main >= 0.60);
+        assert!(cfg.learning_rate.value() > 0.0);
+        assert!(cfg.perplexity_ratio.value() >= 0.0004);
+        assert_eq!(cfg.momentum_main.value(), 0.8);
     }
 
     #[test]
@@ -1753,7 +1800,8 @@ mod tests {
                 metric,
             })
             .collect();
-        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize, false);
+        let hp = TrialConfig::all_free();
+        let gp = GpModel::fit(&trials, OptimizeDirection::Maximize, &hp);
 
         let ei_winner = gp.ei(&make_config(10.0, 20.0));
         let ei_loser = gp.ei(&make_config(0.5, 80.0));
@@ -1767,52 +1815,35 @@ mod tests {
 
     fn assert_config_in_bounds(cfg: &TrialConfig, label: &str) {
         use crate::search_space::{
-            CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
-            PERP_MAX, PERP_MIN,
+            CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, NLW_MAX, NLW_MIN, PERP_MAX,
+            PERP_MIN,
         };
+        let lr = cfg.learning_rate.value();
+        let perp = cfg.perplexity_ratio.value();
+        let cen = cfg.centering_weight.value();
+        let glw = cfg.global_loss_weight.value();
+        let nlw = cfg.norm_loss_weight.value();
+        assert!((LR_MIN..=LR_MAX).contains(&lr), "{label}: lr={lr}");
         assert!(
-            cfg.learning_rate >= LR_MIN && cfg.learning_rate <= LR_MAX,
-            "{label}: lr={}",
-            cfg.learning_rate
+            (PERP_MIN..=PERP_MAX).contains(&perp),
+            "{label}: perp={perp}"
         );
-        assert!(
-            cfg.perplexity_ratio >= PERP_MIN && cfg.perplexity_ratio <= PERP_MAX,
-            "{label}: perp={}",
-            cfg.perplexity_ratio
-        );
-        assert!(
-            cfg.momentum_main >= MOM_MIN && cfg.momentum_main <= MOM_MAX,
-            "{label}: mom={}",
-            cfg.momentum_main
-        );
-        assert!(
-            cfg.centering_weight >= CEN_MIN && cfg.centering_weight <= CEN_MAX,
-            "{label}: cen={}",
-            cfg.centering_weight
-        );
-        assert!(
-            cfg.global_loss_weight >= GLW_MIN && cfg.global_loss_weight <= GLW_MAX,
-            "{label}: glw={}",
-            cfg.global_loss_weight
-        );
-        assert!(
-            cfg.norm_loss_weight >= NLW_MIN && cfg.norm_loss_weight <= NLW_MAX,
-            "{label}: nlw={}",
-            cfg.norm_loss_weight
-        );
+        assert!((CEN_MIN..=CEN_MAX).contains(&cen), "{label}: cen={cen}");
+        assert!((GLW_MIN..=GLW_MAX).contains(&glw), "{label}: glw={glw}");
+        assert!((NLW_MIN..=NLW_MAX).contains(&nlw), "{label}: nlw={nlw}");
     }
 
     #[test]
     fn lhs_correct_count() {
         let mut rng = Rng::new(1);
-        let pts = latin_hypercube_sample(65, false, 0.001, 5.0, &mut rng);
+        let pts = latin_hypercube_sample(65, &TrialConfig::all_free(), &mut rng);
         assert_eq!(pts.len(), 65);
     }
 
     #[test]
     fn lhs_all_params_in_bounds() {
         let mut rng = Rng::new(2);
-        let pts = latin_hypercube_sample(65, false, 0.001, 5.0, &mut rng);
+        let pts = latin_hypercube_sample(65, &TrialConfig::all_free(), &mut rng);
         for (i, cfg) in pts.iter().enumerate() {
             assert_config_in_bounds(cfg, &format!("point {i}"));
         }
@@ -1822,9 +1853,12 @@ mod tests {
     fn lhs_lr_log_coverage() {
         use crate::search_space::{LR_MAX, LR_MIN};
         let mut rng = Rng::new(3);
-        let pts = latin_hypercube_sample(65, false, 0.001, 5.0, &mut rng);
+        let pts = latin_hypercube_sample(65, &TrialConfig::all_free(), &mut rng);
         let (min_lr, max_lr) = pts.iter().fold((f64::MAX, f64::MIN), |(lo, hi), cfg| {
-            (lo.min(cfg.learning_rate), hi.max(cfg.learning_rate))
+            (
+                lo.min(cfg.learning_rate.value()),
+                hi.max(cfg.learning_rate.value()),
+            )
         });
         let log_range = LR_MAX.ln() - LR_MIN.ln();
         let log_covered = max_lr.ln() - min_lr.ln();
@@ -1838,12 +1872,12 @@ mod tests {
     fn lhs_stratified_per_dim() {
         // Each dimension must have exactly one point per bin (floor(v * n) is a permutation of 0..n).
         use crate::search_space::{
-            CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, MOM_MAX, MOM_MIN, NLW_MAX, NLW_MIN,
-            PERP_MAX, PERP_MIN,
+            CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, NLW_MAX, NLW_MIN, PERP_MAX,
+            PERP_MIN,
         };
         let n = 30usize;
         let mut rng = Rng::new(4);
-        let pts = latin_hypercube_sample(n, false, 0.001, 5.0, &mut rng);
+        let pts = latin_hypercube_sample(n, &TrialConfig::all_free(), &mut rng);
 
         let check_bins = |values: Vec<f64>, lo: f64, hi: f64, name: &str| {
             let mut bins = vec![false; n];
@@ -1855,37 +1889,34 @@ mod tests {
             }
         };
         check_bins(
-            pts.iter().map(|c| c.learning_rate.ln()).collect(),
+            pts.iter().map(|c| c.learning_rate.value().ln()).collect(),
             LR_MIN.ln(),
             LR_MAX.ln(),
             "lr",
         );
         check_bins(
-            pts.iter().map(|c| c.perplexity_ratio.ln()).collect(),
+            pts.iter()
+                .map(|c| c.perplexity_ratio.value().ln())
+                .collect(),
             PERP_MIN.ln(),
             PERP_MAX.ln(),
             "perp",
         );
+        // momentum_main is Fixed(0.8) in all_free — not a stratified LHS dimension
         check_bins(
-            pts.iter().map(|c| c.momentum_main).collect(),
-            MOM_MIN,
-            MOM_MAX,
-            "mom",
-        );
-        check_bins(
-            pts.iter().map(|c| c.centering_weight).collect(),
+            pts.iter().map(|c| c.centering_weight.value()).collect(),
             CEN_MIN,
             CEN_MAX,
             "cen",
         );
         check_bins(
-            pts.iter().map(|c| c.global_loss_weight).collect(),
+            pts.iter().map(|c| c.global_loss_weight.value()).collect(),
             GLW_MIN,
             GLW_MAX,
             "glw",
         );
         check_bins(
-            pts.iter().map(|c| c.norm_loss_weight).collect(),
+            pts.iter().map(|c| c.norm_loss_weight.value()).collect(),
             NLW_MIN,
             NLW_MAX,
             "nlw",
@@ -1894,12 +1925,14 @@ mod tests {
 
     #[test]
     fn lhs_curvature_disabled() {
+        // When curvature_magnitude is Fixed(0.0), LHS points should all have magnitude=0.
         let mut rng = Rng::new(5);
-        let pts = latin_hypercube_sample(20, false, 0.001, 5.0, &mut rng);
+        let pts = latin_hypercube_sample(20, &TrialConfig::all_free(), &mut rng);
         for cfg in &pts {
             assert_eq!(
-                cfg.curvature_magnitude, 0.0,
-                "curvature should be 0 when disabled"
+                cfg.curvature_magnitude.value(),
+                0.0,
+                "curvature should be 0 when Fixed(0)"
             );
         }
     }
@@ -1909,12 +1942,18 @@ mod tests {
         let k_min = 0.1;
         let k_max = 3.0;
         let mut rng = Rng::new(6);
-        let pts = latin_hypercube_sample(30, true, k_min, k_max, &mut rng);
+        let mut spec = TrialConfig::all_free();
+        spec.curvature_magnitude = ParamSpec::Optimize {
+            lo: k_min,
+            hi: k_max,
+            log_scale: true,
+        };
+        let pts = latin_hypercube_sample(30, &spec, &mut rng);
         for cfg in &pts {
+            let v = cfg.curvature_magnitude.value();
             assert!(
-                cfg.curvature_magnitude >= k_min && cfg.curvature_magnitude <= k_max,
-                "curvature {} out of [{k_min},{k_max}]",
-                cfg.curvature_magnitude
+                v >= k_min && v <= k_max,
+                "curvature {v} out of [{k_min},{k_max}]"
             );
         }
     }
@@ -1922,19 +1961,24 @@ mod tests {
     #[test]
     fn lhs_11d_minus_1_count() {
         let mut rng = Rng::new(7);
-        let dim = 6usize;
-        let n = 11 * dim - 1;
-        let pts = latin_hypercube_sample(n, false, 0.001, 5.0, &mut rng);
-        assert_eq!(pts.len(), n, "expected 11*6-1=65 LHS points");
+        // all_free without curvature: lr, perp, cen, glw, nlw, eef = 6 free params
+        let spec6 = TrialConfig::all_free();
+        let dim6 = spec6.free_param_count();
+        let n6 = 11 * dim6 - 1;
+        let pts = latin_hypercube_sample(n6, &spec6, &mut rng);
+        assert_eq!(pts.len(), n6, "expected {n6} LHS points");
 
-        let dim7 = 7usize;
+        // with curvature: 7 free params
+        let mut spec7 = TrialConfig::all_free();
+        spec7.curvature_magnitude = ParamSpec::Optimize {
+            lo: 0.001,
+            hi: 5.0,
+            log_scale: true,
+        };
+        let dim7 = spec7.free_param_count();
         let n7 = 11 * dim7 - 1;
-        let pts7 = latin_hypercube_sample(n7, true, 0.001, 5.0, &mut rng);
-        assert_eq!(
-            pts7.len(),
-            n7,
-            "expected 11*7-1=76 LHS points with curvature"
-        );
+        let pts7 = latin_hypercube_sample(n7, &spec7, &mut rng);
+        assert_eq!(pts7.len(), n7, "expected {n7} LHS points with curvature");
     }
 
     // ─── sample_discrete_simplex ──────────────────────────────────────────────
@@ -2008,15 +2052,22 @@ mod tests {
 
     // ─── sbx_crossover ────────────────────────────────────────────────────────
 
+    /// A concrete (all-Fixed) HyperParams for use as a parent/input in SBX/evolalg tests.
     fn default_config() -> TrialConfig {
         TrialConfig {
-            learning_rate: 5.0,
-            perplexity_ratio: 0.01,
-            momentum_main: 0.8,
-            centering_weight: 1.0,
-            global_loss_weight: 0.5,
-            norm_loss_weight: 0.01,
-            curvature_magnitude: 0.0,
+            learning_rate: ParamSpec::Fixed(5.0),
+            perplexity_ratio: ParamSpec::Fixed(0.01),
+            momentum_main: ParamSpec::Fixed(0.8),
+            momentum_early: ParamSpec::Fixed(0.5),
+            centering_weight: ParamSpec::Fixed(1.0),
+            global_loss_weight: ParamSpec::Fixed(0.5),
+            norm_loss_weight: ParamSpec::Fixed(0.01),
+            early_exaggeration_factor: ParamSpec::Fixed(12.0),
+            n_iterations: ParamSpec::Fixed(800.0),
+            early_exaggeration_iterations: ParamSpec::Fixed(250.0),
+            curvature_magnitude: ParamSpec::Fixed(0.0),
+            init_scale: ParamSpec::Fixed(1.0),
+            embed_dim: ParamSpec::Fixed(2.0),
         }
     }
 
@@ -2025,16 +2076,19 @@ mod tests {
         let mut rng = Rng::new(20);
         let a = default_config();
         let b = TrialConfig {
-            learning_rate: 10.0,
-            perplexity_ratio: 0.005,
-            momentum_main: 0.9,
-            centering_weight: 0.5,
-            global_loss_weight: 0.3,
-            norm_loss_weight: 0.005,
-            curvature_magnitude: 0.0,
+            learning_rate: ParamSpec::Fixed(10.0),
+            perplexity_ratio: ParamSpec::Fixed(0.005),
+            momentum_main: ParamSpec::Fixed(0.9),
+            centering_weight: ParamSpec::Fixed(0.5),
+            global_loss_weight: ParamSpec::Fixed(0.3),
+            norm_loss_weight: ParamSpec::Fixed(0.005),
+            early_exaggeration_factor: ParamSpec::Fixed(12.0),
+            curvature_magnitude: ParamSpec::Fixed(0.0),
+            ..default_config()
         };
+        let hp = TrialConfig::all_free();
         for i in 0..200 {
-            let child = sbx_crossover(&a, &b, 2.0, false, 0.001, 5.0, &mut rng);
+            let child = sbx_crossover(&a, &b, 2.0, &hp, &mut rng);
             assert_config_in_bounds(&child, &format!("sbx child {i}"));
         }
     }
@@ -2047,8 +2101,8 @@ mod tests {
         // This holds in expectation but depends on the random draw; test with many trials.
         let mut all_same = true;
         for _ in 0..50 {
-            let child = sbx_crossover(&a, &a, 2.0, false, 0.001, 5.0, &mut rng);
-            if (child.learning_rate - a.learning_rate).abs() > 1e-6 {
+            let child = sbx_crossover(&a, &a, 2.0, &TrialConfig::all_free(), &mut rng);
+            if (child.learning_rate.value() - a.learning_rate.value()).abs() > 1e-6 {
                 all_same = false;
                 break;
             }
@@ -2065,12 +2119,12 @@ mod tests {
         let mut rng = Rng::new(22);
         let a = default_config();
         let b = TrialConfig {
-            learning_rate: 1.0,
+            learning_rate: ParamSpec::Fixed(1.0),
             ..default_config()
         };
         let differs: bool = (0..50).any(|_| {
-            let child = sbx_crossover(&a, &b, 2.0, false, 0.001, 5.0, &mut rng);
-            (child.learning_rate - a.learning_rate).abs() > 1e-9
+            let child = sbx_crossover(&a, &b, 2.0, &TrialConfig::all_free(), &mut rng);
+            (child.learning_rate.value() - a.learning_rate.value()).abs() > 1e-9
         });
         assert!(
             differs,
@@ -2083,15 +2137,15 @@ mod tests {
         let mut rng = Rng::new(23);
         let a = default_config();
         let b = TrialConfig {
-            learning_rate: 0.6,
-            perplexity_ratio: 0.0005,
+            learning_rate: ParamSpec::Fixed(0.6),
+            perplexity_ratio: ParamSpec::Fixed(0.0005),
             ..default_config()
         };
         for _ in 0..200 {
-            let child = sbx_crossover(&a, &b, 2.0, false, 0.001, 5.0, &mut rng);
-            assert!(child.learning_rate > 0.0, "lr must be positive");
+            let child = sbx_crossover(&a, &b, 2.0, &TrialConfig::all_free(), &mut rng);
+            assert!(child.learning_rate.value() > 0.0, "lr must be positive");
             assert!(
-                child.perplexity_ratio > 0.0,
+                child.perplexity_ratio.value() > 0.0,
                 "perplexity_ratio must be positive"
             );
         }
@@ -2104,7 +2158,7 @@ mod tests {
         let mut rng = Rng::new(30);
         let cfg = default_config();
         for i in 0..500 {
-            let m = evolalg_mutate(&cfg, 6, false, 0.001, 5.0, &mut rng);
+            let m = evolalg_mutate(&cfg, 6, &TrialConfig::all_free(), &mut rng);
             assert_config_in_bounds(&m, &format!("mutant {i}"));
         }
     }
@@ -2114,10 +2168,10 @@ mod tests {
         let mut rng = Rng::new(31);
         let cfg = default_config();
         let changed = (0..100).any(|_| {
-            let m = evolalg_mutate(&cfg, 6, false, 0.001, 5.0, &mut rng);
-            (m.learning_rate - cfg.learning_rate).abs() > 1e-9
-                || (m.momentum_main - cfg.momentum_main).abs() > 1e-9
-                || (m.centering_weight - cfg.centering_weight).abs() > 1e-9
+            let m = evolalg_mutate(&cfg, 6, &TrialConfig::all_free(), &mut rng);
+            (m.learning_rate.value() - cfg.learning_rate.value()).abs() > 1e-9
+                || (m.centering_weight.value() - cfg.centering_weight.value()).abs() > 1e-9
+                || (m.global_loss_weight.value() - cfg.global_loss_weight.value()).abs() > 1e-9
         });
         assert!(
             changed,
@@ -2130,10 +2184,10 @@ mod tests {
         let mut rng = Rng::new(32);
         let cfg = default_config();
         for _ in 0..200 {
-            let m = evolalg_mutate(&cfg, 6, false, 0.001, 5.0, &mut rng);
-            assert!(m.learning_rate > 0.0, "lr must be positive");
+            let m = evolalg_mutate(&cfg, 6, &TrialConfig::all_free(), &mut rng);
+            assert!(m.learning_rate.value() > 0.0, "lr must be positive");
             assert!(
-                m.perplexity_ratio > 0.0,
+                m.perplexity_ratio.value() > 0.0,
                 "perplexity_ratio must be positive"
             );
         }
@@ -2144,10 +2198,11 @@ mod tests {
     fn make_pareto_optimizer_with_trials(n: usize) -> (ParEgoOptimizer, Vec<Metric>) {
         use crate::metrics::Metric;
         let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
-        let mut opt = ParEgoOptimizer::new(metrics.clone(), false, 0.001, 5.0);
+        let mut opt = ParEgoOptimizer::new(metrics.clone(), TrialConfig::all_free());
         let mut rng = Rng::new(99);
+        let space = maximize_space();
         for _ in 0..n {
-            let cfg = TrialConfig::random(&mut rng);
+            let cfg = space.sample(&mut rng);
             opt.observe(cfg, vec![rng.uniform(), rng.uniform()]);
         }
         (opt, metrics)
@@ -2160,7 +2215,8 @@ mod tests {
         let weights = sample_discrete_simplex(2, 5, &mut rng);
         let scalar_trials =
             opt.scalarize_subset(&(0..opt.trials.len()).collect::<Vec<_>>(), &weights);
-        let gp = GpModel::fit(&scalar_trials, OptimizeDirection::Maximize, false);
+        let hp = TrialConfig::all_free();
+        let gp = GpModel::fit(&scalar_trials, OptimizeDirection::Maximize, &hp);
         let result = opt.evolalg(&gp, &weights, &mut rng);
         assert_config_in_bounds(&result, "evolalg result");
     }
@@ -2173,14 +2229,14 @@ mod tests {
         let weights = sample_discrete_simplex(2, 5, &mut rng);
         let scalar_trials =
             opt.scalarize_subset(&(0..opt.trials.len()).collect::<Vec<_>>(), &weights);
-        let gp = GpModel::fit(&scalar_trials, OptimizeDirection::Maximize, false);
+        let hp = TrialConfig::all_free();
+        let gp = GpModel::fit(&scalar_trials, OptimizeDirection::Maximize, &hp);
 
         let best = opt.evolalg(&gp, &weights, &mut rng);
         let best_ei = gp.ei(&best);
 
-        let mut random_eis: Vec<f64> = (0..100)
-            .map(|_| gp.ei(&TrialConfig::random(&mut rng)))
-            .collect();
+        let space = maximize_space();
+        let mut random_eis: Vec<f64> = (0..100).map(|_| gp.ei(&space.sample(&mut rng))).collect();
         random_eis.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
         let median_ei = random_eis[50];
 
@@ -2196,7 +2252,7 @@ mod tests {
     fn pareto_lhs_exactly_11d_minus_1() {
         use crate::metrics::Metric;
         let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
-        let mut opt = ParEgoOptimizer::new(metrics, false, 0.001, 5.0);
+        let mut opt = ParEgoOptimizer::new(metrics, TrialConfig::all_free());
         let mut rng = Rng::new(50);
         // First suggest_batch populates the queue with 11*6-1=65 points.
         let batch = opt.suggest_batch(200, &mut rng);
@@ -2219,7 +2275,7 @@ mod tests {
     fn pareto_suggest_returns_lhs_first() {
         use crate::metrics::Metric;
         let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
-        let mut opt = ParEgoOptimizer::new(metrics, false, 0.001, 5.0);
+        let mut opt = ParEgoOptimizer::new(metrics, TrialConfig::all_free());
         let mut rng = Rng::new(51);
         // Drain the LHS in small batches.
         let mut all_lhs = Vec::new();
@@ -2244,7 +2300,7 @@ mod tests {
     fn pareto_suggest_gp_phase_after_lhs() {
         use crate::metrics::Metric;
         let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
-        let mut opt = ParEgoOptimizer::new(metrics, false, 0.001, 5.0);
+        let mut opt = ParEgoOptimizer::new(metrics, TrialConfig::all_free());
         let mut rng = Rng::new(52);
 
         // Drain the LHS.
@@ -2252,7 +2308,7 @@ mod tests {
 
         // Provide enough observations for the GP.
         for _ in 0..30 {
-            let cfg = TrialConfig::random(&mut rng);
+            let cfg = random_config(&mut rng);
             opt.observe(cfg, vec![rng.uniform(), rng.uniform()]);
         }
 
@@ -2270,13 +2326,10 @@ mod tests {
     fn scalarize_subset_uses_all_when_few() {
         use crate::metrics::Metric;
         let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
-        let mut opt = ParEgoOptimizer::new(metrics, false, 0.001, 5.0);
+        let mut opt = ParEgoOptimizer::new(metrics, TrialConfig::all_free());
         let mut rng = Rng::new(60);
         for _ in 0..20 {
-            opt.observe(
-                TrialConfig::random(&mut rng),
-                vec![rng.uniform(), rng.uniform()],
-            );
+            opt.observe(random_config(&mut rng), vec![rng.uniform(), rng.uniform()]);
         }
         let weights = vec![0.5, 0.5];
         let scalar_trials = opt.scalarize_trials_subset(&weights, &mut rng);
@@ -2291,14 +2344,11 @@ mod tests {
     fn scalarize_subset_caps_at_n_when_many() {
         use crate::metrics::Metric;
         let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
-        let mut opt = ParEgoOptimizer::new(metrics, false, 0.001, 5.0);
+        let mut opt = ParEgoOptimizer::new(metrics, TrialConfig::all_free());
         let mut rng = Rng::new(61);
         let n = 40usize;
         for _ in 0..n {
-            opt.observe(
-                TrialConfig::random(&mut rng),
-                vec![rng.uniform(), rng.uniform()],
-            );
+            opt.observe(random_config(&mut rng), vec![rng.uniform(), rng.uniform()]);
         }
         let weights = vec![0.5, 0.5];
         let scalar_trials = opt.scalarize_trials_subset(&weights, &mut rng);

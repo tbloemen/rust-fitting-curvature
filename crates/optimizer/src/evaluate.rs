@@ -45,12 +45,12 @@ impl Evaluator {
     pub fn compute_all_metrics(
         &self,
         config: &TrialConfig,
-        curvature: f64,
+        curvature_sign: f64,
         seed: u64,
         pb_iters: &ProgressBar,
     ) -> AllMetrics {
         let n = self.n_samples;
-        let training_config = config.to_training_config(n, curvature, seed);
+        let training_config = config.to_training_config(n, curvature_sign, seed);
 
         pb_iters.reset();
         pb_iters.set_length(training_config.n_iterations as u64);
@@ -116,13 +116,13 @@ impl Evaluator {
     pub fn evaluate_with_metric(
         &self,
         config: &TrialConfig,
-        curvature: f64,
+        curvature_sign: f64,
         metric: &str,
         seed: u64,
         pb_iters: &ProgressBar,
     ) -> f64 {
         let n = self.n_samples;
-        let training_config = config.to_training_config(n, curvature, seed);
+        let training_config = config.to_training_config(n, curvature_sign, seed);
 
         pb_iters.reset();
         pb_iters.set_length(training_config.n_iterations as u64);
