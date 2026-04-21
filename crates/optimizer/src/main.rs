@@ -41,6 +41,8 @@ struct Args {
     #[arg(long, default_value = "results/results.jsonl")]
     output: String,
 
+    /// Dataset to run. Use "all" for all datasets, "real" for real datasets only
+    /// (mnist, fashion_mnist, pbmc, wordnet_mammals), or a single dataset name.
     #[arg(long)]
     dataset: Option<String>,
 
@@ -1162,6 +1164,12 @@ fn get_dataset_names(dataset_arg: &Option<String>) -> Vec<String> {
             "antipodal_clusters".to_string(),
             "tree".to_string(),
             "hyperbolic_shells".to_string(),
+        ],
+        Some(name) if name == "real" => vec![
+            "mnist".to_string(),
+            "fashion_mnist".to_string(),
+            "pbmc".to_string(),
+            "wordnet_mammals".to_string(),
         ],
         Some(name) => vec![name.clone()],
         None => vec!["mnist".to_string()],
