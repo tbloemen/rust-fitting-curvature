@@ -83,6 +83,7 @@ function main() {
   setupUI();
   setupZoomPan();
   setupSidebarToggle();
+  setupParetoLoader();
 
   status.textContent = "WebAssembly loaded! Click Run to start.";
 }
@@ -726,6 +727,107 @@ async function stepEmbedding() {
     status.textContent = "Error: " + e;
     console.error(e);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Pareto front loader
+// ---------------------------------------------------------------------------
+
+let paretoEntries = null;
+
+function setupParetoLoader() {
+  const fileInput = document.getElementById("pareto-file");
+  const geometryRow = document.getElementById("pareto-geometry-row");
+  const entryRow = document.getElementById("pareto-entry-row");
+  const entrySelect = document.getElementById("pareto-entry");
+  const metricsPreview = document.getElementById("pareto-metrics-preview");
+  const applyBtn = document.getElementById("pareto-apply-btn");
+
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      paretoEntries = JSON.parse(text);
+      if (!Array.isArray(paretoEntries) || paretoEntries.length === 0) {
+        status.textContent = "Pareto JSON must be a non-empty array.";
+        return;
+      }
+
+      // Try to infer geometry from filename
+      const name = file.name.toLowerCase();
+      const geoSelect = document.getElementById("pareto-geometry");
+      if (name.includes("hyperbolic")) geoSelect.value = "-1";
+      else if (name.includes("spherical")) geoSelect.value = "1";
+      else geoSelect.value = "0";
+
+      // Populate entry selector
+      entrySelect.innerHTML = "";
+      paretoEntries.forEach((entry, i) => {
+        const opt = document.createElement("option");
+        opt.value = i;
+        const trust = entry.metrics?.trustworthiness != null
+          ? `T=${entry.metrics.trustworthiness.toFixed(3)}`
+          : "";
+        const stress = entry.metrics?.normalized_stress != null
+          ? `S=${entry.metrics.normalized_stress.toFixed(3)}`
+          : "";
+        opt.textContent = `#${i + 1}  k=${entry.curvature_magnitude?.toFixed(3) ?? "?"}  lr=${entry.learning_rate?.toFixed(3) ?? "?"}  ${trust}  ${stress}`;
+        entrySelect.appendChild(opt);
+      });
+
+      geometryRow.style.display = "block";
+      entryRow.style.display = "block";
+      applyBtn.style.display = "block";
+      updateParetoPreview();
+    } catch (e) {
+      status.textContent = "Failed to parse pareto JSON: " + e.message;
+    }
+  });
+
+  entrySelect.addEventListener("change", updateParetoPreview);
+
+  applyBtn.addEventListener("click", applyParetoEntry);
+}
+
+function updateParetoPreview() {
+  const entrySelect = document.getElementById("pareto-entry");
+  const metricsPreview = document.getElementById("pareto-metrics-preview");
+  if (!paretoEntries) return;
+  const entry = paretoEntries[parseInt(entrySelect.value)];
+  if (!entry) return;
+
+  const m = entry.metrics || {};
+  const lines = [];
+  if (m.trustworthiness != null) lines.push(`Trust: ${m.trustworthiness.toFixed(4)}`);
+  if (m.continuity != null) lines.push(`Continuity: ${m.continuity.toFixed(4)}`);
+  if (m.normalized_stress != null) lines.push(`Stress: ${m.normalized_stress.toFixed(4)}`);
+  if (m.shepard_goodness != null) lines.push(`Shepard: ${m.shepard_goodness.toFixed(4)}`);
+  if (m.neighborhood_hit != null) lines.push(`NH: ${m.neighborhood_hit.toFixed(4)}`);
+  metricsPreview.innerHTML = lines.join(" &nbsp;|&nbsp; ");
+  metricsPreview.style.display = lines.length > 0 ? "block" : "none";
+}
+
+function applyParetoEntry() {
+  const entrySelect = document.getElementById("pareto-entry");
+  if (!paretoEntries) return;
+  const entry = paretoEntries[parseInt(entrySelect.value)];
+  if (!entry) return;
+
+  const geoSign = parseFloat(document.getElementById("pareto-geometry").value);
+  const curvature = geoSign * (entry.curvature_magnitude ?? 0);
+  const nSamples = entry.n_samples ?? (parseInt(document.getElementById("real_n_points").value) || 1000);
+  const perplexity = (entry.perplexity_ratio ?? 0.01) * nSamples;
+
+  document.getElementById("curvature").value = curvature;
+  document.getElementById("perplexity").value = Math.round(perplexity);
+  document.getElementById("lr").value = entry.learning_rate ?? 10;
+  document.getElementById("centering_weight").value = entry.centering_weight ?? 0;
+  document.getElementById("global_loss_weight").value = entry.global_loss_weight ?? 0;
+  document.getElementById("norm_loss_weight").value = entry.norm_loss_weight ?? 0;
+
+  status.textContent = `Applied pareto entry #${parseInt(entrySelect.value) + 1}. Click Run to visualise.`;
 }
 
 async function runEmbedding() {
