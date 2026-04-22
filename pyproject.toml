@@ -12,4 +12,5 @@ dependencies = [
     "scanpy>=1.10",
     "leidenalg>=0.10",
     "igraph>=0.11",
+    "scikit-learn>=1.5",
 ]
