@@ -65,13 +65,14 @@ ALL_PARAMS = [
     "learning_rate",
     "perplexity_ratio",  # new format
     "perplexity",  # old format (absolute)
-    "momentum_main",
-    "centering_weight",
-    "global_loss_weight",
-    "norm_loss_weight",
+    # "momentum_main",
+    # "centering_weight",
+    # "global_loss_weight",
+    # "norm_loss_weight",
     "curvature",  # signed: negative=hyperbolic, positive=spherical (converted from curvature_magnitude)
     "n_iterations",  # old format (now fixed)
     "early_exaggeration_iterations",  # old format (now fixed)
+    "early_exaggeration_factor",
 ]
 
 LOG_SCALE_PARAMS = {"learning_rate", "perplexity", "perplexity_ratio"}
@@ -901,9 +902,7 @@ def load_gp_states(input_prefix: str, dataset: str | None = None) -> dict[str, d
     search_dir = prefix_path.parent
     name_pattern = f"{prefix_path.stem}_gp_*.json"
     for path in sorted(search_dir.glob(name_pattern)):
-        m = re.search(
-            r"_gp_(.+)_(euclidean|spherical|hyperbolic)$", path.stem
-        )
+        m = re.search(r"_gp_(.+)_(euclidean|spherical|hyperbolic)$", path.stem)
         if not m:
             continue
         file_dataset, geometry = m.group(1), m.group(2)
@@ -1394,7 +1393,7 @@ def load_pareto_front(input_path: str, dataset: str | None = None) -> list[dict]
     stem = re.sub(r"\.(jsonl?|json)$", "", prefix_path.stem)
     pattern = f"{stem}_pareto_*.json"
     for path in sorted(search_dir.glob(pattern)):
-        m = re.search(r"_pareto_([^_]+)_(euclidean|spherical|hyperbolic)$", path.stem)
+        m = re.search(r"_pareto_(.+)_(euclidean|spherical|hyperbolic)$", path.stem)
         if not m:
             continue
         file_dataset, geometry = m.group(1), m.group(2)
@@ -1735,36 +1734,21 @@ def _compute_group_scores(
     return scores
 
 
-# ─── Pareto plot 1: 2D vs manifold tradeoff scatter ───────────────────────────
+# ─── Pareto plot 1: 2D vs manifold tradeoff scatter (one panel per dataset) ────
 
 
-def plot_pareto_tradeoff(
-    all_trials: list[dict],
+def _draw_tradeoff_panel(
+    ax: plt.Axes,
+    pool: list[dict],
     front_entries: list[dict],
-    out_path: str,
+    title: str,
 ) -> None:
-    """Scatter of post-projection score vs pre-projection (manifold) score.
+    """Draw a single tradeoff scatter panel onto *ax*."""
+    all_geos = sorted({r.get("geometry", "unknown") for r in pool + front_entries})
 
-    Background: all trials (semi-transparent, colored by geometry).
-    Foreground: Pareto-front configs as gold markers.
-    A y = x diagonal shows where manifold and projection quality are equal.
-    """
-    if not all_trials and not front_entries:
-        print(f"  {out_path} (skipped — no data)")
-        return
-
-    pool = all_trials or front_entries
     proj_all = _compute_group_scores(pool, PROJECTION_METRICS)
     mani_all = _compute_group_scores(pool, MANIFOLD_METRICS)
 
-    proj_front = _compute_group_scores(front_entries, PROJECTION_METRICS)
-    mani_front = _compute_group_scores(front_entries, MANIFOLD_METRICS)
-
-    all_geos = sorted({r.get("geometry", "unknown") for r in pool})
-
-    fig, ax = plt.subplots(figsize=(5.5, 5.0))
-
-    # Background: all trials
     for geo in all_geos:
         col = geo_color(geo, all_geos)
         xs = [
@@ -1780,7 +1764,8 @@ def plot_pareto_tradeoff(
         if xs:
             ax.scatter(xs, ys, color=col, alpha=0.25, s=12, linewidths=0, label=geo)
 
-    # Foreground: Pareto front (gold circles)
+    proj_front = _compute_group_scores(front_entries, PROJECTION_METRICS)
+    mani_front = _compute_group_scores(front_entries, MANIFOLD_METRICS)
     fxs = [p for p, m in zip(proj_front, mani_front) if p is not None and m is not None]
     fys = [m for p, m in zip(proj_front, mani_front) if p is not None and m is not None]
     if fxs:
@@ -1795,15 +1780,12 @@ def plot_pareto_tradeoff(
             label="Pareto front",
         )
 
-    # Symmetry diagonal
     ax.plot([0, 1], [0, 1], color="#666", linewidth=1.0, linestyle="--", alpha=0.6)
-
-    # Quadrant annotations
     ax.text(
         0.26,
         0.72,
         "better on\nmanifold",
-        fontsize=7,
+        fontsize=6,
         color="#888",
         ha="center",
         va="center",
@@ -1813,52 +1795,80 @@ def plot_pareto_tradeoff(
         0.72,
         0.26,
         "better after\nprojection",
-        fontsize=7,
+        fontsize=6,
         color="#888",
         ha="center",
         va="center",
         alpha=0.7,
     )
-
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
-    ax.set_xlabel("Post-projection score  (mean of 5 2D metrics)", fontsize=8)
-    ax.set_ylabel("Manifold score  (mean of 5 manifold metrics)", fontsize=8)
-    ax.set_title(
+    ax.set_xlabel("Post-projection score", fontsize=7)
+    ax.set_ylabel("Manifold score", fontsize=7)
+    ax.set_title(title, fontsize=9)
+    ax.tick_params(labelsize=7)
+    ax.legend(fontsize=6, loc="upper left")
+
+
+def plot_pareto_tradeoff(
+    all_trials: list[dict],
+    front_entries: list[dict],
+    out_path: str,
+) -> None:
+    """2×2 grid of tradeoff scatter plots, one panel per dataset.
+
+    Background: all trials (semi-transparent, colored by geometry).
+    Foreground: Pareto-front configs as gold markers.
+    """
+    pool = all_trials or front_entries
+    if not pool and not front_entries:
+        print(f"  {out_path} (skipped — no data)")
+        return
+
+    datasets = sorted({r.get("dataset_name", "unknown") for r in pool + front_entries})
+    n_ds = len(datasets)
+    ncols = min(2, n_ds)
+    nrows = math.ceil(n_ds / ncols)
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(ncols * 5.0, nrows * 4.5), squeeze=False
+    )
+    axes_flat = axes.flatten()
+
+    for ax, ds in zip(axes_flat, datasets):
+        ds_pool = [r for r in pool if r.get("dataset_name") == ds]
+        ds_front = [r for r in front_entries if r.get("dataset_name") == ds]
+        _draw_tradeoff_panel(ax, ds_pool, ds_front, title=ds)
+
+    for ax in axes_flat[n_ds:]:
+        ax.set_visible(False)
+
+    fig.suptitle(
         "Tradeoff: pre-projection vs post-projection quality\n"
         "gold = Pareto front  |  diagonal = equal quality",
-        fontsize=9,
+        fontsize=10,
     )
-    ax.tick_params(labelsize=7)
-    ax.legend(fontsize=7, loc="upper left")
-
     fig.tight_layout()
     fig.savefig(out_path, format="svg", bbox_inches="tight")
     plt.close(fig)
     print(f"  {out_path}")
 
 
-# ─── Pareto plot 2: per-objective breakdown ────────────────────────────────────
+# ─── Pareto plot 2: per-objective breakdown (one file per dataset) ─────────────
 
 
-def plot_pareto_objectives(
+def _draw_objectives_heatmap(
+    ax: plt.Axes,
     front_entries: list[dict],
-    out_path: str,
-) -> None:
-    """Heatmap of all 10 Pareto objective values per Pareto-front config.
+    title: str,
+) -> plt.cm.ScalarMappable:
+    """Render the objective heatmap for *front_entries* onto *ax*.
 
-    Rows = configs (sorted by manifold score desc), columns = objectives
-    (2D group first, then manifold group, separated by a vertical divider).
-    Cell color = normalized value in [0, 1], higher = better for all cells.
+    Returns the imshow artist so the caller can attach a colorbar.
     """
     objectives = PROJECTION_METRICS + MANIFOLD_METRICS
-    if not front_entries:
-        print(f"  {out_path} (skipped — no Pareto front entries)")
-        return
-
-    # Build matrix: flip minimize metrics so higher = always better
     n_entries = len(front_entries)
     n_obj = len(objectives)
+
     matrix = np.full((n_entries, n_obj), np.nan)
     for j, metric in enumerate(objectives):
         vals = np.array(
@@ -1869,7 +1879,6 @@ def plot_pareto_objectives(
         )
         matrix[:, j] = vals if METRIC_DIRECTIONS[metric] else 1.0 - vals
 
-    # Sort rows by mean manifold score (descending)
     mani_cols = [objectives.index(m) for m in MANIFOLD_METRICS]
     sort_key = np.nanmean(matrix[:, mani_cols], axis=1)
     order = np.argsort(sort_key)[::-1]
@@ -1880,25 +1889,13 @@ def plot_pareto_objectives(
         m.replace("_manifold", " ★").replace("_", " ") for m in objectives
     ]
 
-    fig_h = max(3.0, 0.35 * n_entries + 1.5)
-    fig, ax = plt.subplots(figsize=(10.0, fig_h))
-
     im = ax.imshow(matrix, aspect="auto", cmap="viridis", vmin=0, vmax=1)
-
-    # Vertical divider between 2D and manifold groups
-    n_proj = len(PROJECTION_METRICS)
-    ax.axvline(n_proj - 0.5, color="white", linewidth=2.5)
-
-    # Group labels above the columns
+    ax.axvline(len(PROJECTION_METRICS) - 0.5, color="white", linewidth=2.5)
     ax.set_xticks(range(n_obj))
     ax.set_xticklabels(col_labels_short, fontsize=7, rotation=35, ha="right")
     ax.set_yticks(range(n_entries))
-    ax.set_yticklabels(
-        [f"{g} {i + 1}" for i, g in enumerate(sorted_geos)],
-        fontsize=7,
-    )
+    ax.set_yticklabels([f"{g} {i + 1}" for i, g in enumerate(sorted_geos)], fontsize=7)
 
-    # Cell text (normalized value)
     for i in range(n_entries):
         for j in range(n_obj):
             v = matrix[i, j]
@@ -1908,88 +1905,138 @@ def plot_pareto_objectives(
                     j, i, f"{v:.2f}", ha="center", va="center", fontsize=6, color=color
                 )
 
-    plt.colorbar(
-        im, ax=ax, fraction=0.03, pad=0.02, label="Normalized score (1 = best)"
-    )
-    ax.set_title(
-        "Pareto front — objective breakdown\n"
-        "left: 2D metrics  |  right ★: manifold metrics  |  sorted by manifold score",
-        fontsize=9,
-    )
-    fig.tight_layout()
-    fig.savefig(out_path, format="svg", bbox_inches="tight")
-    plt.close(fig)
-    print(f"  {out_path}")
+    ax.set_title(title, fontsize=9)
+    return im
+
+
+def plot_pareto_objectives(
+    front_entries: list[dict],
+    out_dir: str,
+    out_stem: str = "pareto_objectives",
+) -> None:
+    """Save one objectives heatmap SVG per dataset found in *front_entries*.
+
+    Output files: ``<out_dir>/<out_stem>_<dataset>.svg``.
+    """
+    if not front_entries:
+        print("  pareto_objectives (skipped — no Pareto front entries)")
+        return
+
+    datasets = sorted({e.get("dataset_name", "unknown") for e in front_entries})
+
+    for ds in datasets:
+        ds_entries = [e for e in front_entries if e.get("dataset_name") == ds]
+        if not ds_entries:
+            continue
+
+        n_entries = len(ds_entries)
+        fig_h = max(3.0, 0.35 * n_entries + 1.5)
+        fig, ax = plt.subplots(figsize=(10.0, fig_h))
+
+        im = _draw_objectives_heatmap(ax, ds_entries, title=ds)
+        plt.colorbar(
+            im, ax=ax, fraction=0.03, pad=0.02, label="Normalized score (1 = best)"
+        )
+        ax.set_title(
+            f"{ds} — Pareto front objective breakdown\n"
+            "left: 2D metrics  |  right ★: manifold metrics  |  sorted by manifold score",
+            fontsize=9,
+        )
+        fig.tight_layout()
+        out_path = os.path.join(out_dir, f"{out_stem}_{ds}.svg")
+        fig.savefig(out_path, format="svg", bbox_inches="tight")
+        plt.close(fig)
+        print(f"  {out_path}")
 
 
 # ─── Pareto plot 3: hyperparameters by manifold preference ────────────────────
 
+# Fixed dataset order and colors for all hyperparam split plots.
+_DS_ORDER = ["mnist", "fashion_mnist", "pbmc", "wordnet_mammals"]
+_DS_COLORS = ["#4c9be8", "#2db37a", "#e6553a", "#9b59b6"]
 
-def plot_pareto_hyperparam_split(
+
+def _ds_color(name: str, datasets: list[str]) -> str:
+    if name in _DS_ORDER:
+        return _DS_COLORS[_DS_ORDER.index(name)]
+    idx = datasets.index(name) if name in datasets else 0
+    return plt.cm.tab10(idx / max(len(datasets) - 1, 1))  # type: ignore
+
+
+def plot_pareto_hyperparam_split_v2(
     front_entries: list[dict],
     out_path: str,
 ) -> None:
-    """Compare hyperparameters of manifold-preferring vs projection-preferring configs.
+    """Version 2: per-param subplot with 4 boxplots — one per dataset, all entries pooled.
 
-    Splits the Pareto front by sign of (manifold_score − projection_score) and
-    shows a box plot per hyperparameter for both halves.
+    Manifold-preferring and projection-preferring entries are merged so that the
+    comparison is purely between datasets.
     """
-    if len(front_entries) < 4:
-        print(f"  {out_path} (skipped — fewer than 4 Pareto entries)")
+    if not front_entries:
+        print(f"  {out_path} (skipped — no Pareto front entries)")
         return
 
-    proj = _compute_group_scores(front_entries, PROJECTION_METRICS)
-    mani = _compute_group_scores(front_entries, MANIFOLD_METRICS)
-    diffs = [
-        (m - p) if m is not None and p is not None else None for m, p in zip(mani, proj)
+    datasets = [
+        d for d in _DS_ORDER if any(e.get("dataset_name") == d for e in front_entries)
     ]
-
-    manifold_group = [
-        e for e, d in zip(front_entries, diffs) if d is not None and d >= 0
-    ]
-    proj_group = [e for e, d in zip(front_entries, diffs) if d is not None and d < 0]
-
-    if not manifold_group or not proj_group:
-        print(f"  {out_path} (skipped — all configs on same side of diagonal)")
-        return
+    datasets += sorted(
+        {
+            e.get("dataset_name", "unknown")
+            for e in front_entries
+            if e.get("dataset_name") not in _DS_ORDER
+        }
+    )
 
     params = [p for p in ALL_PARAMS if any(e.get(p) is not None for e in front_entries)]
     if not params:
-        print(f"  {out_path} (skipped — no hyperparameter data in Pareto entries)")
+        print(f"  {out_path} (skipped — no hyperparameter data)")
         return
 
     n_p = len(params)
-    fig, axes_flat = _create_subplot_grid(n_p, w=3.5, h=3.2)
+    fig, axes_flat = _create_subplot_grid(n_p, w=max(3.5, len(datasets) * 0.9), h=3.5)
 
     for ax, param in zip(axes_flat, params):
-        m_vals = [float(e[param]) for e in manifold_group if e.get(param) is not None]
-        p_vals = [float(e[param]) for e in proj_group if e.get(param) is not None]
+        all_vals = []
+        colors = []
+        labels = []
+        for ds in datasets:
+            vals = [
+                float(e[param])
+                for e in front_entries
+                if e.get("dataset_name") == ds and e.get(param) is not None
+            ]
+            if vals:
+                all_vals.append(vals)
+                colors.append(_ds_color(ds, datasets))
+                labels.append(ds.replace("_", "\n"))
+
+        if not all_vals:
+            continue
 
         bp = ax.boxplot(
-            [m_vals, p_vals],
-            tick_labels=["manifold\npref.", "proj.\npref."],
+            all_vals,
+            tick_labels=labels,
             patch_artist=True,
             widths=0.5,
         )
-        bp["boxes"][0].set_facecolor("#4c9be8")
-        bp["boxes"][1].set_facecolor("#e6553a")
+        for box, col in zip(bp["boxes"], colors):
+            box.set_facecolor(col)
+            box.set_alpha(0.85)
         for element in ("whiskers", "caps", "medians"):
             for line in bp[element]:
-                line.set_color("#555")
+                line.set_color("#444")
 
         ax.set_title(param, fontsize=8)
-        ax.set_ylabel(param, fontsize=7)
-        ax.tick_params(labelsize=7)
+        ax.tick_params(labelsize=6)
 
     for ax in axes_flat[n_p:]:
         ax.set_visible(False)
 
     fig.suptitle(
-        f"Hyperparameters: manifold-preferring ({len(manifold_group)} configs, blue) "
-        f"vs projection-preferring ({len(proj_group)} configs, red)",
+        "Hyperparameter distributions by dataset — all Pareto front entries pooled",
         fontsize=9,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(out_path, format="svg", bbox_inches="tight")
     plt.close(fig)
     print(f"  {out_path}")
@@ -2131,11 +2178,9 @@ def _run_pareto(args: "argparse.Namespace") -> None:
     plot_pareto_tradeoff(
         pool, front_entries, os.path.join(args.output, "pareto_tradeoff.svg")
     )
-    plot_pareto_objectives(
-        front_entries, os.path.join(args.output, "pareto_objectives.svg")
-    )
-    plot_pareto_hyperparam_split(
-        front_entries, os.path.join(args.output, "pareto_hyperparam_split.svg")
+    plot_pareto_objectives(front_entries, args.output)
+    plot_pareto_hyperparam_split_v2(
+        front_entries, os.path.join(args.output, "pareto_hyperparam_split_v2.svg")
     )
     print(f"\nDone. All plots saved to '{args.output}/'.")
 
