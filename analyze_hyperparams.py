@@ -47,9 +47,13 @@ import json
 import math
 import os
 import re
+from collections import Counter
 from pathlib import Path
 
 import matplotlib
+import matplotlib.colors as mcolors
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -144,7 +148,6 @@ _CMAP_K = plt.cm.tab10  # type: ignore (fallback for unknown keys)
 
 def geo_color(geometry: str, all_geos: list[str]) -> tuple:
     if geometry in _GEO_COLORS:
-        import matplotlib.colors as mcolors
 
         return mcolors.to_rgba(_GEO_COLORS[geometry])
     idx = all_geos.index(geometry)
@@ -2042,6 +2045,191 @@ def plot_pareto_hyperparam_split_v2(
     print(f"  {out_path}")
 
 
+# ─── Pareto cluster analysis ──────────────────────────────────────────────────
+
+
+def _fit_clusters(X: np.ndarray, k: int | None, k_max: int = 8) -> np.ndarray:
+    """Fit K-means, choosing k via silhouette score if not specified."""
+
+    n = len(X)
+    if k is not None:
+        k = max(2, min(k, n // 2))
+    else:
+        best_k, best_score = 2, -1.0
+        for candidate_k in range(2, min(k_max + 1, n)):
+            km = KMeans(n_clusters=candidate_k, random_state=42, n_init="auto")
+            labels = km.fit_predict(X)
+            score = float(silhouette_score(X, labels))
+            if score > best_score:
+                best_score, best_k = score, candidate_k
+        k = best_k
+
+    return KMeans(n_clusters=k, random_state=42, n_init="auto").fit_predict(X)  # type: ignore[return-value]
+
+
+def _cluster_parallel_coords(
+    ax: "plt.Axes",
+    entries: list[dict],
+    params: list[str],
+    x_ticks: list[int],
+    k: int | None,
+    title: str,
+) -> None:
+    """Draw a parallel-coordinates cluster panel onto *ax* for the given entries."""
+
+    # Build numeric matrix; skip rows with any missing param
+    rows: list[list[float]] = []
+    meta: list[dict] = []
+    for e in entries:
+        vals = [e.get(p) for p in params]
+        if any(v is None for v in vals):
+            continue
+        rows.append([float(v) for v in vals])  # type: ignore[arg-type]
+        meta.append(e)
+
+    if len(rows) < 4:
+        ax.set_visible(False)
+        return
+
+    X_raw = np.array(rows)
+
+    # Normalise to [0, 1]; log-scale for appropriate params
+    X_norm = np.empty_like(X_raw)
+    for j, p in enumerate(params):
+        col = X_raw[:, j].copy()
+        if p in LOG_SCALE_PARAMS and col.min() > 0:
+            col = np.log10(col)
+        lo, hi = col.min(), col.max()
+        X_norm[:, j] = (col - lo) / (hi - lo) if hi > lo else np.zeros(len(col))
+
+    labels = _fit_clusters(X_norm, k)
+    n_clusters = int(labels.max()) + 1
+
+    cmap = plt.cm.tab10  # type: ignore
+    colors = [cmap(i / max(n_clusters - 1, 1)) for i in range(n_clusters)]
+
+    for i, row in enumerate(X_norm):
+        ax.plot(x_ticks, row, color=colors[labels[i]], alpha=0.22, linewidth=0.7)
+
+    for c in range(n_clusters):
+        mask = labels == c
+        centroid = X_norm[mask].mean(axis=0)
+        ax.plot(
+            x_ticks,
+            centroid,
+            color=colors[c],
+            linewidth=2.5,
+            label=f"C{c} (n={int(mask.sum())})",
+            zorder=3,
+        )
+
+    ax.set_xticks(x_ticks)
+    ax.set_xticklabels(params, rotation=30, ha="right", fontsize=7)
+    ax.set_yticks([])
+    ax.set_ylim(-0.25, 1.08)
+    ax.legend(fontsize=6, loc="upper right", framealpha=0.7)
+    ax.set_title(title, fontsize=8)
+    ax.grid(axis="x", linestyle=":", linewidth=0.5, color="#ccc")
+
+    # Annotate actual min / median / max on each axis
+    for j, p in enumerate(params):
+        col = X_raw[:, j]
+        lo, hi, med = col.min(), col.max(), float(np.median(col))
+
+        def _fmt(v: float) -> str:
+            if p in LOG_SCALE_PARAMS:
+                return f"{v:.3g}"
+            if abs(v) >= 1000 or (abs(v) < 0.01 and v != 0):
+                return f"{v:.2e}"
+            return f"{v:.3g}"
+
+        ax.text(j, 1.04, _fmt(hi), ha="center", va="bottom", fontsize=5.5, color="#333")
+        ax.text(
+            j,
+            0.5,
+            _fmt(med),
+            ha="center",
+            va="center",
+            fontsize=5.5,
+            color="#555",
+            bbox=dict(boxstyle="round,pad=0.1", fc="white", ec="none", alpha=0.7),
+        )
+        ax.text(j, -0.22, _fmt(lo), ha="center", va="top", fontsize=5.5, color="#333")
+
+    # Print summary
+    print(f"    {title} — K={n_clusters}, {len(rows)} entries")
+    for c in range(n_clusters):
+        mask = labels == c
+        print(f"      Cluster {c} (n={int(mask.sum())}):")
+        for j, p in enumerate(params):
+            col = X_raw[mask, j]
+            print(
+                f"        {p:35s}  median={np.median(col):.4g}"
+                f"  [{col.min():.4g} – {col.max():.4g}]"
+            )
+        geos = [
+            meta[i].get("geometry", "?") for i in range(len(meta)) if labels[i] == c
+        ]
+        print(f"        geometries: {dict(Counter(geos))}")
+
+
+def plot_pareto_clusters(
+    front_entries: list[dict],
+    out_path: str,
+    k: int | None = None,
+) -> None:
+    """One parallel-coordinates cluster panel per dataset, each with its own K-means.
+
+    Each polyline is one Pareto front entry; axes are normalised to [0, 1]
+    (log-scale for learning_rate / perplexity_ratio).  Thick lines are cluster
+    centroids; thin lines are individual entries.
+    """
+    if not front_entries:
+        print(f"  {out_path} (skipped — no Pareto front entries)")
+        return
+
+    params = [p for p in ALL_PARAMS if any(e.get(p) is not None for e in front_entries)]
+    if len(params) < 2:
+        print(f"  {out_path} (skipped — fewer than 2 hyperparameter dimensions)")
+        return
+
+    datasets = [
+        d for d in _DS_ORDER if any(e.get("dataset_name") == d for e in front_entries)
+    ]
+    datasets += sorted(
+        {
+            e.get("dataset_name", "unknown")
+            for e in front_entries
+            if e.get("dataset_name") not in _DS_ORDER
+        }
+    )
+
+    n_ds = len(datasets)
+    n_params = len(params)
+    x_ticks = list(range(n_params))
+
+    fig, axes_flat = _create_subplot_grid(
+        n_ds, ncols=min(n_ds, 2), w=max(7, n_params * 1.5), h=4.5
+    )
+
+    print("\n  K-means cluster summaries per dataset:")
+    for ax, ds in zip(axes_flat, datasets):
+        ds_entries = [e for e in front_entries if e.get("dataset_name") == ds]
+        _cluster_parallel_coords(ax, ds_entries, params, x_ticks, k, ds)
+
+    for ax in axes_flat[n_ds:]:
+        ax.set_visible(False)
+
+    fig.suptitle(
+        "Pareto front — hyperparameter clusters per dataset (parallel coordinates, K-means)",
+        fontsize=9,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
 # ─── Mode handlers ─────────────────────────────────────────────────────────────
 
 
@@ -2181,6 +2369,9 @@ def _run_pareto(args: "argparse.Namespace") -> None:
     plot_pareto_objectives(front_entries, args.output)
     plot_pareto_hyperparam_split_v2(
         front_entries, os.path.join(args.output, "pareto_hyperparam_split_v2.svg")
+    )
+    plot_pareto_clusters(
+        front_entries, os.path.join(args.output, "pareto_clusters.svg")
     )
     print(f"\nDone. All plots saved to '{args.output}/'.")
 
