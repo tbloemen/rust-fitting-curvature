@@ -837,7 +837,6 @@ function setupParetoLoader() {
   const geometryRow = document.getElementById("pareto-geometry-row");
   const entryRow = document.getElementById("pareto-entry-row");
   const entrySelect = document.getElementById("pareto-entry");
-  const metricsPreview = document.getElementById("pareto-metrics-preview");
   const applyBtn = document.getElementById("pareto-apply-btn");
 
   fileInput.addEventListener("change", async () => {
@@ -1250,7 +1249,6 @@ function setupParetoTooltip() {
     }
 
     const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
     const mouseDevX = ((e.clientX - rect.left) / rect.width) * canvas.width;
     const mouseDevY = ((e.clientY - rect.top) / rect.height) * canvas.height;
 

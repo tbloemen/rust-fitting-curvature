@@ -11,7 +11,6 @@ import PARAMS from "@config/params.json";
 // In both modes, Pareto-front configs (from *_pareto_*.json) are drawn as
 // gold circles on top of the regular observation scatter.
 
-
 const METRICS = [
   { key: "trustworthiness", label: "Trustworthiness", maximize: true },
   {
@@ -65,20 +64,6 @@ const METRICS = [
     label: "Cluster Density Measure",
     maximize: true,
   },
-];
-
-// The 10 objectives used in --mode pareto (matches default_pareto_metrics() in main.rs).
-const PARETO_OBJECTIVES = [
-  { key: "trustworthiness", maximize: true },
-  { key: "trustworthiness_manifold", maximize: true },
-  { key: "continuity", maximize: true },
-  { key: "continuity_manifold", maximize: true },
-  { key: "normalized_stress", maximize: false },
-  { key: "normalized_stress_manifold", maximize: false },
-  { key: "shepard_goodness", maximize: true },
-  { key: "shepard_goodness_manifold", maximize: true },
-  { key: "neighborhood_hit", maximize: true },
-  { key: "neighborhood_hit_manifold", maximize: true },
 ];
 
 // Viridis colormap — 12-point LUT, linearly interpolated
@@ -243,38 +228,6 @@ function normalizeVec(encoded, xMeans, xStds) {
   return encoded.map((v, i) => (v - xMeans[i]) / xStds[i]);
 }
 
-// ===== Chebyshev scalarization =====
-
-// Compute per-row augmented-Chebyshev values with equal weights.
-// Returns an array of values (higher = closer to ideal = better).
-// Rows missing any objective get -Infinity.
-function computeChebyshevValues(rows, objectives, rho = 0.05) {
-  const stats = objectives.map((obj) => {
-    const vals = rows.map((r) => +r[obj.key]).filter((v) => isFinite(v));
-    if (vals.length === 0) return { min: 0, range: 1 };
-    const vmin = Math.min(...vals),
-      vmax = Math.max(...vals);
-    return { min: vmin, range: Math.max(vmax - vmin, 1e-8) };
-  });
-
-  const lambda = 1 / objectives.length;
-
-  return rows.map((row) => {
-    const normed = objectives.map((obj, i) => {
-      const v = +row[obj.key];
-      if (!isFinite(v)) return null;
-      const n = (v - stats[i].min) / stats[i].range;
-      return obj.maximize ? n : 1 - n; // flip minimize → all "higher is better"
-    });
-    if (normed.some((v) => v === null)) return -Infinity;
-
-    const diffs = normed.map((n) => lambda * (1 - n));
-    const maxTerm = Math.max(...diffs);
-    const sumTerm = diffs.reduce((a, b) => a + b, 0);
-    return -(maxTerm + rho * sumTerm); // negate: higher y = closer to ideal
-  });
-}
-
 // ===== GP model =====
 
 // Core GP fit used by both modes.
@@ -343,14 +296,6 @@ function buildGpModel(rows, metricKey, normStats, lengthScale, params) {
     model._flipForDisplay = true;
   }
   return model;
-}
-
-// Chebyshev mode: build GP on the scalarized Pareto objective.
-function buildGpModelCheby(rows, objectives, normStats, lengthScale, params) {
-  const yValues = computeChebyshevValues(rows, objectives);
-  const valid = rows.filter((_, i) => isFinite(yValues[i]));
-  const validY = yValues.filter((v) => isFinite(v));
-  return buildGpModelFromValues(valid, validY, normStats, lengthScale, params);
 }
 
 function predictGP(model, xTestNorm) {
@@ -611,7 +556,6 @@ async function init() {
     .addEventListener("change", populateCurvatures);
   populateCurvatures();
 
-  document.getElementById("ld-mode").addEventListener("change", onModeChange);
   document.getElementById("ld-render-btn").addEventListener("click", onRender);
   document.getElementById("ld-render-btn").disabled = false;
 
@@ -625,12 +569,6 @@ async function init() {
   syncCanvasSize();
 
   setStatus(`${allResults.length} results loaded`);
-}
-
-function onModeChange() {
-  const mode = document.getElementById("ld-mode").value;
-  document.getElementById("metric-control").style.display =
-    mode === "chebyshev" ? "none" : "";
 }
 
 function populateDatasets() {
@@ -682,7 +620,6 @@ async function onRender() {
   const geometry = document.getElementById("ld-curvature").value;
   const xParamIdx = parseInt(document.getElementById("ld-x-param").value);
   const yParamIdx = parseInt(document.getElementById("ld-y-param").value);
-  const mode = document.getElementById("ld-mode").value;
   const metricKey = document.getElementById("ld-metric").value;
 
   if (xParamIdx === yParamIdx) {
@@ -701,27 +638,13 @@ async function onRender() {
   const paretoFront = await loadParetoFront(dataset, geometry);
 
   // Determine valid observations for this mode
-  let valid;
-  if (mode === "chebyshev") {
-    valid = obs.filter((r) =>
-      PARETO_OBJECTIVES.every((o) => r[o.key] != null && isFinite(+r[o.key])),
-    );
-    if (valid.length < 2) {
-      setStatus(
-        `Only ${valid.length} rows have all Pareto objectives — need ≥ 2.`,
-      );
-      document.getElementById("ld-render-btn").disabled = false;
-      return;
-    }
-  } else {
-    valid = obs.filter((r) => r[metricKey] != null && isFinite(+r[metricKey]));
-    if (valid.length < 2) {
-      setStatus(
-        `Only ${valid.length} valid obs for "${metricKey}" — need ≥ 2.`,
-      );
-      document.getElementById("ld-render-btn").disabled = false;
-      return;
-    }
+  let valid = obs.filter(
+    (r) => r[metricKey] != null && isFinite(+r[metricKey]),
+  );
+  if (valid.length < 2) {
+    setStatus(`Only ${valid.length} valid obs for "${metricKey}" — need ≥ 2.`);
+    document.getElementById("ld-render-btn").disabled = false;
+    return;
   }
 
   const xParam = PARAMS[xParamIdx],
@@ -747,18 +670,7 @@ async function onRender() {
 
   // Always compute normalization from the current valid observations
   const normStats = computeNormStats(valid, params);
-  let model;
-  if (mode === "chebyshev") {
-    model = buildGpModelCheby(
-      valid,
-      PARETO_OBJECTIVES,
-      normStats,
-      lengthScale,
-      params,
-    );
-  } else {
-    model = buildGpModel(valid, metricKey, normStats, lengthScale, params);
-  }
+  let model = buildGpModel(valid, metricKey, normStats, lengthScale, params);
 
   if (!model) {
     setStatus("Failed to build GP model.");
@@ -793,7 +705,6 @@ async function onRender() {
     vmin,
     vmax,
     paretoFront,
-    mode,
   };
   drawAll(lastRenderState);
 
@@ -804,10 +715,7 @@ async function onRender() {
   const frontNote = paretoFront
     ? ` · ${paretoFront.length} Pareto pts (gold)`
     : "";
-  const modeNote =
-    mode === "chebyshev"
-      ? `Chebyshev (${PARETO_OBJECTIVES.length} obj, equal weights)`
-      : `${metricKey}`;
+  const modeNote = `${metricKey}`;
   setStatus(
     `${valid.length} obs · ls=${lengthScale.toFixed(3)} (${lsSource}) · ${modeNote}${frontNote}\n` +
       `Fixed at best: ${fixedParams.map((p) => `${p.name}=${(+model.bestObs[p.name]).toFixed(3)}`).join(", ")}`,
