@@ -1146,20 +1146,25 @@ function buildParetoFeatureMatrix() {
     }),
   );
 
-  const means = paretoActiveKeys.map(
-    (_, i) => encoded.reduce((s, r) => s + r[i], 0) / n,
-  );
-  const stds = paretoActiveKeys.map((_, i) => {
-    const variance =
-      encoded.reduce((s, r) => s + (r[i] - means[i]) ** 2, 0) / n;
-    const s = Math.sqrt(variance);
-    return s < 1e-12 ? 1 : s;
+  // Min-max normalize to [0, 1] using the known search-space bounds from
+  // params.json (log-transformed where applicable). Falls back to observed
+  // min/max for parameters not in the config (e.g. momentum_main).
+  const lo = paretoActiveKeys.map((k, i) => {
+    const cfg = PARAM_CONFIG[k];
+    if (cfg) return cfg.log ? Math.log(Math.max(cfg.min, 1e-15)) : cfg.min;
+    return Math.min(...encoded.map((r) => r[i]));
+  });
+  const hi = paretoActiveKeys.map((k, i) => {
+    const cfg = PARAM_CONFIG[k];
+    if (cfg) return cfg.log ? Math.log(Math.max(cfg.max, 1e-15)) : cfg.max;
+    return Math.max(...encoded.map((r) => r[i]));
   });
 
   const data = new Float64Array(n * d);
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < d; j++) {
-      data[i * d + j] = (encoded[i][j] - means[j]) / stds[j];
+      const range = hi[j] - lo[j];
+      data[i * d + j] = range > 1e-12 ? (encoded[i][j] - lo[j]) / range : 0;
     }
   }
   return { data, nPoints: n, nFeatures: d };
