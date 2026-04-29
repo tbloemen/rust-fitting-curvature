@@ -10,8 +10,48 @@ import {
   parsePbmcText,
   parseWordnetEdges,
 } from "./dataLoaders.js";
+import PARAMS from "@config/params.json";
 
+// ---------------------------------------------------------------------------
+// Pareto t-SNE constants
+// ---------------------------------------------------------------------------
+
+const PARAM_CONFIG = Object.fromEntries(PARAMS.map((p) => [p.name, p]));
+
+const PARETO_METRICS_LIST = [
+  { key: "trustworthiness", label: "Trustworthiness" },
+  { key: "trustworthiness_manifold", label: "Trustworthiness (manifold)" },
+  { key: "continuity", label: "Continuity" },
+  { key: "continuity_manifold", label: "Continuity (manifold)" },
+  { key: "normalized_stress", label: "Normalized Stress" },
+  { key: "normalized_stress_manifold", label: "Normalized Stress (manifold)" },
+  { key: "shepard_goodness", label: "Shepard Goodness" },
+  { key: "shepard_goodness_manifold", label: "Shepard Goodness (manifold)" },
+  { key: "neighborhood_hit", label: "Neighborhood Hit" },
+  { key: "neighborhood_hit_manifold", label: "Neighborhood Hit (manifold)" },
+];
+
+// Tab10 palette — matches visualisation.rs tab10_color
+const TAB10 = [
+  "#1f77b4",
+  "#ff7f0e",
+  "#2ca02c",
+  "#d62728",
+  "#9467bd",
+  "#8c564b",
+  "#e377c2",
+  "#7f7f7f",
+  "#bcbd22",
+  "#17becf",
+];
+
+// Canvas margins — must match plot.rs MARGIN constants
+const PLOT_MARGIN = { left: 25, right: 5, top: 5, bottom: 25 };
+
+// ---------------------------------------------------------------------------
 // State
+// ---------------------------------------------------------------------------
+
 let dataSource = "real";
 let realDataset = "mnist";
 let runner = null;
@@ -21,6 +61,13 @@ let animationId = null;
 let pointNames = null;
 // Edges as [[src, dst], ...] in compact point-index space, or null.
 let pointEdges = null;
+
+// Pareto t-SNE state
+let paretoTsneEntries = null;
+let paretoActiveKeys = [];
+let paretoPointBins = null;
+let paretoBinEdges = null;
+let paretoNBins = 8;
 
 // Cache of raw fetched data keyed by dataset name
 const rawDataCache = {};
@@ -84,6 +131,7 @@ function main() {
   setupZoomPan();
   setupSidebarToggle();
   setupParetoLoader();
+  setupParetoTooltip();
 
   status.textContent = "WebAssembly loaded! Click Run to start.";
 }
@@ -110,6 +158,18 @@ function setupUI() {
   document
     .getElementById("btn-synthetic")
     .addEventListener("click", () => setDataSource("synthetic"));
+  document
+    .getElementById("btn-pareto")
+    .addEventListener("click", () => setDataSource("pareto"));
+  document
+    .getElementById("pareto-tsne-file")
+    .addEventListener("change", onParetoTsneFileChange);
+  document
+    .getElementById("pareto-tsne-metric")
+    .addEventListener("change", onParetoColorChange);
+  document
+    .getElementById("pareto-tsne-bins")
+    .addEventListener("change", onParetoColorChange);
 
   const realDatasetSelect = document.getElementById("real-dataset");
   realDatasetSelect.addEventListener("change", () => {
@@ -212,10 +272,15 @@ function setDataSource(source) {
   document
     .getElementById("btn-synthetic")
     .classList.toggle("active", source === "synthetic");
+  document
+    .getElementById("btn-pareto")
+    .classList.toggle("active", source === "pareto");
   document.getElementById("real-controls").style.display =
     source === "real" ? "block" : "none";
   document.getElementById("synthetic-controls").style.display =
     source === "synthetic" ? "block" : "none";
+  document.getElementById("pareto-tsne-controls").style.display =
+    source === "pareto" ? "block" : "none";
 }
 
 function getParams() {
@@ -442,10 +507,11 @@ function drawNameOverlay() {
   }
 }
 
-/** Render the current embedding state and apply any text overlay. */
+/** Render the current embedding state and apply any text/color overlay. */
 function renderFrame() {
   runner.render();
   drawNameOverlay();
+  if (dataSource === "pareto") drawParetoColorOverlay();
 }
 
 // ---------------------------------------------------------------------------
@@ -453,6 +519,7 @@ function renderFrame() {
 // ---------------------------------------------------------------------------
 
 function updateTitle(curvature, projection) {
+  if (dataSource === "pareto") return;
   const el = document.getElementById("plot-title");
   if (curvature < 0) {
     el.textContent = `Hyperbolic (k=${curvature}) \u2014 Poincar\u00e9 disk`;
@@ -562,6 +629,35 @@ async function createRunner() {
       p.normLossWeight,
       p.projection,
     );
+  } else if (dataSource === "pareto") {
+    if (!paretoTsneEntries) {
+      status.textContent = "No Pareto JSON loaded. Pick a file above.";
+      return;
+    }
+    const { data, nPoints, nFeatures } = buildParetoFeatureMatrix();
+    const perplexity = Math.min(p.perplexity, nPoints - 1);
+    // All-zero labels — coloring is done via JS overlay in drawParetoColorOverlay()
+    const labels = new Uint32Array(nPoints);
+    runner = EmbeddingRunner.from_data_with_labels(
+      "canvas",
+      data,
+      labels,
+      nPoints,
+      nFeatures,
+      0.0, // curvature = 0 → Euclidean
+      p.iterations,
+      perplexity,
+      p.lr,
+      p.eeFactor,
+      p.eeIterations,
+      0.0, // centering_weight — not meaningful for parameter space
+      "none",
+      0.0,
+      0.0,
+      "stereographic",
+    );
+    document.getElementById("plot-title").textContent =
+      "Pareto Parameter Space — Euclidean t-SNE";
   }
 }
 
@@ -643,7 +739,8 @@ const MS = {
   name: "flex-grow:1;flex-shrink:1;flex-basis:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#ccc;font-size:0.75rem;",
   val: "flex-grow:0;flex-shrink:0;flex-basis:58px;text-align:right;color:#5dade2;font-family:monospace;font-size:0.75rem;white-space:nowrap;",
   hdr: "flex-grow:0;flex-shrink:0;flex-basis:58px;text-align:right;color:#aaa;font-size:0.6rem;white-space:nowrap;",
-  title: "font-size:0.62rem;text-transform:uppercase;letter-spacing:0.08em;color:#888;padding:8px 0 3px;border-bottom:1px solid #2a2a4a;margin-bottom:2px;",
+  title:
+    "font-size:0.62rem;text-transform:uppercase;letter-spacing:0.08em;color:#888;padding:8px 0 3px;border-bottom:1px solid #2a2a4a;margin-bottom:2px;",
 };
 
 function showMetrics() {
@@ -767,12 +864,14 @@ function setupParetoLoader() {
       paretoEntries.forEach((entry, i) => {
         const opt = document.createElement("option");
         opt.value = i;
-        const trust = entry.metrics?.trustworthiness != null
-          ? `T=${entry.metrics.trustworthiness.toFixed(3)}`
-          : "";
-        const stress = entry.metrics?.normalized_stress != null
-          ? `S=${entry.metrics.normalized_stress.toFixed(3)}`
-          : "";
+        const trust =
+          entry.metrics?.trustworthiness != null
+            ? `T=${entry.metrics.trustworthiness.toFixed(3)}`
+            : "";
+        const stress =
+          entry.metrics?.normalized_stress != null
+            ? `S=${entry.metrics.normalized_stress.toFixed(3)}`
+            : "";
         opt.textContent = `#${i + 1}  k=${entry.curvature_magnitude?.toFixed(3) ?? "?"}  lr=${entry.learning_rate?.toFixed(3) ?? "?"}  ${trust}  ${stress}`;
         entrySelect.appendChild(opt);
       });
@@ -800,11 +899,16 @@ function updateParetoPreview() {
 
   const m = entry.metrics || {};
   const lines = [];
-  if (m.trustworthiness != null) lines.push(`Trust: ${m.trustworthiness.toFixed(4)}`);
-  if (m.continuity != null) lines.push(`Continuity: ${m.continuity.toFixed(4)}`);
-  if (m.normalized_stress != null) lines.push(`Stress: ${m.normalized_stress.toFixed(4)}`);
-  if (m.shepard_goodness != null) lines.push(`Shepard: ${m.shepard_goodness.toFixed(4)}`);
-  if (m.neighborhood_hit != null) lines.push(`NH: ${m.neighborhood_hit.toFixed(4)}`);
+  if (m.trustworthiness != null)
+    lines.push(`Trust: ${m.trustworthiness.toFixed(4)}`);
+  if (m.continuity != null)
+    lines.push(`Continuity: ${m.continuity.toFixed(4)}`);
+  if (m.normalized_stress != null)
+    lines.push(`Stress: ${m.normalized_stress.toFixed(4)}`);
+  if (m.shepard_goodness != null)
+    lines.push(`Shepard: ${m.shepard_goodness.toFixed(4)}`);
+  if (m.neighborhood_hit != null)
+    lines.push(`NH: ${m.neighborhood_hit.toFixed(4)}`);
   metricsPreview.innerHTML = lines.join(" &nbsp;|&nbsp; ");
   metricsPreview.style.display = lines.length > 0 ? "block" : "none";
 }
@@ -817,15 +921,20 @@ function applyParetoEntry() {
 
   const geoSign = parseFloat(document.getElementById("pareto-geometry").value);
   const curvature = geoSign * (entry.curvature_magnitude ?? 0);
-  const nSamples = entry.n_samples ?? (parseInt(document.getElementById("real_n_points").value) || 1000);
+  const nSamples =
+    entry.n_samples ??
+    (parseInt(document.getElementById("real_n_points").value) || 1000);
   const perplexity = (entry.perplexity_ratio ?? 0.01) * nSamples;
 
   document.getElementById("curvature").value = curvature;
   document.getElementById("perplexity").value = Math.round(perplexity);
   document.getElementById("lr").value = entry.learning_rate ?? 10;
-  document.getElementById("centering_weight").value = entry.centering_weight ?? 0;
-  document.getElementById("global_loss_weight").value = entry.global_loss_weight ?? 0;
-  document.getElementById("norm_loss_weight").value = entry.norm_loss_weight ?? 0;
+  document.getElementById("centering_weight").value =
+    entry.centering_weight ?? 0;
+  document.getElementById("global_loss_weight").value =
+    entry.global_loss_weight ?? 0;
+  document.getElementById("norm_loss_weight").value =
+    entry.norm_loss_weight ?? 0;
 
   status.textContent = `Applied pareto entry #${parseInt(entrySelect.value) + 1}. Click Run to visualise.`;
 }
@@ -891,7 +1000,7 @@ async function runEmbedding() {
 
       // Compute metrics asynchronously (via setTimeout to let UI update)
       setTimeout(() => {
-        showMetrics();
+        if (dataSource !== "pareto") showMetrics();
         status.textContent = `Done in ${elapsed}ms (${runner.iteration()} iterations)`;
       }, 10);
 
@@ -904,4 +1013,305 @@ async function runEmbedding() {
   }
 
   animationId = requestAnimationFrame(animate);
+}
+
+// ---------------------------------------------------------------------------
+// Pareto t-SNE — data loading and coloring
+// ---------------------------------------------------------------------------
+
+async function onParetoTsneFileChange() {
+  const file = document.getElementById("pareto-tsne-file").files[0];
+  if (!file) return;
+  const statusEl = document.getElementById("pareto-tsne-status");
+  try {
+    const data = JSON.parse(await file.text());
+    if (!Array.isArray(data) || data.length === 0)
+      throw new Error("JSON must be a non-empty array");
+
+    paretoTsneEntries = data;
+
+    // Detect numeric parameter keys that actually vary (exclude 'metrics')
+    const candidates = Object.keys(data[0]).filter(
+      (k) => k !== "metrics" && typeof data[0][k] === "number",
+    );
+    paretoActiveKeys = candidates.filter((key) => {
+      const vals = data.map((e) => +e[key]);
+      const m = vals.reduce((a, b) => a + b, 0) / vals.length;
+      return vals.some((v) => Math.abs(v - m) > 1e-12);
+    });
+
+    // Populate metric selector
+    const sel = document.getElementById("pareto-tsne-metric");
+    const available = PARETO_METRICS_LIST.filter(
+      (m) => data[0].metrics?.[m.key] != null,
+    );
+    sel.innerHTML = available
+      .map((m) => `<option value="${m.key}">${m.label}</option>`)
+      .join("");
+
+    // Sensible default perplexity
+    document.getElementById("perplexity").value = Math.max(
+      2,
+      Math.min(15, Math.floor(data.length / 5)),
+    );
+
+    document.getElementById("pareto-tsne-metric-row").style.display = "block";
+    document.getElementById("pareto-tsne-bins-row").style.display = "block";
+    statusEl.textContent = `${data.length} entries · ${paretoActiveKeys.length} parameter features`;
+
+    computeParetoBins();
+    updateParetoLegend();
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+  }
+}
+
+function onParetoColorChange() {
+  computeParetoBins();
+  updateParetoLegend();
+  if (runner && animationId === null && dataSource === "pareto") renderFrame();
+}
+
+function computeParetoBins() {
+  if (!paretoTsneEntries) return;
+  const metricKey = document.getElementById("pareto-tsne-metric").value;
+  paretoNBins = Math.max(
+    2,
+    parseInt(document.getElementById("pareto-tsne-bins").value) || 8,
+  );
+  const n = paretoTsneEntries.length;
+
+  const values = paretoTsneEntries.map((e) => {
+    const v = e.metrics?.[metricKey];
+    return v != null && isFinite(+v) ? +v : NaN;
+  });
+  const sorted = values.filter((v) => isFinite(v)).sort((a, b) => a - b);
+
+  paretoBinEdges = [];
+  for (let i = 0; i <= paretoNBins; i++) {
+    const q = (i / paretoNBins) * (sorted.length - 1);
+    const lo = Math.floor(q),
+      hi = Math.ceil(q),
+      frac = q - lo;
+    paretoBinEdges.push(
+      sorted[lo] !== undefined
+        ? sorted[lo] + frac * ((sorted[hi] ?? sorted[lo]) - sorted[lo])
+        : 0,
+    );
+  }
+
+  paretoPointBins = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    const v = values[i];
+    if (!isFinite(v)) {
+      paretoPointBins[i] = -1;
+      continue;
+    }
+    let bin = 0;
+    for (let b = 1; b < paretoNBins; b++) {
+      if (v >= paretoBinEdges[b]) bin = b;
+    }
+    paretoPointBins[i] = bin;
+  }
+}
+
+function updateParetoLegend() {
+  if (!paretoBinEdges || paretoBinEdges.length === 0) return;
+  const legend = document.getElementById("pareto-tsne-legend");
+  legend.innerHTML = "";
+  for (let i = 0; i < paretoNBins; i++) {
+    const lo = paretoBinEdges[i]?.toFixed(3) ?? "";
+    const hi = paretoBinEdges[i + 1]?.toFixed(3) ?? "";
+    const color = TAB10[i % TAB10.length];
+    const entry = document.createElement("div");
+    entry.style.cssText =
+      "display:flex;align-items:center;gap:6px;font-size:0.68rem;color:#ccc;margin-bottom:2px;";
+    entry.innerHTML =
+      `<span style="width:11px;height:11px;border-radius:2px;flex-shrink:0;background:${color};border:1px solid rgba(255,255,255,0.2);display:inline-block;"></span>` +
+      `<span>${lo}–${hi}</span>`;
+    legend.appendChild(entry);
+  }
+  document.getElementById("pareto-tsne-legend-section").style.display = "block";
+}
+
+function buildParetoFeatureMatrix() {
+  const n = paretoTsneEntries.length;
+  const d = paretoActiveKeys.length;
+
+  const encoded = paretoTsneEntries.map((e) =>
+    paretoActiveKeys.map((k) => {
+      const cfg = PARAM_CONFIG[k];
+      const v = +e[k];
+      return cfg?.log ? Math.log(Math.max(v, 1e-15)) : v;
+    }),
+  );
+
+  const means = paretoActiveKeys.map(
+    (_, i) => encoded.reduce((s, r) => s + r[i], 0) / n,
+  );
+  const stds = paretoActiveKeys.map((_, i) => {
+    const variance =
+      encoded.reduce((s, r) => s + (r[i] - means[i]) ** 2, 0) / n;
+    const s = Math.sqrt(variance);
+    return s < 1e-12 ? 1 : s;
+  });
+
+  const data = new Float64Array(n * d);
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < d; j++) {
+      data[i * d + j] = (encoded[i][j] - means[j]) / stds[j];
+    }
+  }
+  return { data, nPoints: n, nFeatures: d };
+}
+
+// ---------------------------------------------------------------------------
+// Pareto t-SNE — canvas overlay and tooltip
+// ---------------------------------------------------------------------------
+
+/** Compute viewport geometry shared by overlay and tooltip. */
+function getParetoViewport() {
+  const w = canvas.width,
+    h = canvas.height;
+  const [vpCx, vpCy, vpHalf] = runner.get_viewport();
+  const halfX = vpHalf * (w / h);
+  const plotW = w - PLOT_MARGIN.left - PLOT_MARGIN.right;
+  const plotH = h - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
+  return {
+    w,
+    h,
+    plotW,
+    plotH,
+    xMin: vpCx - halfX,
+    xMax: vpCx + halfX,
+    yMin: vpCy - vpHalf,
+    yMax: vpCy + vpHalf,
+  };
+}
+
+function paretoToCanvas(vp, px, py) {
+  return [
+    PLOT_MARGIN.left + ((px - vp.xMin) / (vp.xMax - vp.xMin)) * vp.plotW,
+    vp.h -
+      PLOT_MARGIN.bottom -
+      ((py - vp.yMin) / (vp.yMax - vp.yMin)) * vp.plotH,
+  ];
+}
+
+function paretoFromCanvas(vp, cx, cy) {
+  return [
+    vp.xMin + ((cx - PLOT_MARGIN.left) / vp.plotW) * (vp.xMax - vp.xMin),
+    vp.yMin +
+      ((vp.h - PLOT_MARGIN.bottom - cy) / vp.plotH) * (vp.yMax - vp.yMin),
+  ];
+}
+
+/** Draw metric-colored circles over the WASM single-color dots. */
+function drawParetoColorOverlay() {
+  if (!runner || !paretoPointBins) return;
+  const coords = runner.get_projected_coords();
+  const n = coords.length / 2;
+  const ctx = canvas.getContext("2d");
+  const vp = getParetoViewport();
+  const dpr = window.devicePixelRatio || 1;
+  const r = 5 * dpr; // slightly larger than WASM dots (radius 3) to cover them
+
+  for (let i = 0; i < n; i++) {
+    const px = coords[i * 2],
+      py = coords[i * 2 + 1];
+    if (!isFinite(px) || !isFinite(py)) continue;
+    if (px < vp.xMin || px > vp.xMax || py < vp.yMin || py > vp.yMax) continue;
+    const [cx, cy] = paretoToCanvas(vp, px, py);
+    const bin = paretoPointBins[i];
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+    ctx.fillStyle = bin >= 0 ? TAB10[bin % TAB10.length] : "#888";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+    ctx.lineWidth = 0.8 * dpr;
+    ctx.stroke();
+  }
+}
+
+function setupParetoTooltip() {
+  const tooltip = document.getElementById("pareto-tsne-tooltip");
+
+  canvasWrapper.addEventListener("mousemove", (e) => {
+    if (dataSource !== "pareto" || !runner || isPanning || !paretoTsneEntries) {
+      tooltip.style.display = "none";
+      return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const mouseDevX = ((e.clientX - rect.left) / rect.width) * canvas.width;
+    const mouseDevY = ((e.clientY - rect.top) / rect.height) * canvas.height;
+
+    const vp = getParetoViewport();
+    const [plotX, plotY] = paretoFromCanvas(vp, mouseDevX, mouseDevY);
+
+    const coords = runner.get_projected_coords();
+    const n = coords.length / 2;
+    let nearIdx = -1,
+      nearDist = Infinity;
+    for (let i = 0; i < n; i++) {
+      const dx = coords[i * 2] - plotX;
+      const dy = coords[i * 2 + 1] - plotY;
+      const d = dx * dx + dy * dy;
+      if (d < nearDist) {
+        nearDist = d;
+        nearIdx = i;
+      }
+    }
+
+    // Threshold: 5% of plot height in plot-space
+    const threshold = ((vp.yMax - vp.yMin) * 0.05) ** 2;
+    if (nearIdx < 0 || nearDist > threshold) {
+      tooltip.style.display = "none";
+      return;
+    }
+
+    const entry = paretoTsneEntries[nearIdx];
+    const metricKey = document.getElementById("pareto-tsne-metric").value;
+    const metricLabel =
+      PARETO_METRICS_LIST.find((m) => m.key === metricKey)?.label ?? metricKey;
+
+    // Build tooltip: all numeric non-metrics fields, then selected metric
+    const paramLines = paretoActiveKeys.map((k) => {
+      const cfg = PARAM_CONFIG[k];
+      return `${cfg?.label ?? k}: ${(+entry[k]).toPrecision(4)}`;
+    });
+    // Also show any constant fields (informational)
+    const allNumericKeys = Object.keys(entry).filter(
+      (k) => k !== "metrics" && typeof entry[k] === "number",
+    );
+    const constantLines = allNumericKeys
+      .filter((k) => !paretoActiveKeys.includes(k))
+      .map((k) => {
+        const cfg = PARAM_CONFIG[k];
+        return `${cfg?.label ?? k}: ${(+entry[k]).toPrecision(4)}`;
+      });
+    const metricLine =
+      entry.metrics?.[metricKey] != null
+        ? `<b style="color:#5dade2">${metricLabel}: ${(+entry.metrics[metricKey]).toFixed(4)}</b>`
+        : "";
+
+    const allLines = [...paramLines, ...constantLines];
+    if (metricLine) allLines.push(metricLine);
+    tooltip.innerHTML = allLines.join("<br>");
+    tooltip.style.display = "block";
+
+    const wRect = canvasWrapper.getBoundingClientRect();
+    let tx = e.clientX - wRect.left + 14;
+    let ty = e.clientY - wRect.top - 10;
+    if (tx + 260 > wRect.width) tx -= 260 + 28;
+    tooltip.style.left = `${tx}px`;
+    tooltip.style.top = `${ty}px`;
+  });
+
+  canvasWrapper.addEventListener("mouseleave", () => {
+    tooltip.style.display = "none";
+  });
 }
