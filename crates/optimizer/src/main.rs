@@ -390,7 +390,7 @@ fn run_pareto(
     let (geometry, curvature_sign) = resolve_geometry(args, &evaluator);
     let optimize_curvature = curvature_sign != 0.0;
 
-    let curvature_mag_min = crate::search_space::DEFAULT_CURVATURE_MAG_MIN;
+    let curvature_mag_min = crate::search_space::param_bounds("curvature_magnitude").0;
     let curvature_mag_max = args
         .curvature_max
         .abs()
@@ -747,7 +747,7 @@ fn run_bayes(
 
     // Curvature magnitude bounds: take abs() of the signed range limits so that
     // e.g. --curvature-min -5 --curvature-max 5 → magnitude [0.001, 5.0].
-    let curvature_mag_min = crate::search_space::DEFAULT_CURVATURE_MAG_MIN;
+    let curvature_mag_min = crate::search_space::param_bounds("curvature_magnitude").0;
     let curvature_mag_max = args
         .curvature_max
         .abs()
@@ -1052,39 +1052,33 @@ fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &Mul
     let curvature_mag_min = args
         .curvature_min
         .abs()
-        .max(crate::search_space::DEFAULT_CURVATURE_MAG_MIN);
+        .max(crate::search_space::param_bounds("curvature_magnitude").0);
     let curvature_mag_max = args.curvature_max.abs().max(curvature_mag_min);
-    use crate::search_space::{
-        CEN_MAX, CEN_MIN, EEF_MAX, EEF_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, NLW_MAX, NLW_MIN,
-        PERP_MAX, PERP_MIN,
-    };
+    use crate::search_space::param_bounds;
     let mut params: Vec<(&str, Vec<f64>)> = Vec::new();
     if hp.learning_rate.is_optimized() {
-        params.push(("learning_rate", sweep_values(LR_MIN, LR_MAX, n, true)));
+        let (lo, hi, log) = param_bounds("learning_rate");
+        params.push(("learning_rate", sweep_values(lo, hi, n, log)));
     }
     if hp.perplexity_ratio.is_optimized() {
-        params.push((
-            "perplexity_ratio",
-            sweep_values(PERP_MIN, PERP_MAX, n, true),
-        ));
+        let (lo, hi, log) = param_bounds("perplexity_ratio");
+        params.push(("perplexity_ratio", sweep_values(lo, hi, n, log)));
     }
     if hp.centering_weight.is_optimized() {
-        params.push(("centering_weight", sweep_values(CEN_MIN, CEN_MAX, n, false)));
+        let (lo, hi, log) = param_bounds("centering_weight");
+        params.push(("centering_weight", sweep_values(lo, hi, n, log)));
     }
     if hp.global_loss_weight.is_optimized() {
-        params.push((
-            "global_loss_weight",
-            sweep_values(GLW_MIN, GLW_MAX, n, false),
-        ));
+        let (lo, hi, log) = param_bounds("global_loss_weight");
+        params.push(("global_loss_weight", sweep_values(lo, hi, n, log)));
     }
     if hp.norm_loss_weight.is_optimized() {
-        params.push(("norm_loss_weight", sweep_values(NLW_MIN, NLW_MAX, n, false)));
+        let (lo, hi, log) = param_bounds("norm_loss_weight");
+        params.push(("norm_loss_weight", sweep_values(lo, hi, n, log)));
     }
     if hp.early_exaggeration_factor.is_optimized() {
-        params.push((
-            "early_exaggeration_factor",
-            sweep_values(EEF_MIN, EEF_MAX, n, false),
-        ));
+        let (lo, hi, log) = param_bounds("early_exaggeration_factor");
+        params.push(("early_exaggeration_factor", sweep_values(lo, hi, n, log)));
     }
     if optimize_curvature {
         params.push((

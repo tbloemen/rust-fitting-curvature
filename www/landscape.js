@@ -1,3 +1,5 @@
+import PARAMS from "@config/params.json";
+
 // GP Landscape visualization
 // Loads results/results.jsonl and renders a 2D GP posterior-mean heatmap.
 //
@@ -9,56 +11,6 @@
 // In both modes, Pareto-front configs (from *_pareto_*.json) are drawn as
 // gold circles on top of the regular observation scatter.
 
-const PARAMS = [
-  {
-    name: "learning_rate",
-    label: "Learning Rate",
-    log: true,
-    min: 0.5,
-    max: 80.0,
-  },
-  {
-    name: "perplexity_ratio",
-    label: "Perplexity Ratio",
-    log: true,
-    min: 4e-4,
-    max: 0.03,
-  },
-  {
-    name: "centering_weight",
-    label: "Centering Weight",
-    log: false,
-    min: 0.0,
-    max: 2.0,
-  },
-  {
-    name: "global_loss_weight",
-    label: "Global Loss Weight",
-    log: false,
-    min: 0.0,
-    max: 2.0,
-  },
-  {
-    name: "norm_loss_weight",
-    label: "Norm Loss Weight",
-    log: false,
-    min: 0.0,
-    max: 0.02,
-  },
-  {
-    name: "curvature_magnitude",
-    label: "Curvature Magnitude",
-    log: true,
-    min: 0.000001,
-    max: 5.0,
-  },
-  {
-    name: "early_exaggeration_factor",
-    label: "Early Exaggeration",
-    min: 1,
-    max: 44,
-  },
-];
 
 const METRICS = [
   { key: "trustworthiness", label: "Trustworthiness", maximize: true },

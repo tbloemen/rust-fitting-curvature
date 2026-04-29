@@ -1825,23 +1825,25 @@ mod tests {
     // ─── latin_hypercube_sample ───────────────────────────────────────────────
 
     fn assert_config_in_bounds(cfg: &TrialConfig, label: &str) {
-        use crate::search_space::{
-            CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, NLW_MAX, NLW_MIN, PERP_MAX,
-            PERP_MIN,
-        };
+        use crate::search_space::param_bounds;
+        let (lr_min, lr_max, _) = param_bounds("learning_rate");
+        let (perp_min, perp_max, _) = param_bounds("perplexity_ratio");
+        let (cen_min, cen_max, _) = param_bounds("centering_weight");
+        let (glw_min, glw_max, _) = param_bounds("global_loss_weight");
+        let (nlw_min, nlw_max, _) = param_bounds("norm_loss_weight");
         let lr = cfg.learning_rate.value();
         let perp = cfg.perplexity_ratio.value();
         let cen = cfg.centering_weight.value();
         let glw = cfg.global_loss_weight.value();
         let nlw = cfg.norm_loss_weight.value();
-        assert!((LR_MIN..=LR_MAX).contains(&lr), "{label}: lr={lr}");
+        assert!((lr_min..=lr_max).contains(&lr), "{label}: lr={lr}");
         assert!(
-            (PERP_MIN..=PERP_MAX).contains(&perp),
+            (perp_min..=perp_max).contains(&perp),
             "{label}: perp={perp}"
         );
-        assert!((CEN_MIN..=CEN_MAX).contains(&cen), "{label}: cen={cen}");
-        assert!((GLW_MIN..=GLW_MAX).contains(&glw), "{label}: glw={glw}");
-        assert!((NLW_MIN..=NLW_MAX).contains(&nlw), "{label}: nlw={nlw}");
+        assert!((cen_min..=cen_max).contains(&cen), "{label}: cen={cen}");
+        assert!((glw_min..=glw_max).contains(&glw), "{label}: glw={glw}");
+        assert!((nlw_min..=nlw_max).contains(&nlw), "{label}: nlw={nlw}");
     }
 
     #[test]
@@ -1862,7 +1864,7 @@ mod tests {
 
     #[test]
     fn lhs_lr_log_coverage() {
-        use crate::search_space::{LR_MAX, LR_MIN};
+        let (lr_min, lr_max, _) = crate::search_space::param_bounds("learning_rate");
         let mut rng = Rng::new(3);
         let pts = latin_hypercube_sample(65, &TrialConfig::all_free(), &mut rng);
         let (min_lr, max_lr) = pts.iter().fold((f64::MAX, f64::MIN), |(lo, hi), cfg| {
@@ -1871,7 +1873,7 @@ mod tests {
                 hi.max(cfg.learning_rate.value()),
             )
         });
-        let log_range = LR_MAX.ln() - LR_MIN.ln();
+        let log_range = lr_max.ln() - lr_min.ln();
         let log_covered = max_lr.ln() - min_lr.ln();
         assert!(
             log_covered > 0.5 * log_range,
@@ -1882,10 +1884,12 @@ mod tests {
     #[test]
     fn lhs_stratified_per_dim() {
         // Each dimension must have exactly one point per bin (floor(v * n) is a permutation of 0..n).
-        use crate::search_space::{
-            CEN_MAX, CEN_MIN, GLW_MAX, GLW_MIN, LR_MAX, LR_MIN, NLW_MAX, NLW_MIN, PERP_MAX,
-            PERP_MIN,
-        };
+        use crate::search_space::param_bounds;
+        let (lr_min, lr_max, _) = param_bounds("learning_rate");
+        let (perp_min, perp_max, _) = param_bounds("perplexity_ratio");
+        let (cen_min, cen_max, _) = param_bounds("centering_weight");
+        let (glw_min, glw_max, _) = param_bounds("global_loss_weight");
+        let (nlw_min, nlw_max, _) = param_bounds("norm_loss_weight");
         let n = 30usize;
         let mut rng = Rng::new(4);
         let pts = latin_hypercube_sample(n, &TrialConfig::all_free(), &mut rng);
@@ -1901,35 +1905,35 @@ mod tests {
         };
         check_bins(
             pts.iter().map(|c| c.learning_rate.value().ln()).collect(),
-            LR_MIN.ln(),
-            LR_MAX.ln(),
+            lr_min.ln(),
+            lr_max.ln(),
             "lr",
         );
         check_bins(
             pts.iter()
                 .map(|c| c.perplexity_ratio.value().ln())
                 .collect(),
-            PERP_MIN.ln(),
-            PERP_MAX.ln(),
+            perp_min.ln(),
+            perp_max.ln(),
             "perp",
         );
         // momentum_main is Fixed(0.8) in all_free — not a stratified LHS dimension
         check_bins(
             pts.iter().map(|c| c.centering_weight.value()).collect(),
-            CEN_MIN,
-            CEN_MAX,
+            cen_min,
+            cen_max,
             "cen",
         );
         check_bins(
             pts.iter().map(|c| c.global_loss_weight.value()).collect(),
-            GLW_MIN,
-            GLW_MAX,
+            glw_min,
+            glw_max,
             "glw",
         );
         check_bins(
             pts.iter().map(|c| c.norm_loss_weight.value()).collect(),
-            NLW_MIN,
-            NLW_MAX,
+            nlw_min,
+            nlw_max,
             "nlw",
         );
     }

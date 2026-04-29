@@ -28,4 +28,9 @@ export default defineConfig({
   build: {
     target: "esnext",
   },
+  resolve: {
+    alias: {
+      "@config": path.resolve(__dirname, "..", "config"),
+    },
+  },
 });

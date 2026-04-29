@@ -1,7 +1,9 @@
 use fitting_core::config::{InitMethod, ScalingLossType, TrainingConfig};
 use fitting_core::matrices::get_default_init_scale;
 use fitting_core::synthetic_data::Rng;
+use serde::Deserialize;
 use std::fmt;
+use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OptimizeDirection {
@@ -18,21 +20,27 @@ impl fmt::Display for OptimizeDirection {
     }
 }
 
-/// Floor for curvature magnitude when building an Optimize spec from CLI args.
-pub const DEFAULT_CURVATURE_MAG_MIN: f64 = 0.000001;
+#[derive(Deserialize)]
+struct ParamBoundsEntry {
+    name: String,
+    min: f64,
+    max: f64,
+    log: bool,
+}
 
-pub const LR_MIN: f64 = 0.5;
-pub const LR_MAX: f64 = 80.0;
-pub const PERP_MIN: f64 = 0.0004;
-pub const PERP_MAX: f64 = 0.03;
-pub const CEN_MIN: f64 = 0.0;
-pub const CEN_MAX: f64 = 2.0;
-pub const GLW_MIN: f64 = 0.0;
-pub const GLW_MAX: f64 = 1.0;
-pub const NLW_MIN: f64 = 0.0;
-pub const NLW_MAX: f64 = 0.02;
-pub const EEF_MIN: f64 = 1.0;
-pub const EEF_MAX: f64 = 44.0;
+static PARAM_BOUNDS: LazyLock<Vec<ParamBoundsEntry>> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../../../config/params.json"))
+        .expect("config/params.json must be valid JSON")
+});
+
+/// Returns `(min, max, log_scale)` for a named parameter from `config/params.json`.
+pub fn param_bounds(name: &str) -> (f64, f64, bool) {
+    PARAM_BOUNDS
+        .iter()
+        .find(|b| b.name == name)
+        .map(|b| (b.min, b.max, b.log))
+        .unwrap_or_else(|| panic!("unknown param: {name}"))
+}
 
 // ─── ParamSpec ────────────────────────────────────────────────────────────────
 
@@ -244,16 +252,19 @@ impl TrialConfig {
     // ─── Named constructors (experiment variants) ────────────────────────────
 
     fn base() -> Self {
+        let (lr_lo, lr_hi, lr_log) = param_bounds("learning_rate");
+        let (perp_lo, perp_hi, perp_log) = param_bounds("perplexity_ratio");
+        let (eef_lo, eef_hi, eef_log) = param_bounds("early_exaggeration_factor");
         Self {
             learning_rate: ParamSpec::Optimize {
-                lo: LR_MIN,
-                hi: LR_MAX,
-                log_scale: true,
+                lo: lr_lo,
+                hi: lr_hi,
+                log_scale: lr_log,
             },
             perplexity_ratio: ParamSpec::Optimize {
-                lo: PERP_MIN,
-                hi: PERP_MAX,
-                log_scale: true,
+                lo: perp_lo,
+                hi: perp_hi,
+                log_scale: perp_log,
             },
             momentum_main: ParamSpec::Fixed(0.8),
             momentum_early: ParamSpec::Fixed(0.5),
@@ -261,9 +272,9 @@ impl TrialConfig {
             global_loss_weight: ParamSpec::Fixed(0.0),
             norm_loss_weight: ParamSpec::Fixed(0.0),
             early_exaggeration_factor: ParamSpec::Optimize {
-                lo: EEF_MIN,
-                hi: EEF_MAX,
-                log_scale: false,
+                lo: eef_lo,
+                hi: eef_hi,
+                log_scale: eef_log,
             },
             n_iterations: ParamSpec::Fixed(800.0),
             early_exaggeration_iterations: ParamSpec::Fixed(250.0),
@@ -280,57 +291,51 @@ impl TrialConfig {
 
     /// Only centering_weight (MeanDistance scaling loss weight) is optimized.
     pub fn centering_only() -> Self {
+        let (lo, hi, log_scale) = param_bounds("centering_weight");
         Self {
-            centering_weight: ParamSpec::Optimize {
-                lo: CEN_MIN,
-                hi: CEN_MAX,
-                log_scale: false,
-            },
+            centering_weight: ParamSpec::Optimize { lo, hi, log_scale },
             ..Self::base()
         }
     }
 
     /// Only global_loss_weight is optimized.
     pub fn global_only() -> Self {
+        let (lo, hi, log_scale) = param_bounds("global_loss_weight");
         Self {
-            global_loss_weight: ParamSpec::Optimize {
-                lo: GLW_MIN,
-                hi: GLW_MAX,
-                log_scale: false,
-            },
+            global_loss_weight: ParamSpec::Optimize { lo, hi, log_scale },
             ..Self::base()
         }
     }
 
     /// Only norm_loss_weight is optimized.
     pub fn norm_only() -> Self {
+        let (lo, hi, log_scale) = param_bounds("norm_loss_weight");
         Self {
-            norm_loss_weight: ParamSpec::Optimize {
-                lo: NLW_MIN,
-                hi: NLW_MAX,
-                log_scale: false,
-            },
+            norm_loss_weight: ParamSpec::Optimize { lo, hi, log_scale },
             ..Self::base()
         }
     }
 
     /// All three loss weights are optimized alongside lr, perp, eef.
     pub fn all_free() -> Self {
+        let (cen_lo, cen_hi, cen_log) = param_bounds("centering_weight");
+        let (glw_lo, glw_hi, glw_log) = param_bounds("global_loss_weight");
+        let (nlw_lo, nlw_hi, nlw_log) = param_bounds("norm_loss_weight");
         Self {
             centering_weight: ParamSpec::Optimize {
-                lo: CEN_MIN,
-                hi: CEN_MAX,
-                log_scale: false,
+                lo: cen_lo,
+                hi: cen_hi,
+                log_scale: cen_log,
             },
             global_loss_weight: ParamSpec::Optimize {
-                lo: GLW_MIN,
-                hi: GLW_MAX,
-                log_scale: false,
+                lo: glw_lo,
+                hi: glw_hi,
+                log_scale: glw_log,
             },
             norm_loss_weight: ParamSpec::Optimize {
-                lo: NLW_MIN,
-                hi: NLW_MAX,
-                log_scale: false,
+                lo: nlw_lo,
+                hi: nlw_hi,
+                log_scale: nlw_log,
             },
             ..Self::base()
         }

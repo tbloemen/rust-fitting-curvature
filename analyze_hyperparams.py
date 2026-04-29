@@ -2068,7 +2068,7 @@ def _fit_clusters(X: np.ndarray, k: int | None, k_max: int = 8) -> np.ndarray:
 
 
 def _cluster_parallel_coords(
-    ax: "plt.Axes",
+    ax: plt.Axes,
     entries: list[dict],
     params: list[str],
     x_ticks: list[int],
