@@ -15,7 +15,7 @@ const PARAMS = [
     label: "Learning Rate",
     log: true,
     min: 0.5,
-    max: 50.0,
+    max: 80.0,
   },
   {
     name: "perplexity_ratio",
@@ -24,7 +24,6 @@ const PARAMS = [
     min: 4e-4,
     max: 0.03,
   },
-  { name: "momentum_main", label: "Momentum", log: false, min: 0.6, max: 1.0 },
   {
     name: "centering_weight",
     label: "Centering Weight",
@@ -50,8 +49,14 @@ const PARAMS = [
     name: "curvature_magnitude",
     label: "Curvature Magnitude",
     log: true,
-    min: 0.01,
-    max: 25.0,
+    min: 0.000001,
+    max: 5.0,
+  },
+  {
+    name: "early_exaggeration_factor",
+    label: "Early Exaggeration",
+    min: 1,
+    max: 44,
   },
 ];
 

@@ -848,6 +848,7 @@ dependencies = [
     { name = "nltk" },
     { name = "numpy" },
     { name = "scanpy" },
+    { name = "scikit-learn" },
     { name = "scipy" },
 ]
 
@@ -859,6 +860,7 @@ requires-dist = [
     { name = "nltk", specifier = ">=3.9" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "scanpy", specifier = ">=1.10" },
+    { name = "scikit-learn", specifier = ">=1.5" },
     { name = "scipy", specifier = ">=1.17.1" },
 ]
 

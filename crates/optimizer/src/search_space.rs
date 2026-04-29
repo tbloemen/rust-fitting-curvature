@@ -19,10 +19,10 @@ impl fmt::Display for OptimizeDirection {
 }
 
 /// Floor for curvature magnitude when building an Optimize spec from CLI args.
-pub const DEFAULT_CURVATURE_MAG_MIN: f64 = 0.001;
+pub const DEFAULT_CURVATURE_MAG_MIN: f64 = 0.000001;
 
 pub const LR_MIN: f64 = 0.5;
-pub const LR_MAX: f64 = 30.0;
+pub const LR_MAX: f64 = 80.0;
 pub const PERP_MIN: f64 = 0.0004;
 pub const PERP_MAX: f64 = 0.03;
 pub const CEN_MIN: f64 = 0.0;
@@ -31,8 +31,8 @@ pub const GLW_MIN: f64 = 0.0;
 pub const GLW_MAX: f64 = 1.0;
 pub const NLW_MIN: f64 = 0.0;
 pub const NLW_MAX: f64 = 0.02;
-pub const EEF_MIN: f64 = 4.0;
-pub const EEF_MAX: f64 = 24.0;
+pub const EEF_MIN: f64 = 1.0;
+pub const EEF_MAX: f64 = 44.0;
 
 // ─── ParamSpec ────────────────────────────────────────────────────────────────
 
