@@ -80,6 +80,13 @@ impl Evaluator {
         // After-projection distances: Euclidean in 2D projected space.
         let dist_2d = compute_euclidean_distance_matrix(&projected.coords, n, 2);
 
+        let origin_dist = state.distances_from_origin();
+        let r_max = origin_dist.iter().cloned().fold(0.0_f64, f64::max);
+        let r_rms = {
+            let sum_sq: f64 = origin_dist.iter().map(|d| d * d).sum();
+            (sum_sq / origin_dist.len() as f64).sqrt()
+        };
+
         AllMetrics {
             trustworthiness: trustworthiness(&self.high_dim_dist, &dist_2d, n, k),
             trustworthiness_manifold: trustworthiness(&self.high_dim_dist, &manifold_dist, n, k),
@@ -110,6 +117,8 @@ impl Evaluator {
                 &self.dataset.labels,
                 n,
             ),
+            r_max,
+            r_rms,
         }
     }
 

@@ -434,6 +434,12 @@ impl EmbeddingState {
         self.manifold
             .pairwise_distances(&self.points, self.n_points, self.ambient_dim)
     }
+
+    /// Per-point geodesic distance from the manifold's natural origin.
+    pub fn distances_from_origin(&self) -> Vec<f64> {
+        self.manifold
+            .distances_from_origin(&self.points, self.n_points, self.ambient_dim)
+    }
 }
 
 /// Lift `embed_dim`-dimensional PCA coordinates onto the target manifold.

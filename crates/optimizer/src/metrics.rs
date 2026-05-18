@@ -22,6 +22,10 @@ pub struct AllMetrics {
     pub dunn_index: f64,
     pub class_density_measure: f64,
     pub cluster_density_measure: f64,
+    // Diagnostic — embedding radial spread (geodesic dist from origin).
+    // Not optimised; logged to verify the (K, R_max) gauge problem.
+    pub r_max: f64,
+    pub r_rms: f64,
 }
 
 impl AllMetrics {
@@ -46,6 +50,8 @@ impl AllMetrics {
             dunn_index: avg(|m| m.dunn_index),
             class_density_measure: avg(|m| m.class_density_measure),
             cluster_density_measure: avg(|m| m.cluster_density_measure),
+            r_max: avg(|m| m.r_max),
+            r_rms: avg(|m| m.r_rms),
         }
     }
 }

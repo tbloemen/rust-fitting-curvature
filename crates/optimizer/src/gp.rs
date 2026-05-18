@@ -678,6 +678,10 @@ pub struct MultiTrial {
     pub config: TrialConfig,
     /// Raw metric values in the same order as the `metrics` list.
     pub metrics: Vec<f64>,
+    /// Diagnostic: max geodesic distance from origin in the trained embedding.
+    pub r_max: f64,
+    /// Diagnostic: RMS geodesic distance from origin in the trained embedding.
+    pub r_rms: f64,
 }
 
 pub struct ParEgoOptimizer {
@@ -703,8 +707,13 @@ impl ParEgoOptimizer {
         }
     }
 
-    pub fn observe(&mut self, config: TrialConfig, metrics: Vec<f64>) {
-        self.trials.push(MultiTrial { config, metrics });
+    pub fn observe(&mut self, config: TrialConfig, metrics: Vec<f64>, r_max: f64, r_rms: f64) {
+        self.trials.push(MultiTrial {
+            config,
+            metrics,
+            r_max,
+            r_rms,
+        });
     }
 
     /// Total number of LHS init-phase points (`11d−1`).
@@ -1069,6 +1078,7 @@ pub fn latin_hypercube_sample(n: usize, spec: &TrialConfig, rng: &mut Rng) -> Ve
             curvature_magnitude: ParamSpec::Fixed(cur_col[i]),
             init_scale: ParamSpec::Fixed(isc_col[i]),
             embed_dim: ParamSpec::Fixed(edim_col[i]),
+            scaling_loss_type: spec.scaling_loss_type,
         })
         .collect()
 }
@@ -1180,6 +1190,7 @@ pub fn sbx_crossover(
         ),
         init_scale: cross!(spec.init_scale, a.init_scale.value(), b.init_scale.value()),
         embed_dim: cross!(spec.embed_dim, a.embed_dim.value(), b.embed_dim.value()),
+        scaling_loss_type: spec.scaling_loss_type,
     }
 }
 
@@ -1263,6 +1274,7 @@ pub fn evolalg_mutate(
         curvature_magnitude: mutate!(spec.curvature_magnitude, config.curvature_magnitude.value()),
         init_scale: mutate!(spec.init_scale, config.init_scale.value()),
         embed_dim: mutate!(spec.embed_dim, config.embed_dim.value()),
+        scaling_loss_type: spec.scaling_loss_type,
     }
 }
 
@@ -2083,6 +2095,7 @@ mod tests {
             curvature_magnitude: ParamSpec::Fixed(0.0),
             init_scale: ParamSpec::Fixed(1.0),
             embed_dim: ParamSpec::Fixed(2.0),
+            scaling_loss_type: fitting_core::config::ScalingLossType::MeanDistance,
         }
     }
 
@@ -2218,7 +2231,7 @@ mod tests {
         let space = maximize_space();
         for _ in 0..n {
             let cfg = space.sample(&mut rng);
-            opt.observe(cfg, vec![rng.uniform(), rng.uniform()]);
+            opt.observe(cfg, vec![rng.uniform(), rng.uniform()], 0.0, 0.0);
         }
         (opt, metrics)
     }
@@ -2324,7 +2337,7 @@ mod tests {
         // Provide enough observations for the GP.
         for _ in 0..30 {
             let cfg = random_config(&mut rng);
-            opt.observe(cfg, vec![rng.uniform(), rng.uniform()]);
+            opt.observe(cfg, vec![rng.uniform(), rng.uniform()], 0.0, 0.0);
         }
 
         // GP phase: should produce valid configs.
@@ -2344,7 +2357,12 @@ mod tests {
         let mut opt = ParEgoOptimizer::new(metrics, TrialConfig::all_free());
         let mut rng = Rng::new(60);
         for _ in 0..20 {
-            opt.observe(random_config(&mut rng), vec![rng.uniform(), rng.uniform()]);
+            opt.observe(
+                random_config(&mut rng),
+                vec![rng.uniform(), rng.uniform()],
+                0.0,
+                0.0,
+            );
         }
         let weights = vec![0.5, 0.5];
         let scalar_trials = opt.scalarize_trials_subset(&weights, &mut rng);
@@ -2363,7 +2381,12 @@ mod tests {
         let mut rng = Rng::new(61);
         let n = 40usize;
         for _ in 0..n {
-            opt.observe(random_config(&mut rng), vec![rng.uniform(), rng.uniform()]);
+            opt.observe(
+                random_config(&mut rng),
+                vec![rng.uniform(), rng.uniform()],
+                0.0,
+                0.0,
+            );
         }
         let weights = vec![0.5, 0.5];
         let scalar_trials = opt.scalarize_trials_subset(&weights, &mut rng);
