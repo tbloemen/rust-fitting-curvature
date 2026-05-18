@@ -155,6 +155,54 @@ fn test_gromov_non_hyperbolic_above_threshold() {
     }
 }
 
+// ── Curvature scale recovery ─────────────────────────────────────────────────
+
+/// The Euclidean fit always reports zero curvature; the curved fits can
+/// only land on c=0 if their search grid begins there, which it does not.
+#[test]
+fn test_curvature_scale_zero_for_euclidean_fit() {
+    let data = generate_uniform_ball_2d(N, SEED, E_RADIUS);
+    let r = detect_geometry(&data.distances, N, BINS, K_NN);
+    assert_eq!(
+        r.euclidean.curvature_scale, 0.0,
+        "Euclidean fit must report curvature_scale = 0"
+    );
+}
+
+/// On unit-curvature spherical data the recovered scale of the spherical fit
+/// should land in a reasonable neighbourhood of c=1.  The (d, c) coupling in
+/// the OLS keeps the recovery biased but informative; we assert a loose
+/// order-of-magnitude bound.
+#[test]
+fn test_spherical_curvature_scale_is_recovered() {
+    let data = generate_uniform_sphere(N, SEED);
+    let r = detect_geometry(&data.distances, N, BINS, K_NN);
+    assert!(
+        r.spherical.curvature_scale > 0.1,
+        "S² spherical curvature_scale = {} should exceed 0.1 (true c = 1)",
+        r.spherical.curvature_scale
+    );
+    assert!(
+        r.spherical.curvature_scale < 5.0,
+        "S² spherical curvature_scale = {} should not exceed 5.0 (true c = 1)",
+        r.spherical.curvature_scale
+    );
+}
+
+/// On unit-curvature hyperbolic data the hyperbolic fit's recovered scale is
+/// biased toward smaller values by the (d, c) coupling but must still sit
+/// well above the search grid's lower boundary (c_min ~ 1e-5 here).
+#[test]
+fn test_hyperbolic_curvature_scale_is_recovered() {
+    let data = generate_uniform_hyperbolic(N, SEED, H_MAX_RHO);
+    let r = detect_geometry(&data.distances, N, BINS, K_NN);
+    assert!(
+        r.hyperbolic.curvature_scale > 1e-3,
+        "H² hyperbolic curvature_scale = {} should exceed 1e-3 (true c = 1, recovery is biased low but identifiable)",
+        r.hyperbolic.curvature_scale
+    );
+}
+
 // ── Dimension estimates ──────────────────────────────────────────────────────
 
 /// Verify that the estimated intrinsic dimension is in the right ballpark.

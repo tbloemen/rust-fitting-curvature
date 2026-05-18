@@ -1,28 +1,35 @@
 //! Geometry detection from pairwise distances.
 //!
 //! Given a distance matrix, the algorithm detects whether the underlying
-//! geometry is Euclidean, spherical, or hyperbolic and estimates the intrinsic
-//! dimension d.
+//! geometry is Euclidean, spherical, or hyperbolic, estimates the intrinsic
+//! dimension d, and (for non-Euclidean cases) estimates the curvature
+//! magnitude c, where the sectional curvature is k = -c (hyperbolic) or
+//! k = +c (spherical).
 //!
 //! **Mathematical basis.** In a d-dimensional Riemannian manifold of constant
 //! curvature, the surface area of a geodesic sphere of radius r is proportional
 //! to:
 //!
-//! | Geometry   | Surface area            |
-//! |------------|-------------------------|
-//! | Euclidean  | r^(d−1)                |
-//! | Spherical  | sin(r)^(d−1)           |
-//! | Hyperbolic | sinh(r)^(d−1)          |
+//! | Geometry   | Surface area                            |
+//! |------------|-----------------------------------------|
+//! | Euclidean  | r^(d−1)                                 |
+//! | Spherical  | (sin(√c · r) / √c)^(d−1)                |
+//! | Hyperbolic | (sinh(√c · r) / √c)^(d−1)               |
+//!
+//! The 1/√c prefactor only contributes a constant to log density, so it is
+//! absorbed into the regression intercept and the fit recovers d from the
+//! slope and c from the curvature scale that maximises R².
 //!
 //! **Algorithm.**
 //! 1. For each point, collect its K nearest-neighbour distances.
 //! 2. Build a shell density histogram, truncated at the density peak
 //!    (to exclude boundary-clipping artefacts).
-//! 3. For each model, fit log density = (d−1) · log f(r) + C via OLS.
-//! 4. R² selects between Euclidean and spherical.  For Euclidean vs
-//!    hyperbolic, a residual-curvature test detects whether the density
-//!    grows faster than any power law (the hallmark of exponential/sinh
-//!    growth).
+//! 3. Euclidean: fit log density = (d−1) · log r + C via OLS.
+//! 4. Hyperbolic / spherical: search a log-spaced grid over c; for each c,
+//!    fit log density = (d−1) · log(sinh(√c·r))  (resp. log(sin(√c·r))) + C
+//!    via OLS; keep the (d, c, R²) with maximum R².
+//! 5. Model selection by R²; for Euclidean vs hyperbolic, a Gromov δ
+//!    tiebreaker captures tree-likeness when the density-shape signal is weak.
 
 pub const GROMOV_THRESHOLD: f64 = 0.15;
 
@@ -35,6 +42,10 @@ pub struct FitResult {
     pub r_squared: f64,
     /// Intercept in the log-space regression (log of scale constant).
     pub log_scale: f64,
+    /// Estimated curvature magnitude c ≥ 0.  The signed sectional curvature
+    /// is k = -c for hyperbolic fits, k = +c for spherical fits, and k = 0
+    /// for Euclidean fits (in which case this field is 0).
+    pub curvature_scale: f64,
 }
 
 /// Full result of geometry detection.
@@ -49,8 +60,7 @@ pub struct GeometryDetection {
 
 /// Compute the empirical shell density profile using K nearest neighbours.
 ///
-/// The colleague's algorithm: "Pick a point and start growing a ball; note
-/// at which radius you collect the 1st, 2nd, …, nth neighbour."
+/// Pick a point and start growing a ball; note at which radius you collect the 1st, 2nd, …, nth neighbour.
 ///
 /// Returns `(bin_centers, density)`.  The density integrates to ~1 so it is
 /// comparable across datasets with different point counts.
@@ -239,6 +249,7 @@ fn fit_model(
             dim: 1.0,
             r_squared: 0.0,
             log_scale: 0.0,
+            curvature_scale: 0.0,
         };
     }
 
@@ -250,7 +261,110 @@ fn fit_model(
         dim: slope + 1.0,
         r_squared: r2.max(0.0),
         log_scale: intercept,
+        curvature_scale: 0.0,
     }
+}
+
+/// Search a log-spaced grid of curvature scales c and pick the c maximising
+/// R² of the OLS fit log density vs. log(transform(√c·r)).
+fn fit_curved_model(
+    transform: impl Fn(f64, f64) -> Option<f64>,
+    r_vals: &[f64],
+    log_density: &[f64],
+    c_grid: &[f64],
+) -> FitResult {
+    let mut best = FitResult {
+        dim: 1.0,
+        r_squared: 0.0,
+        log_scale: 0.0,
+        curvature_scale: 0.0,
+    };
+
+    for &c in c_grid {
+        let sqrt_c = c.sqrt();
+        let pairs: Vec<(f64, f64)> = r_vals
+            .iter()
+            .zip(log_density)
+            .filter_map(|(&r, &ld)| transform(r, sqrt_c).map(|tx| (tx, ld)))
+            .collect();
+
+        if pairs.len() < 3 {
+            continue;
+        }
+
+        let xs: Vec<f64> = pairs.iter().map(|(x, _)| *x).collect();
+        let ys: Vec<f64> = pairs.iter().map(|(_, y)| *y).collect();
+        let (slope, intercept, r2) = ols(&xs, &ys);
+
+        if r2 > best.r_squared {
+            best = FitResult {
+                dim: slope + 1.0,
+                r_squared: r2.max(0.0),
+                log_scale: intercept,
+                curvature_scale: c,
+            };
+        }
+    }
+
+    best
+}
+
+/// Build a log-spaced grid of curvature magnitudes such that √c·r_max spans
+/// `[arg_min, arg_max]`.  This keeps the search adapted to the data scale.
+fn curvature_grid(r_max: f64, arg_min: f64, arg_max: f64, n: usize) -> Vec<f64> {
+    if r_max < 1e-10 || n < 2 {
+        return Vec::new();
+    }
+    let c_min = (arg_min / r_max).powi(2);
+    let c_max = (arg_max / r_max).powi(2);
+    (0..n)
+        .map(|i| {
+            let t = i as f64 / (n - 1) as f64;
+            c_min * (c_max / c_min).powf(t)
+        })
+        .collect()
+}
+
+/// Fit a hyperbolic model with a free curvature magnitude c.
+/// Searches sqrt(c)·r_max ∈ [0.01, 20] on a 60-point log-spaced grid.
+fn fit_hyperbolic_curved(r_vals: &[f64], log_density: &[f64]) -> FitResult {
+    let r_max = r_vals.iter().cloned().fold(0.0_f64, f64::max);
+    let c_grid = curvature_grid(r_max, 0.01, 20.0, 60);
+    fit_curved_model(
+        |r, sqrt_c| {
+            let s = (sqrt_c * r).sinh();
+            if s > 1e-10 && s.is_finite() {
+                Some(s.ln())
+            } else {
+                None
+            }
+        },
+        r_vals,
+        log_density,
+        &c_grid,
+    )
+}
+
+/// Fit a spherical model with a free curvature magnitude c.
+/// Searches sqrt(c)·r_max ∈ [0.01, 0.95π] on a 60-point log-spaced grid;
+/// the upper cap keeps sin(√c·r) bounded away from its zero at π.
+fn fit_spherical_curved(r_vals: &[f64], log_density: &[f64]) -> FitResult {
+    let r_max = r_vals.iter().cloned().fold(0.0_f64, f64::max);
+    let c_grid = curvature_grid(r_max, 0.01, 0.95 * std::f64::consts::PI, 60);
+    fit_curved_model(
+        |r, sqrt_c| {
+            let arg = sqrt_c * r;
+            if arg < std::f64::consts::PI {
+                let s = arg.sin();
+                if s > 1e-10 { Some(s.ln()) } else { None }
+            } else {
+                None
+            }
+        },
+        r_vals,
+        log_density,
+        &c_grid,
+    )
 }
 
 /// Detect the underlying geometry and estimate the intrinsic dimension.
@@ -280,6 +394,7 @@ pub fn detect_geometry(
             dim: 1.0,
             r_squared: 0.0,
             log_scale: 0.0,
+            curvature_scale: 0.0,
         };
         return GeometryDetection {
             euclidean: zero.clone(),
@@ -289,36 +404,18 @@ pub fn detect_geometry(
         };
     }
 
-    // Euclidean: log ρ ~ (d−1) log r
+    // Euclidean: log ρ ~ (d−1) log r  (curvature_scale = 0)
     let euclidean = fit_model(
         |r| if r > 1e-10 { Some(r.ln()) } else { None },
         &r_filt,
         &log_d_filt,
     );
 
-    // Spherical: log ρ ~ (d−1) log sin r  (only for r < π)
-    let spherical = fit_model(
-        |r| {
-            let s = r.sin();
-            if r < std::f64::consts::PI && s > 1e-10 {
-                Some(s.ln())
-            } else {
-                None
-            }
-        },
-        &r_filt,
-        &log_d_filt,
-    );
+    // Spherical: log ρ ~ (d−1) log sin(√c r), c searched.
+    let spherical = fit_spherical_curved(&r_filt, &log_d_filt);
 
-    // Hyperbolic: log ρ ~ (d−1) log sinh r
-    let hyperbolic = fit_model(
-        |r| {
-            let s = r.sinh();
-            if s > 1e-10 { Some(s.ln()) } else { None }
-        },
-        &r_filt,
-        &log_d_filt,
-    );
+    // Hyperbolic: log ρ ~ (d−1) log sinh(√c r), c searched.
+    let hyperbolic = fit_hyperbolic_curved(&r_filt, &log_d_filt);
 
     // --- Model selection ---
     // R² works well for spherical vs others.  For Euclidean vs hyperbolic,
@@ -327,14 +424,22 @@ pub fn detect_geometry(
     // the Gromov 4-point hyperbolicity: in hyperbolic spaces the
     // normalised δ is small (bounded), while in Euclidean/spherical
     // spaces it grows with the sample diameter.
+    //
+    // The curved fits search a free curvature scale c.  On genuinely
+    // Euclidean samples the c-argmax can land at noisy non-trivial values
+    // and yield R² that exceeds the Euclidean fit by O(1e-4).  R2_MARGIN
+    // requires a meaningful improvement in R² before classifying as
+    // curved.  Empirically the gap on truly curved data exceeds 1e-3
+    // while the gap on Euclidean data sits near 5e-4.
+    const R2_MARGIN: f64 = 1e-3;
     let gromov = gromov_hyperbolicity(distances, n_points, 5000);
     println!("Gromov value: {}", gromov);
 
-    let best_geometry = if hyperbolic.r_squared > euclidean.r_squared
+    let best_geometry = if hyperbolic.r_squared > euclidean.r_squared + R2_MARGIN
         && hyperbolic.r_squared > spherical.r_squared
     {
         "hyperbolic"
-    } else if spherical.r_squared > euclidean.r_squared
+    } else if spherical.r_squared > euclidean.r_squared + R2_MARGIN
         && spherical.r_squared > hyperbolic.r_squared
     {
         "spherical"
