@@ -7,8 +7,6 @@ use fitting_core::synthetic_data::{
 const N: usize = 400;
 const BINS: usize = 35;
 const SEED: u64 = 42;
-/// k_neighbors = 0 means "auto" (N/4 = 100 for N=400)
-const K_NN: usize = 0;
 /// Euclidean ball radius — matches the geodesic scale of the curved spaces
 /// (H²/H³ use max_rho=5, S²/S³ span [0,π]).  At r=5: sinh(5)/5 ≈ 14.8,
 /// making H² clearly distinguishable from E².
@@ -19,7 +17,7 @@ const H_MAX_RHO: f64 = 5.0;
 
 /// Helper: run detection and print a summary (visible with --nocapture).
 fn detect_and_print(name: &str, distances: &[f64], n: usize) -> &'static str {
-    let result = detect_geometry(distances, n, BINS, K_NN);
+    let result = detect_geometry(distances, n, BINS);
     println!(
         "{name}: best={}, R²(E={:.3}, S={:.3}, H={:.3}), dim(E={:.2}, S={:.2}, H={:.2})",
         result.best_geometry,
@@ -162,7 +160,7 @@ fn test_gromov_non_hyperbolic_above_threshold() {
 #[test]
 fn test_curvature_scale_zero_for_euclidean_fit() {
     let data = generate_uniform_ball_2d(N, SEED, E_RADIUS);
-    let r = detect_geometry(&data.distances, N, BINS, K_NN);
+    let r = detect_geometry(&data.distances, N, BINS);
     assert_eq!(
         r.euclidean.curvature_scale, 0.0,
         "Euclidean fit must report curvature_scale = 0"
@@ -176,7 +174,7 @@ fn test_curvature_scale_zero_for_euclidean_fit() {
 #[test]
 fn test_spherical_curvature_scale_is_recovered() {
     let data = generate_uniform_sphere(N, SEED);
-    let r = detect_geometry(&data.distances, N, BINS, K_NN);
+    let r = detect_geometry(&data.distances, N, BINS);
     assert!(
         r.spherical.curvature_scale > 0.1,
         "S² spherical curvature_scale = {} should exceed 0.1 (true c = 1)",
@@ -195,7 +193,7 @@ fn test_spherical_curvature_scale_is_recovered() {
 #[test]
 fn test_hyperbolic_curvature_scale_is_recovered() {
     let data = generate_uniform_hyperbolic(N, SEED, H_MAX_RHO);
-    let r = detect_geometry(&data.distances, N, BINS, K_NN);
+    let r = detect_geometry(&data.distances, N, BINS);
     assert!(
         r.hyperbolic.curvature_scale > 1e-3,
         "H² hyperbolic curvature_scale = {} should exceed 1e-3 (true c = 1, recovery is biased low but identifiable)",
@@ -240,7 +238,7 @@ fn test_dimension_estimates() {
     ];
 
     for (distances, expected_geom, expected_dim) in &cases {
-        let result = detect_geometry(distances, N, BINS, K_NN);
+        let result = detect_geometry(distances, N, BINS);
         let dim = match *expected_geom {
             "euclidean" => result.euclidean.dim,
             "spherical" => result.spherical.dim,

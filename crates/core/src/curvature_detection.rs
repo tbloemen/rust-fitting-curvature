@@ -74,7 +74,6 @@ pub fn shell_density_profile(
     distances: &[f64],
     n_points: usize,
     n_bins: usize,
-    k_neighbors: usize,
 ) -> (Vec<f64>, Vec<f64>) {
     if n_points < 3 {
         return (vec![0.0; n_bins], vec![0.0; n_bins]);
@@ -86,11 +85,7 @@ pub fn shell_density_profile(
     // where curvature signals are strongest.  We use ALL of each ref's
     // neighbours (no KNN cap) and rely on peak-truncation to handle
     // boundary clipping.
-    let n_ref = if k_neighbors != 0 {
-        n_points // caller-specified K: use all points
-    } else {
-        (n_points / 10).max(3)
-    };
+    let n_ref = (n_points / 10).max(3);
 
     let mean_dist: Vec<f64> = (0..n_points)
         .map(|i| {
@@ -104,11 +99,7 @@ pub fn shell_density_profile(
     let mut order: Vec<usize> = (0..n_points).collect();
     order.sort_by(|&a, &b| mean_dist[a].partial_cmp(&mean_dist[b]).unwrap());
 
-    let k = if k_neighbors == 0 {
-        n_points - 1 // all neighbours
-    } else {
-        k_neighbors.min(n_points - 1)
-    };
+    let k = n_points - 1;
 
     let mut local_dists = Vec::with_capacity(n_ref * k);
     for &ri in &order[..n_ref] {
@@ -233,15 +224,11 @@ fn ols(x: &[f64], y: &[f64]) -> (f64, f64, f64) {
 }
 
 /// Fit one model: transform r → log(f(r)) and regress log density on it.
-fn fit_model(
-    r_transform: impl Fn(f64) -> Option<f64>,
-    r_vals: &[f64],
-    log_density: &[f64],
-) -> FitResult {
+fn fit_model(r_vals: &[f64], log_density: &[f64]) -> FitResult {
     let pairs: Vec<(f64, f64)> = r_vals
         .iter()
         .zip(log_density)
-        .filter_map(|(&r, &ld)| r_transform(r).map(|tx| (tx, ld)))
+        .filter_map(|(&r, &ld)| (if r > 1e-10 { Some(r.ln()) } else { None }).map(|tx| (tx, ld)))
         .collect();
 
     if pairs.len() < 3 {
@@ -373,13 +360,8 @@ fn fit_spherical_curved(r_vals: &[f64], log_density: &[f64]) -> FitResult {
 /// * `n_points`     — n.
 /// * `n_bins`       — histogram resolution (30–50 works well).
 /// * `k_neighbors`  — nearest neighbours per reference (0 ⇒ auto: n/4).
-pub fn detect_geometry(
-    distances: &[f64],
-    n_points: usize,
-    n_bins: usize,
-    k_neighbors: usize,
-) -> GeometryDetection {
-    let (r_vals, density) = shell_density_profile(distances, n_points, n_bins, k_neighbors);
+pub fn detect_geometry(distances: &[f64], n_points: usize, n_bins: usize) -> GeometryDetection {
+    let (r_vals, density) = shell_density_profile(distances, n_points, n_bins);
 
     let (r_filt, log_d_filt): (Vec<f64>, Vec<f64>) = r_vals
         .iter()
@@ -405,11 +387,7 @@ pub fn detect_geometry(
     }
 
     // Euclidean: log ρ ~ (d−1) log r  (curvature_scale = 0)
-    let euclidean = fit_model(
-        |r| if r > 1e-10 { Some(r.ln()) } else { None },
-        &r_filt,
-        &log_d_filt,
-    );
+    let euclidean = fit_model(&r_filt, &log_d_filt);
 
     // Spherical: log ρ ~ (d−1) log sin(√c r), c searched.
     let spherical = fit_spherical_curved(&r_filt, &log_d_filt);
@@ -433,7 +411,6 @@ pub fn detect_geometry(
     // while the gap on Euclidean data sits near 5e-4.
     const R2_MARGIN: f64 = 1e-3;
     let gromov = gromov_hyperbolicity(distances, n_points, 5000);
-    println!("Gromov value: {}", gromov);
 
     let best_geometry = if hyperbolic.r_squared > euclidean.r_squared + R2_MARGIN
         && hyperbolic.r_squared > spherical.r_squared
