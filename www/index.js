@@ -710,7 +710,7 @@ function resetEmbedding() {
 function downloadSvg() {
   if (runner === null) return;
   try {
-    const svg = runner.render_svg(800);
+    const svg = runner.render_svg(500);
     const blob = new Blob([svg], { type: "image/svg+xml" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
