@@ -135,6 +135,8 @@ struct TrialResult {
     dunn_index: Option<f64>,
     class_density_measure: Option<f64>,
     cluster_density_measure: Option<f64>,
+    r_max: Option<f64>,
+    r_rms: Option<f64>,
 
     time_ms: u64,
 
@@ -181,6 +183,8 @@ impl TrialResult {
             dunn_index: None,
             class_density_measure: None,
             cluster_density_measure: None,
+            r_max: None,
+            r_rms: None,
             time_ms,
             scan_param: None,
         }
@@ -203,6 +207,8 @@ impl TrialResult {
         self.dunn_index = Some(m.dunn_index);
         self.class_density_measure = Some(m.class_density_measure);
         self.cluster_density_measure = Some(m.cluster_density_measure);
+        self.r_max = Some(m.r_max);
+        self.r_rms = Some(m.r_rms);
         self
     }
 }
@@ -226,10 +232,11 @@ fn parse_experiment(name: &str) -> TrialConfig {
         "global_only" => TrialConfig::global_only(),
         "norm_only" => TrialConfig::norm_only(),
         "all_free" => TrialConfig::all_free(),
+        "rms_anchored" => TrialConfig::rms_anchored(),
         other => {
             eprintln!(
                 "Unknown --experiment '{}'. Valid: all_off, centering_only, global_only, \
-                 norm_only, all_free.",
+                 norm_only, all_free, rms_anchored.",
                 other
             );
             std::process::exit(1);
@@ -347,6 +354,8 @@ fn write_pareto_front(front: &[&MultiTrial], metrics: &[Metric], n_samples: usiz
         norm_loss_weight: f64,
         early_exaggeration_factor: f64,
         curvature_magnitude: f64,
+        r_max: f64,
+        r_rms: f64,
         metrics: HashMap<&'a str, f64>,
     }
 
@@ -367,6 +376,8 @@ fn write_pareto_front(front: &[&MultiTrial], metrics: &[Metric], n_samples: usiz
                 norm_loss_weight: t.config.norm_loss_weight.value(),
                 early_exaggeration_factor: t.config.early_exaggeration_factor.value(),
                 curvature_magnitude: t.config.curvature_magnitude.value(),
+                r_max: t.r_max,
+                r_rms: t.r_rms,
                 metrics: metric_map,
             }
         })
@@ -462,7 +473,7 @@ fn run_pareto(
 
         for (config, (actual_curvature, all, elapsed)) in configs.iter().zip(results.iter()) {
             let metric_vec = metrics_to_vec(all, optimizer.metrics.as_slice());
-            optimizer.observe(config.clone(), metric_vec);
+            optimizer.observe(config.clone(), metric_vec, all.r_max, all.r_rms);
             lhs_completed += 1;
 
             let mut result = TrialResult::new(
@@ -535,7 +546,7 @@ fn run_pareto(
 
         for (config, (actual_curvature, all, elapsed)) in configs.iter().zip(results.iter()) {
             let metric_vec = metrics_to_vec(all, optimizer.metrics.as_slice());
-            optimizer.observe(config.clone(), metric_vec);
+            optimizer.observe(config.clone(), metric_vec, all.r_max, all.r_rms);
             completed += 1;
 
             let mut result = TrialResult::new(
@@ -664,11 +675,8 @@ fn resolve_geometry(args: &Args, evaluator: &Evaluator) -> (&'static str, f64) {
     let detection = evaluator.infer_geometry();
     let g = detection.best_geometry;
     eprintln!(
-        "Geometry auto-detected: {} (euclidean R²={:.3}, spherical R²={:.3}, hyperbolic R²={:.3})",
-        g,
-        detection.euclidean.r_squared,
-        detection.spherical.r_squared,
-        detection.hyperbolic.r_squared,
+        "Geometry auto-detected: {} with curvature {}",
+        g, detection.curvature
     );
     let sign: f64 = match g {
         "hyperbolic" => -1.0,

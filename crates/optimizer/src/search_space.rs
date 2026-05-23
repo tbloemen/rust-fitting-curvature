@@ -142,6 +142,9 @@ pub struct TrialConfig {
     pub curvature_magnitude: ParamSpec,
     pub init_scale: ParamSpec,
     pub embed_dim: ParamSpec,
+    /// Which scaling loss the embedding uses. Not optimised — set per experiment
+    /// variant. Default `MeanDistance`; `Rms` pins R_max ≈ 1 (gauge-fixing).
+    pub scaling_loss_type: ScalingLossType,
 }
 
 impl TrialConfig {
@@ -186,6 +189,7 @@ impl TrialConfig {
             curvature_magnitude: self.curvature_magnitude.sample_fixed(rng),
             init_scale: self.init_scale.sample_fixed(rng),
             embed_dim: self.embed_dim.sample_fixed(rng),
+            scaling_loss_type: self.scaling_loss_type,
         }
     }
 
@@ -215,6 +219,7 @@ impl TrialConfig {
             curvature_magnitude: maybe_mutate!(curvature_magnitude),
             init_scale: maybe_mutate!(init_scale),
             embed_dim: maybe_mutate!(embed_dim),
+            scaling_loss_type: current.scaling_loss_type,
         }
     }
 
@@ -242,7 +247,7 @@ impl TrialConfig {
             init_method: InitMethod::Pca,
             init_scale: self.init_scale.value(),
             centering_weight: self.centering_weight.value(),
-            scaling_loss_type: ScalingLossType::MeanDistance,
+            scaling_loss_type: self.scaling_loss_type,
             global_loss_weight: self.global_loss_weight.value(),
             norm_loss_weight: self.norm_loss_weight.value(),
             seed,
@@ -281,12 +286,29 @@ impl TrialConfig {
             curvature_magnitude: ParamSpec::Fixed(0.0),
             init_scale: ParamSpec::Fixed(get_default_init_scale(2)),
             embed_dim: ParamSpec::Fixed(2.0),
+            scaling_loss_type: ScalingLossType::MeanDistance,
         }
     }
 
     /// All three loss weights fixed to 0. Only lr, perp, eef are optimized.
     pub fn all_off() -> Self {
         Self::base()
+    }
+
+    /// Gauge-fixed setup for κ = |K|·R²_max experiments.
+    ///
+    /// Pins R_max ≈ 1 via the RMS scaling loss with a fixed, strong weight so
+    /// the curvature_magnitude knob can be interpreted directly as the
+    /// dimensionless invariant κ = |K|·R²_max.  Useful for validating that
+    /// post-hoc κ values measured in unanchored runs correspond to a
+    /// controllable hyperparameter — i.e. that κ is a reproducible setting,
+    /// not just a descriptive measurement.
+    pub fn rms_anchored() -> Self {
+        Self {
+            centering_weight: ParamSpec::Fixed(10.0),
+            scaling_loss_type: ScalingLossType::Rms,
+            ..Self::base()
+        }
     }
 
     /// Only centering_weight (MeanDistance scaling loss weight) is optimized.

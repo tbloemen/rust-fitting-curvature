@@ -1,431 +1,504 @@
-//! Geometry detection from pairwise distances.
+//! Curvature detection from a distance matrix.
 //!
-//! Given a distance matrix, the algorithm detects whether the underlying
-//! geometry is Euclidean, spherical, or hyperbolic and estimates the intrinsic
-//! dimension d.
+//! Combines two ingredients:
 //!
-//! **Mathematical basis.** In a d-dimensional Riemannian manifold of constant
-//! curvature, the surface area of a geodesic sphere of radius r is proportional
-//! to:
+//! - Wilson, Hancock, Pekalska & Duin (2014), *Spherical and Hyperbolic
+//!   Embeddings of Data*, IEEE TPAMI 36(11): 2255–2268 — radius-of-
+//!   curvature estimation by fitting a constant-curvature Gram matrix
+//!   `Z(r)` and minimising the magnitude of a signature eigenvalue.
+//! - Gromov 4-point δ — a coarse-geometric, embedding-free test for
+//!   negatively-curved metric structure, used to gate the hyperbolic
+//!   decision (see `GROMOV_THRESHOLD`).  Wilson's eigenvalue residual
+//!   alone cannot reliably distinguish hyperbolic data from Euclidean
+//!   data: at `r ≫ d_max` the matrix `−r² cosh(d/r) ≈ −r² − d²/2`
+//!   collapses to a rank-1-plus-`d²` form whose `|λ₂|` resembles a
+//!   Euclidean Gram residual.
 //!
-//! | Geometry   | Surface area            |
-//! |------------|-------------------------|
-//! | Euclidean  | r^(d−1)                |
-//! | Spherical  | sin(r)^(d−1)           |
-//! | Hyperbolic | sinh(r)^(d−1)          |
+//! # Wilson method (Sections V.A, V.C)
 //!
-//! **Algorithm.**
-//! 1. For each point, collect its K nearest-neighbour distances.
-//! 2. Build a shell density histogram, truncated at the density peak
-//!    (to exclude boundary-clipping artefacts).
-//! 3. For each model, fit log density = (d−1) · log f(r) + C via OLS.
-//! 4. R² selects between Euclidean and spherical.  For Euclidean vs
-//!    hyperbolic, a residual-curvature test detects whether the density
-//!    grows faster than any power law (the hallmark of exponential/sinh
-//!    growth).
+//! Given a pairwise distance matrix `D`, fit each constant-curvature
+//! model by minimising the magnitude of a signature eigenvalue of a
+//! curvature-dependent Gram matrix `Z(r)`.
+//!
+//! **Spherical** (Section V.A).  On a hypersphere of radius `r`, point
+//! position vectors satisfy ⟨xᵢ, xⱼ⟩ = r² cos(dᵢⱼ/r), so the matrix
+//! `Z_{ij}(r) = r² cos(d_{ij}/r)` should have rank n − 1 — exactly one
+//! zero eigenvalue.  The best radius is
+//!
+//! ```text
+//!     r* = arg min_r |λ₁[Z(r)]|
+//! ```
+//!
+//! where λ₁ is the *smallest* (algebraic) eigenvalue.
+//!
+//! **Hyperbolic** (Section V.C).  Using the Lorentzian inner product
+//! ⟨xᵢ, xⱼ⟩ = −r² cosh(dᵢⱼ/r), the matrix
+//! `Z_{ij}(r) = −r² cosh(d_{ij}/r)` should have exactly one negative
+//! and one zero eigenvalue.  The best radius minimises the magnitude
+//! of the *second-smallest* eigenvalue:
+//!
+//! ```text
+//!     r* = arg min_r |λ₂[Z(r)]|
+//! ```
+//!
+//! # Eigenvalue extraction
+//!
+//! Following the paper's recommendation, we use power iteration plus
+//! shifting and deflation rather than a full eigendecomposition:
+//!
+//! - `power_max` — largest-*magnitude* eigenvalue via plain power
+//!   iteration; the Rayleigh quotient recovers its sign.
+//! - `power_top` / `power_bot` — largest / smallest *algebraic*
+//!   eigenvalue (handles indefinite matrices by checking the sign of
+//!   the magnitude winner and shifting if needed).
+//! - `power_bot_2` — second-smallest algebraic, via a rank-1 deflation
+//!   that pushes the smallest above the largest.
+//!
+//! For an n × n matrix, each call is O(n²) per iteration and converges
+//! geometrically with rate set by the eigenvalue gap.
 
-pub const GROMOV_THRESHOLD: f64 = 0.15;
+use std::f64::consts::PI;
 
-/// Result of fitting one geometry model.
-#[derive(Debug, Clone)]
-pub struct FitResult {
-    /// Estimated intrinsic dimension (slope + 1).
-    pub dim: f64,
-    /// Coefficient of determination R² ∈ [0, 1].
-    pub r_squared: f64,
-    /// Intercept in the log-space regression (log of scale constant).
-    pub log_scale: f64,
+use crate::histogram_curvature::gromov_hyperbolicity;
+
+const POWER_MAX_ITER: usize = 500;
+const POWER_TOL: f64 = 1e-10;
+
+// ── Linear algebra primitives ──────────────────────────────────────────────
+
+/// `y ← A x` for symmetric `A` stored row-major flat.
+fn matvec(a: &[f64], n: usize, x: &[f64], y: &mut [f64]) {
+    for i in 0..n {
+        let row = &a[i * n..(i + 1) * n];
+        let mut s = 0.0;
+        for j in 0..n {
+            s += row[j] * x[j];
+        }
+        y[i] = s;
+    }
 }
 
-/// Full result of geometry detection.
-#[derive(Debug, Clone)]
-pub struct GeometryDetection {
-    pub euclidean: FitResult,
-    pub spherical: FitResult,
-    pub hyperbolic: FitResult,
-    /// `"euclidean"`, `"spherical"`, `"hyperbolic"`, or `"unknown"`.
-    pub best_geometry: &'static str,
+fn dot(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
-/// Compute the empirical shell density profile using K nearest neighbours.
+fn normalize(v: &mut [f64]) {
+    let nm = dot(v, v).sqrt();
+    if nm > 1e-20 {
+        for x in v.iter_mut() {
+            *x /= nm;
+        }
+    }
+}
+
+/// Power iteration: largest-magnitude eigenvalue of symmetric `A`.
+/// Returns `(λ, v)` with `‖v‖₂ = 1`.
+fn power_max(a: &[f64], n: usize) -> (f64, Vec<f64>) {
+    // Deterministic, well-mixed start (sin sequence has no special
+    // alignment with typical eigenvectors).
+    let mut v: Vec<f64> = (0..n).map(|i| ((i + 1) as f64).sin()).collect();
+    normalize(&mut v);
+
+    let mut w = vec![0.0; n];
+    let mut lambda = 0.0;
+
+    for _ in 0..POWER_MAX_ITER {
+        matvec(a, n, &v, &mut w);
+        let new_lambda = dot(&v, &w);
+        normalize(&mut w);
+        if (new_lambda - lambda).abs() < POWER_TOL * (lambda.abs().max(1.0)) {
+            return (new_lambda, w);
+        }
+        lambda = new_lambda;
+        std::mem::swap(&mut v, &mut w);
+    }
+    (lambda, v)
+}
+
+/// Largest *algebraic* eigenvalue (most positive) of symmetric `A`.
 ///
-/// The colleague's algorithm: "Pick a point and start growing a ball; note
-/// at which radius you collect the 1st, 2nd, …, nth neighbour."
+/// `power_max` converges to the largest-*magnitude* eigenvalue, which is
+/// not necessarily the largest algebraic value: an indefinite matrix
+/// like Z_hyperbolic has its most-negative eigenvalue dominating in
+/// magnitude.  We check the sign and shift if needed.
+fn power_top(a: &[f64], n: usize) -> (f64, Vec<f64>) {
+    let (lambda_mag, v_mag) = power_max(a, n);
+    if lambda_mag >= 0.0 {
+        return (lambda_mag, v_mag);
+    }
+    // Largest magnitude is negative ⇒ subtract it to make all
+    // eigenvalues non-negative; the new largest is the original
+    // algebraic max.
+    let mut b = a.to_vec();
+    for i in 0..n {
+        b[i * n + i] -= lambda_mag;
+    }
+    let (_, v) = power_max(&b, n);
+    let mut av = vec![0.0; n];
+    matvec(a, n, &v, &mut av);
+    (dot(&v, &av), v)
+}
+
+/// Smallest *algebraic* eigenvalue (most negative) of symmetric `A`.
 ///
-/// Returns `(bin_centers, density)`.  The density integrates to ~1 so it is
-/// comparable across datasets with different point counts.
-///
-/// * `distances`    — flat row-major n×n distance matrix.
-/// * `n_points`     — n.
-/// * `n_bins`       — histogram resolution (30–50 recommended).
-/// * `k_neighbors`  — how many nearest neighbours per reference point
-///   (0 ⇒ auto: n/4).
-pub fn shell_density_profile(
-    distances: &[f64],
-    n_points: usize,
-    n_bins: usize,
-    k_neighbors: usize,
-) -> (Vec<f64>, Vec<f64>) {
-    if n_points < 3 {
-        return (vec![0.0; n_bins], vec![0.0; n_bins]);
+/// Returns `(λ_min, v_min)` where `λ_min` is recovered via the Rayleigh
+/// quotient on `A` directly, avoiding cancellation when shifting.
+fn power_bot(a: &[f64], n: usize) -> (f64, Vec<f64>) {
+    let (lambda_mag, v_mag) = power_max(a, n);
+
+    if lambda_mag <= 0.0 {
+        // Largest magnitude is non-positive ⇒ it *is* the smallest
+        // algebraic.  Recompute via Rayleigh on A for precision.
+        let mut av = vec![0.0; n];
+        matvec(a, n, &v_mag, &mut av);
+        return (dot(&v_mag, &av), v_mag);
     }
 
-    // Use the most central ~10% of points as references (smallest mean
-    // distance to all others).  Central points have good boundary clearance,
-    // so their neighbour-distance profile extends to the large-r region
-    // where curvature signals are strongest.  We use ALL of each ref's
-    // neighbours (no KNN cap) and rely on peak-truncation to handle
-    // boundary clipping.
-    let n_ref = if k_neighbors != 0 {
-        n_points // caller-specified K: use all points
-    } else {
-        (n_points / 10).max(3)
-    };
+    // Largest magnitude is positive ⇒ shift B = λ_mag · I − A; B has
+    // largest eigenvalue λ_mag − λ_min.  Find its eigenvector and take
+    // Rayleigh on the original A.
+    let mut b = vec![0.0; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            b[i * n + j] = -a[i * n + j];
+        }
+        b[i * n + i] += lambda_mag;
+    }
+    let (_, v) = power_max(&b, n);
+    let mut av = vec![0.0; n];
+    matvec(a, n, &v, &mut av);
+    (dot(&v, &av), v)
+}
 
-    let mean_dist: Vec<f64> = (0..n_points)
-        .map(|i| {
-            distances[i * n_points..(i + 1) * n_points]
+/// Second-smallest (algebraically) eigenvalue of symmetric `A` via
+/// rank-1 deflation: `A″ = A + C · v_bot v_botᵀ` with `C > λ_top − λ_bot`
+/// shifts λ_bot past λ_top, so the smallest algebraic eigenvalue of `A″`
+/// is the second-smallest of `A`.
+fn power_bot_2(a: &[f64], n: usize) -> f64 {
+    let (lt, _) = power_top(a, n);
+    let (lb, vb) = power_bot(a, n);
+
+    let c = 2.0 * (lt - lb).abs() + 1.0;
+    let mut a_def = a.to_vec();
+    for i in 0..n {
+        for j in 0..n {
+            a_def[i * n + j] += c * vb[i] * vb[j];
+        }
+    }
+
+    // Smallest of a_def = λ₂ of A.  Recover via Rayleigh on the
+    // original A (not on a_def) so the shift does not leak into the
+    // reported value.
+    let (_, v2) = power_bot(&a_def, n);
+    let mut av = vec![0.0; n];
+    matvec(a, n, &v2, &mut av);
+    dot(&v2, &av)
+}
+
+// ── Gram matrices ───────────────────────────────────────────────────────────
+
+/// `Z_{ij}(r) = r² cos(d_{ij}/r)` for spherical model.
+fn build_z_spherical(d: &[f64], n: usize, r: f64) -> Vec<f64> {
+    let r2 = r * r;
+    let inv_r = 1.0 / r;
+    let mut z = vec![0.0; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            z[i * n + j] = r2 * (d[i * n + j] * inv_r).cos();
+        }
+    }
+    z
+}
+
+/// `Z_{ij}(r) = −r² cosh(d_{ij}/r)` for hyperbolic model.
+fn build_z_hyperbolic(d: &[f64], n: usize, r: f64) -> Vec<f64> {
+    let r2 = r * r;
+    let inv_r = 1.0 / r;
+    let mut z = vec![0.0; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            z[i * n + j] = -r2 * (d[i * n + j] * inv_r).cosh();
+        }
+    }
+    z
+}
+
+// ── Search over r ───────────────────────────────────────────────────────────
+
+/// Result of fitting one constant-curvature model.
+#[derive(Debug, Clone, Copy)]
+pub struct WilsonFit {
+    /// Best-fit radius of curvature.  Sectional curvature is +1/r²
+    /// (spherical) or −1/r² (hyperbolic).
+    pub radius: f64,
+    /// |λ₁| (spherical) or |λ₂| (hyperbolic) at `radius` — the residual
+    /// of fitting that model.  Small ⇒ data conforms well to the model.
+    pub residual: f64,
+    /// True if `radius` is at the upper bound of the search range,
+    /// which usually means the data is closer to Euclidean than to the
+    /// curved model at any finite radius.
+    pub at_upper_bound: bool,
+}
+
+/// Golden-section minimisation on `[a, b]`.  Returns `(r*, f(r*))`.
+fn golden_section(a: f64, b: f64, f: &mut dyn FnMut(f64) -> f64) -> (f64, f64) {
+    let phi = 0.6180339887498949_f64;
+    let mut a = a;
+    let mut b = b;
+    let mut r1 = a + (1.0 - phi) * (b - a);
+    let mut r2 = a + phi * (b - a);
+    let mut f1 = f(r1);
+    let mut f2 = f(r2);
+    for _ in 0..40 {
+        if f1 < f2 {
+            b = r2;
+            r2 = r1;
+            f2 = f1;
+            r1 = a + (1.0 - phi) * (b - a);
+            f1 = f(r1);
+        } else {
+            a = r1;
+            r1 = r2;
+            f1 = f2;
+            r2 = a + phi * (b - a);
+            f2 = f(r2);
+        }
+        if (b - a) / (a + b).max(1e-12) < 1e-5 {
+            break;
+        }
+    }
+    let r_star = 0.5 * (a + b);
+    let f_star = f(r_star);
+    if f_star < f1 && f_star < f2 {
+        (r_star, f_star)
+    } else if f1 < f2 {
+        (r1, f1)
+    } else {
+        (r2, f2)
+    }
+}
+
+/// One-dimensional minimisation of `f` on a log-spaced grid over
+/// `[lo, hi]`.  Finds *every* local minimum on the grid and refines
+/// each by golden section, returning the best one.  This is needed
+/// because the Wilson residual function can be multi-modal: a sharp
+/// minimum at the true radius (small `r`) coexists with a shallow
+/// minimum at the Euclidean-limit upper bound.  A single-best refine
+/// misses the sharp minimum whenever the coarse grid does.
+///
+/// Returns `(r*, f(r*), at_upper_bound)`.
+fn minimise_log_spaced(
+    lo: f64,
+    hi: f64,
+    n_grid: usize,
+    f: &mut dyn FnMut(f64) -> f64,
+) -> (f64, f64, bool) {
+    let log_lo = lo.ln();
+    let log_hi = hi.ln();
+    let step = (log_hi - log_lo) / (n_grid - 1) as f64;
+    let grid_r: Vec<f64> = (0..n_grid)
+        .map(|i| (log_lo + i as f64 * step).exp())
+        .collect();
+    let grid_res: Vec<f64> = grid_r.iter().map(|&r| f(r)).collect();
+
+    // Identify local minima on the coarse grid.  A point is a local min
+    // if it's strictly less than its existing neighbours.  The endpoints
+    // count as local minima if they beat their single neighbour.
+    let mut local_min_indices: Vec<usize> = Vec::new();
+    if n_grid >= 2 && grid_res[0] < grid_res[1] {
+        local_min_indices.push(0);
+    }
+    for i in 1..n_grid.saturating_sub(1) {
+        if grid_res[i] < grid_res[i - 1] && grid_res[i] < grid_res[i + 1] {
+            local_min_indices.push(i);
+        }
+    }
+    if n_grid >= 2 && grid_res[n_grid - 1] < grid_res[n_grid - 2] {
+        local_min_indices.push(n_grid - 1);
+    }
+    if local_min_indices.is_empty() {
+        // Monotone on the grid: take the global minimum index.
+        local_min_indices.push(
+            grid_res
                 .iter()
-                .sum::<f64>()
-                / (n_points as f64 - 1.0)
-        })
-        .collect();
-
-    let mut order: Vec<usize> = (0..n_points).collect();
-    order.sort_by(|&a, &b| mean_dist[a].partial_cmp(&mean_dist[b]).unwrap());
-
-    let k = if k_neighbors == 0 {
-        n_points - 1 // all neighbours
-    } else {
-        k_neighbors.min(n_points - 1)
-    };
-
-    let mut local_dists = Vec::with_capacity(n_ref * k);
-    for &ri in &order[..n_ref] {
-        let row = &distances[ri * n_points..(ri + 1) * n_points];
-        let mut dists: Vec<f64> = row
-            .iter()
-            .enumerate()
-            .filter(|&(j, _)| j != ri)
-            .map(|(_, d)| *d)
-            .collect();
-        dists.sort_by(|a: &f64, b| a.partial_cmp(b).unwrap());
-        local_dists.extend_from_slice(&dists[..k.min(dists.len())]);
+                .enumerate()
+                .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                .map(|(i, _)| i)
+                .unwrap_or(0),
+        );
     }
 
-    if local_dists.is_empty() {
-        return (vec![0.0; n_bins], vec![0.0; n_bins]);
-    }
-
-    // Build a preliminary histogram using 95th-percentile as r_max.
-    local_dists.sort_by(|a: &f64, b| a.partial_cmp(b).unwrap());
-    let idx95 = ((local_dists.len() as f64) * 0.95) as usize;
-    let r_raw = local_dists[idx95.min(local_dists.len() - 1)];
-
-    if r_raw < 1e-12 {
-        return (vec![0.0; n_bins], vec![0.0; n_bins]);
-    }
-
-    let bin_width_raw = r_raw / n_bins as f64;
-    let mut counts_raw = vec![0.0f64; n_bins];
-    for &d in &local_dists {
-        if d > 1e-12 && d < r_raw {
-            let bin = ((d / r_raw) * n_bins as f64) as usize;
-            counts_raw[bin.min(n_bins - 1)] += 1.0;
-        }
-    }
-
-    // Find the peak of the density profile using a 3-bin moving average.
-    // In a bounded sample the peak marks the onset of boundary clipping.
-    let smoothed: Vec<f64> = (0..n_bins)
-        .map(|i| {
-            let lo = if i > 0 { i - 1 } else { 0 };
-            let hi = (i + 1).min(n_bins - 1);
-            counts_raw[lo..=hi].iter().sum::<f64>() / (hi - lo + 1) as f64
-        })
-        .collect();
-
-    let peak_bin = smoothed
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-        .map(|(i, _)| i)
-        .unwrap_or(n_bins - 1);
-
-    // Truncate at the peak to use only the increasing part.
-    let r_max = (peak_bin as f64 + 1.0) * bin_width_raw;
-
-    if r_max < 1e-12 {
-        return (vec![0.0; n_bins], vec![0.0; n_bins]);
-    }
-
-    // Re-bin with the truncated r_max.
-    let bin_width = r_max / n_bins as f64;
-    let mut counts = vec![0.0f64; n_bins];
-
-    for &d in &local_dists {
-        if d > 1e-12 && d < r_max {
-            let bin = ((d / r_max) * n_bins as f64) as usize;
-            counts[bin.min(n_bins - 1)] += 1.0;
-        }
-    }
-
-    let total: f64 = counts.iter().sum::<f64>() * bin_width;
-    let bin_centers: Vec<f64> = (0..n_bins).map(|i| (i as f64 + 0.5) * bin_width).collect();
-    let density: Vec<f64> = if total > 1e-12 {
-        counts.iter().map(|&c| c / total).collect()
-    } else {
-        vec![0.0; n_bins]
-    };
-
-    (bin_centers, density)
-}
-
-/// Ordinary least squares: y = slope·x + intercept.
-/// Returns `(slope, intercept, r_squared)`.
-fn ols(x: &[f64], y: &[f64]) -> (f64, f64, f64) {
-    let n = x.len();
-    if n < 2 {
-        return (0.0, 0.0, 0.0);
-    }
-    let n_f = n as f64;
-    let mean_x = x.iter().sum::<f64>() / n_f;
-    let mean_y = y.iter().sum::<f64>() / n_f;
-
-    let ss_xx: f64 = x.iter().map(|&xi| (xi - mean_x).powi(2)).sum();
-    let ss_xy: f64 = x
-        .iter()
-        .zip(y)
-        .map(|(&xi, &yi)| (xi - mean_x) * (yi - mean_y))
-        .sum();
-
-    if ss_xx.abs() < 1e-12 {
-        return (0.0, mean_y, 0.0);
-    }
-
-    let slope = ss_xy / ss_xx;
-    let intercept = mean_y - slope * mean_x;
-
-    let ss_tot: f64 = y.iter().map(|&yi| (yi - mean_y).powi(2)).sum();
-    let ss_res: f64 = x
-        .iter()
-        .zip(y)
-        .map(|(&xi, &yi)| (yi - (slope * xi + intercept)).powi(2))
-        .sum();
-
-    let r_squared = if ss_tot < 1e-12 {
-        1.0
-    } else {
-        1.0 - ss_res / ss_tot
-    };
-
-    (slope, intercept, r_squared)
-}
-
-/// Fit one model: transform r → log(f(r)) and regress log density on it.
-fn fit_model(
-    r_transform: impl Fn(f64) -> Option<f64>,
-    r_vals: &[f64],
-    log_density: &[f64],
-) -> FitResult {
-    let pairs: Vec<(f64, f64)> = r_vals
-        .iter()
-        .zip(log_density)
-        .filter_map(|(&r, &ld)| r_transform(r).map(|tx| (tx, ld)))
-        .collect();
-
-    if pairs.len() < 3 {
-        return FitResult {
-            dim: 1.0,
-            r_squared: 0.0,
-            log_scale: 0.0,
+    let mut best_r = grid_r[local_min_indices[0]];
+    let mut best_res = grid_res[local_min_indices[0]];
+    let mut best_i = local_min_indices[0];
+    for &i in &local_min_indices {
+        let a = grid_r[i.saturating_sub(1)];
+        let b = grid_r[(i + 1).min(n_grid - 1)];
+        let (r, res) = if a < b {
+            golden_section(a, b, f)
+        } else {
+            (grid_r[i], grid_res[i])
         };
+        if res < best_res {
+            best_res = res;
+            best_r = r;
+            best_i = i;
+        }
     }
 
-    let xs: Vec<f64> = pairs.iter().map(|(x, _)| *x).collect();
-    let ys: Vec<f64> = pairs.iter().map(|(_, y)| *y).collect();
-    let (slope, intercept, r2) = ols(&xs, &ys);
-
-    FitResult {
-        dim: slope + 1.0,
-        r_squared: r2.max(0.0),
-        log_scale: intercept,
-    }
+    let at_upper = best_i == n_grid - 1;
+    (best_r, best_res, at_upper)
 }
 
-/// Detect the underlying geometry and estimate the intrinsic dimension.
+/// Fit a spherical model: find `r*` minimising `|λ₁(Z_spherical(r))|`.
 ///
-/// * `distances`    — flat row-major n×n distance matrix.
-/// * `n_points`     — n.
-/// * `n_bins`       — histogram resolution (30–50 works well).
-/// * `k_neighbors`  — nearest neighbours per reference (0 ⇒ auto: n/4).
-pub fn detect_geometry(
-    distances: &[f64],
-    n_points: usize,
-    n_bins: usize,
-    k_neighbors: usize,
-) -> GeometryDetection {
-    let (r_vals, density) = shell_density_profile(distances, n_points, n_bins, k_neighbors);
+/// Search bounds (Section V.A): r ≥ d_max/π (so the largest geodesic
+/// distance fits on the sphere) and r ≤ 5·d_max (well into the
+/// Euclidean limit; the paper's quoted upper bound `3·d_min` is a typo
+/// — see the discussion in this file's history).
+pub fn fit_spherical(distances: &[f64], n: usize) -> WilsonFit {
+    let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
+    let r_lower = d_max / PI;
+    let r_upper = 5.0 * d_max;
 
-    let (r_filt, log_d_filt): (Vec<f64>, Vec<f64>) = r_vals
-        .iter()
-        .copied()
-        .zip(density.iter().copied())
-        .filter(|&(r, d)| r > 1e-10 && d > 1e-10)
-        .map(|(r, d)| (r, d.ln()))
-        .unzip();
+    let mut residual_at = |r: f64| -> f64 {
+        let z = build_z_spherical(distances, n, r);
+        power_bot(&z, n).0.abs()
+    };
 
-    if r_filt.len() < 3 {
-        let zero = FitResult {
-            dim: 1.0,
-            r_squared: 0.0,
-            log_scale: 0.0,
-        };
-        return GeometryDetection {
-            euclidean: zero.clone(),
-            spherical: zero.clone(),
-            hyperbolic: zero.clone(),
-            best_geometry: "unknown",
-        };
+    let (r_star, residual, at_upper) = minimise_log_spaced(r_lower, r_upper, 30, &mut residual_at);
+    WilsonFit {
+        radius: r_star,
+        residual,
+        at_upper_bound: at_upper,
     }
+}
 
-    // Euclidean: log ρ ~ (d−1) log r
-    let euclidean = fit_model(
-        |r| if r > 1e-10 { Some(r.ln()) } else { None },
-        &r_filt,
-        &log_d_filt,
-    );
+/// Fit a hyperbolic model: find `r*` minimising `|λ₂(Z_hyperbolic(r))|`.
+///
+/// Search bounds: r ≥ d_max/20 (keeps `cosh(d_max/r) ≤ cosh(20) ≈ 2.4·10⁸`,
+/// safe from overflow) and r ≤ d_max.  Hyperbolic space is non-compact,
+/// so the geodesic-fits-on-space lower bound from the spherical case
+/// does not apply — but for r ≫ d_max, cosh(d/r) ≈ 1 and Z becomes
+/// rank-1 dominated, producing a deep but artifactual "Euclidean limit"
+/// minimum.  Capping at d_max excludes that regime and lets the genuine
+/// hyperbolic minimum (at r comparable to the curvature radius) win.
+pub fn fit_hyperbolic(distances: &[f64], n: usize) -> WilsonFit {
+    let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
+    let r_lower = d_max / 20.0;
+    let r_upper = d_max;
 
-    // Spherical: log ρ ~ (d−1) log sin r  (only for r < π)
-    let spherical = fit_model(
-        |r| {
-            let s = r.sin();
-            if r < std::f64::consts::PI && s > 1e-10 {
-                Some(s.ln())
-            } else {
-                None
-            }
-        },
-        &r_filt,
-        &log_d_filt,
-    );
+    let mut residual_at = |r: f64| -> f64 {
+        let z = build_z_hyperbolic(distances, n, r);
+        power_bot_2(&z, n).abs()
+    };
 
-    // Hyperbolic: log ρ ~ (d−1) log sinh r
-    let hyperbolic = fit_model(
-        |r| {
-            let s = r.sinh();
-            if s > 1e-10 { Some(s.ln()) } else { None }
-        },
-        &r_filt,
-        &log_d_filt,
-    );
+    let (r_star, residual, at_upper) = minimise_log_spaced(r_lower, r_upper, 30, &mut residual_at);
+    WilsonFit {
+        radius: r_star,
+        residual,
+        at_upper_bound: at_upper,
+    }
+}
 
-    // --- Model selection ---
-    // R² works well for spherical vs others.  For Euclidean vs hyperbolic,
-    // log-space R² often fails because the Euclidean model adjusts its
-    // exponent to approximate moderate sinh growth.  We supplement with
-    // the Gromov 4-point hyperbolicity: in hyperbolic spaces the
-    // normalised δ is small (bounded), while in Euclidean/spherical
-    // spaces it grows with the sample diameter.
-    let gromov = gromov_hyperbolicity(distances, n_points, 5000);
-    println!("Gromov value: {}", gromov);
+// ── Detection ───────────────────────────────────────────────────────────────
 
-    let best_geometry = if hyperbolic.r_squared > euclidean.r_squared
-        && hyperbolic.r_squared > spherical.r_squared
-    {
-        "hyperbolic"
-    } else if spherical.r_squared > euclidean.r_squared
-        && spherical.r_squared > hyperbolic.r_squared
-    {
-        "spherical"
-    } else if gromov < GROMOV_THRESHOLD {
-        // Low Gromov δ → metric space is tree-like → hyperbolic.
-        "hyperbolic"
+/// Curvature-detection result combining the spherical and hyperbolic
+/// fits with a coarse-geometric (Gromov) hyperbolicity check.
+#[derive(Debug, Clone, Copy)]
+pub struct GeometryDetection {
+    pub spherical: WilsonFit,
+    pub hyperbolic: WilsonFit,
+    /// Normalised 4-point Gromov δ (90th percentile, divided by the
+    /// median pairwise distance).  Small values (≲ `GROMOV_THRESHOLD`)
+    /// indicate δ-hyperbolic / "negatively curved" metric structure;
+    /// Euclidean data typically lands near 0.24.
+    pub gromov_delta: f64,
+    /// `"spherical"`, `"hyperbolic"`, or `"euclidean"`.
+    pub best_geometry: &'static str,
+    /// Signed sectional curvature estimate at the detected radius.
+    /// `0.0` when the detection is `"euclidean"`.
+    pub curvature: f64,
+}
+
+/// Diagnostic: residual |λ₁(Z_spherical(r))| at a single r.  Exposed so
+/// tests can plot the residual curve.
+pub fn spherical_residual_at(distances: &[f64], n: usize, r: f64) -> f64 {
+    let z = build_z_spherical(distances, n, r);
+    power_bot(&z, n).0.abs()
+}
+
+/// Diagnostic: residual |λ₂(Z_hyperbolic(r))| at a single r.
+pub fn hyperbolic_residual_at(distances: &[f64], n: usize, r: f64) -> f64 {
+    let z = build_z_hyperbolic(distances, n, r);
+    power_bot_2(&z, n).abs()
+}
+
+/// Minimum angular extent `d_max / r*` required for the spherical fit
+/// to be treated as genuine.  A uniform sample on a sphere has
+/// `d_max ≈ π · r` and `d/r` is literally the subtended angle in
+/// radians, so 2.5 (≈ 0.8 π) accepts near-full coverage while rejecting
+/// Euclidean data which fits a small cap on a very large sphere with
+/// arbitrarily small residual.
+pub const SPHERICAL_ANGULAR_MIN: f64 = 2.5;
+
+/// Maximum normalised 4-point Gromov δ for the data to be treated as
+/// δ-hyperbolic.  δ is the supremum over quadruples of
+/// `(S_max − S_mid)/2` where the three S values are the pair-distance
+/// sums; we use the 90th percentile of sampled quadruples, normalised
+/// by the median pairwise distance.
+///
+/// Theoretical backing (unlike the prior `d_max / r` "angular extent"
+/// heuristic on a non-compact space):
+///
+/// - `H²` with `K = −1` has 4-point hyperbolicity constant `log(2)/2 ≈
+///   0.347`, and the sup of δ scales as `r` under `K → −1/r²`, so
+///   `δ / d_max → 0` as the data covers many curvature radii.
+/// - `ℝⁿ` is *not* δ-hyperbolic; the normalised δ on a uniform sample
+///   stabilises around ~0.24 (empirically) and the underlying δ scales
+///   with the diameter.
+///
+/// `0.18` sits in the (wide) gap between the two regimes observed in
+/// the test fixtures (≲ 0.15 hyperbolic, ~0.24 Euclidean).
+pub const GROMOV_THRESHOLD: f64 = 0.18;
+
+/// Number of random 4-tuples sampled for the Gromov δ estimate.
+const GROMOV_SAMPLES: usize = 5000;
+
+/// Detect curvature from a distance matrix.
+///
+/// Decision rule:
+///
+/// 1. **Spherical** if `d_max / r_s* ≥ SPHERICAL_ANGULAR_MIN`.  On a
+///    sphere `d/r` is the subtended angle, so this is a literal
+///    coverage criterion.
+/// 2. **Hyperbolic** if the normalised 4-point Gromov δ is below
+///    `GROMOV_THRESHOLD` AND the Wilson hyperbolic fit did not pin at
+///    its upper bound (which would mean Wilson's residual minimum is
+///    the Euclidean-limit artifact, so the reported curvature
+///    magnitude cannot be trusted).
+/// 3. **Euclidean** otherwise.
+pub fn detect_geometry(distances: &[f64], n: usize) -> GeometryDetection {
+    let spherical = fit_spherical(distances, n);
+    let hyperbolic = fit_hyperbolic(distances, n);
+
+    let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
+    let s_angular = d_max / spherical.radius;
+    let gromov_delta = gromov_hyperbolicity(distances, n, GROMOV_SAMPLES);
+
+    let (best_geometry, curvature) = if s_angular >= SPHERICAL_ANGULAR_MIN {
+        ("spherical", 1.0 / (spherical.radius * spherical.radius))
+    } else if !hyperbolic.at_upper_bound && gromov_delta < GROMOV_THRESHOLD {
+        ("hyperbolic", -1.0 / (hyperbolic.radius * hyperbolic.radius))
     } else {
-        "euclidean"
+        ("euclidean", 0.0)
     };
 
     GeometryDetection {
-        euclidean,
         spherical,
         hyperbolic,
+        gromov_delta,
         best_geometry,
+        curvature,
     }
-}
-
-/// Estimate Gromov 4-point hyperbolicity from the distance matrix.
-///
-/// Samples random 4-tuples, computes δ = (S_max − S_mid) / 2 for each
-/// (where S are the three distance-pair sums), and returns the 90th
-/// percentile of δ normalised by the median pairwise distance.
-///
-/// Hyperbolic spaces have small normalised δ (bounded by log(2)/R for
-/// curvature −1 and typical distance R), while Euclidean/spherical
-/// spaces produce larger values.
-pub fn gromov_hyperbolicity(distances: &[f64], n: usize, n_samples: usize) -> f64 {
-    if n < 4 {
-        return 0.0;
-    }
-
-    // Simple deterministic PRNG for reproducible sampling.
-    let mut state: u64 = 0xdeadbeef;
-    let mut rng = || -> usize {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-        ((state >> 33) as usize) % n
-    };
-
-    let mut deltas = Vec::with_capacity(n_samples);
-    for _ in 0..n_samples {
-        let a = rng();
-        let mut b = rng();
-        while b == a {
-            b = rng();
-        }
-        let mut c = rng();
-        while c == a || c == b {
-            c = rng();
-        }
-        let mut d = rng();
-        while d == a || d == b || d == c {
-            d = rng();
-        }
-
-        let dab = distances[a * n + b];
-        let dcd = distances[c * n + d];
-        let dac = distances[a * n + c];
-        let dbd = distances[b * n + d];
-        let dad = distances[a * n + d];
-        let dbc = distances[b * n + c];
-
-        let s1 = dab + dcd;
-        let s2 = dac + dbd;
-        let s3 = dad + dbc;
-
-        let mut sums = [s1, s2, s3];
-        sums.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let delta = (sums[2] - sums[1]) / 2.0;
-        deltas.push(delta);
-    }
-
-    deltas.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-    // 90th percentile δ.
-    let p90_idx = (deltas.len() as f64 * 0.90) as usize;
-    let delta_90 = deltas[p90_idx.min(deltas.len() - 1)];
-
-    // Normalise by median pairwise distance.
-    let mut all_dists: Vec<f64> = Vec::with_capacity(n * (n - 1) / 2);
-    for i in 0..n {
-        for j in (i + 1)..n {
-            all_dists.push(distances[i * n + j]);
-        }
-    }
-    all_dists.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let median_d = all_dists[all_dists.len() / 2];
-
-    if median_d < 1e-12 {
-        return 0.0;
-    }
-
-    delta_90 / median_d
 }

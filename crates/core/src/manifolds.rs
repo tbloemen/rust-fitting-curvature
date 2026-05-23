@@ -16,6 +16,16 @@ pub trait Manifold {
     /// Compute full pairwise distance matrix (n_points x n_points, row-major).
     fn pairwise_distances(&self, points: &[f64], n_points: usize, ambient_dim: usize) -> Vec<f64>;
 
+    /// Geodesic distance from each point to the manifold's natural origin.
+    /// Origin convention: 0 for Euclidean, hyperboloid apex (r, 0, …) for hyperbolic,
+    /// south pole (-r, 0, …) for spherical.
+    fn distances_from_origin(
+        &self,
+        points: &[f64],
+        n_points: usize,
+        ambient_dim: usize,
+    ) -> Vec<f64>;
+
     /// Project Euclidean gradient to tangent space (in-place on `grad`).
     fn project_to_tangent(
         &self,
@@ -76,6 +86,24 @@ impl Manifold for Euclidean {
             }
         }
         dist
+    }
+
+    fn distances_from_origin(
+        &self,
+        points: &[f64],
+        n_points: usize,
+        ambient_dim: usize,
+    ) -> Vec<f64> {
+        (0..n_points)
+            .map(|i| {
+                let mut sq = 0.0;
+                for d in 0..ambient_dim {
+                    let v = points[i * ambient_dim + d];
+                    sq += v * v;
+                }
+                sq.sqrt()
+            })
+            .collect()
     }
 
     fn project_to_tangent(
@@ -185,6 +213,23 @@ impl Manifold for Hyperboloid {
             }
         }
         dist
+    }
+
+    fn distances_from_origin(
+        &self,
+        points: &[f64],
+        n_points: usize,
+        ambient_dim: usize,
+    ) -> Vec<f64> {
+        let r = self.radius;
+        let eps = 1e-7;
+        (0..n_points)
+            .map(|i| {
+                let x0 = points[i * ambient_dim];
+                let arg = (x0 / r).max(1.0 + eps);
+                r * arg.acosh()
+            })
+            .collect()
     }
 
     fn project_to_tangent(
@@ -426,6 +471,23 @@ impl Manifold for Sphere {
             }
         }
         dist
+    }
+
+    fn distances_from_origin(
+        &self,
+        points: &[f64],
+        n_points: usize,
+        ambient_dim: usize,
+    ) -> Vec<f64> {
+        let r = self.radius;
+        let eps = 1e-7;
+        (0..n_points)
+            .map(|i| {
+                let x0 = points[i * ambient_dim];
+                let arg = (-x0 / r).clamp(-1.0 + eps, 1.0 - eps);
+                r * arg.acos()
+            })
+            .collect()
     }
 
     fn project_to_tangent(
