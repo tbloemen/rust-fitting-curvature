@@ -10,6 +10,11 @@ Hyperparameter sensitivity analysis for fitting-curvature optimizer results.
   9. marginal_effects.svg         — Binned mean ± 95% CI of metric per parameter (response curves)
   10. good_regions.svg            — p10–p90 intervals of top-k% runs, normalised to [0, 1]
 
+  Also runs HSIC analysis on ALL MOBO trial records (not just the Pareto front):
+  hsic_importance.svg  — Pairwise HSIC(param, metric) heatmap: raw kernel-based dependence
+  hsic_redundancy.svg  — HSIC(param_i, param_j) redundancy matrix: which params are collinear
+  hsic_lasso.svg       — HSIC-LASSO (Yamada et al. 2014): sparse weights heatmap + bar chart
+
 --mode scan
   1. scan_effects.svg             — Clean effect curve per parameter (metric vs swept value)
   2. scan_sensitivity.svg         — Heatmap of metric range (max−min) per (parameter × curvature)
@@ -53,6 +58,7 @@ from pathlib import Path
 import matplotlib
 import matplotlib.colors as mcolors
 from sklearn.cluster import KMeans
+from sklearn.linear_model import Lasso
 from sklearn.metrics import silhouette_score
 
 matplotlib.use("Agg")
@@ -74,12 +80,20 @@ ALL_PARAMS = [
     # "global_loss_weight",
     # "norm_loss_weight",
     "curvature",  # signed: negative=hyperbolic, positive=spherical (converted from curvature_magnitude)
+    "curvature_invariant",  # post-hoc dimensionless |K|·R_max² (gauge-fixed canonical curvature)
+    "r_max",
     "n_iterations",  # old format (now fixed)
     "early_exaggeration_iterations",  # old format (now fixed)
     "early_exaggeration_factor",
 ]
 
-LOG_SCALE_PARAMS = {"learning_rate", "perplexity", "perplexity_ratio"}
+LOG_SCALE_PARAMS = {
+    "learning_rate",
+    "perplexity",
+    "perplexity_ratio",
+    "curvature_invariant",
+    "r_max",
+}
 CATEGORICAL_PARAMS: set[str] = set()
 
 ALL_METRICS = [
@@ -200,6 +214,8 @@ def _preprocess(records: list[dict]) -> list[dict]:
 
     - perplexity_ratio → perplexity  (multiply by n_samples)
     - curvature_magnitude → curvature (multiply by geometry sign)
+    - curvature_invariant := |K| · r_max²  (post-hoc gauge-fixed canonical curvature;
+      cf. paper's scale invariance: only |K|·R² is geometry, K alone depends on the radial gauge)
     """
     for r in records:
         if "perplexity_ratio" in r:
@@ -210,6 +226,10 @@ def _preprocess(records: list[dict]) -> list[dict]:
             sign = _GEO_SIGN.get(r["geometry"], 0.0)
             r["curvature"] = r["curvature_magnitude"] * sign
             del r["curvature_magnitude"]
+        k = r.get("curvature")
+        rm = r.get("r_max")
+        if k is not None and rm is not None and rm > 0:
+            r["curvature_invariant"] = abs(k) * rm * rm
     return records
 
 
@@ -2230,6 +2250,466 @@ def plot_pareto_clusters(
     print(f"  {out_path}")
 
 
+# ─── HSIC analysis ────────────────────────────────────────────────────────────
+
+# All optimization parameters available after preprocessing.
+_HSIC_OPTIM_PARAMS = [
+    "learning_rate",
+    "perplexity",
+    "early_exaggeration_factor",
+    "momentum_main",
+    "centering_weight",
+    "global_loss_weight",
+    "norm_loss_weight",
+    "curvature",
+]
+_HSIC_METRICS = PROJECTION_METRICS + MANIFOLD_METRICS
+
+
+def _rbf_kernel(x: np.ndarray) -> np.ndarray:
+    """RBF kernel matrix with median-heuristic bandwidth."""
+    if x.ndim == 1:
+        x = x[:, None]
+    sq = np.sum((x[:, None, :] - x[None, :, :]) ** 2, axis=-1)
+    nonzero = sq[sq > 0]
+    bw2 = float(np.median(nonzero)) if len(nonzero) > 0 else 1.0
+    return np.exp(-sq / max(bw2, 1e-12))
+
+
+def _center_kernel(K: np.ndarray) -> np.ndarray:
+    """Double-center K: removes row, column, and grand means."""
+    row = K.mean(axis=1, keepdims=True)
+    col = K.mean(axis=0, keepdims=True)
+    return K - row - col + K.mean()
+
+
+def _build_xy(
+    records: list[dict], params: list[str], metrics: list[str]
+) -> tuple[np.ndarray, np.ndarray, list[str], list[str]]:
+    """Extract aligned X (n×p) and Y (n×q) arrays, dropping zero-variance columns."""
+    valid = [
+        r for r in records
+        if all(isinstance(r.get(p), (int, float)) for p in params)
+        and all(isinstance(r.get(m), (int, float)) for m in metrics)
+    ]
+    if len(valid) < 10:
+        return np.empty((0, 0)), np.empty((0, 0)), [], []
+
+    X = np.array([[float(r[p]) for p in params] for r in valid])
+    Y = np.array([[float(r[m]) for m in metrics] for r in valid])
+
+    x_keep = [i for i, s in enumerate(X.std(axis=0)) if s > 1e-10]
+    y_keep = [i for i, s in enumerate(Y.std(axis=0)) if s > 1e-10]
+    return (
+        X[:, x_keep], Y[:, y_keep],
+        [params[i] for i in x_keep],
+        [metrics[i] for i in y_keep],
+    )
+
+
+def _log_transform(X: np.ndarray, params: list[str]) -> np.ndarray:
+    """Log-transform parameters that live on a log scale (learning_rate, perplexity)."""
+    X = X.copy()
+    for i, p in enumerate(params):
+        if p in LOG_SCALE_PARAMS or p == "perplexity":
+            X[:, i] = np.log(np.maximum(X[:, i], 1e-10))
+    return X
+
+
+def _hsic_pairwise(X: np.ndarray, Y: np.ndarray) -> np.ndarray:
+    """
+    Compute (p, q) matrix of HSIC values.
+
+    HSIC(x_i, y_j) = tr(K_{x_i,c} K_{y_j,c}) / (n-1)²
+    """
+    n, p = X.shape
+    q = Y.shape[1]
+    out = np.zeros((p, q))
+    KYs = [_center_kernel(_rbf_kernel(Y[:, j])) for j in range(q)]
+    for i in range(p):
+        Kx = _center_kernel(_rbf_kernel(X[:, i]))
+        for j in range(q):
+            out[i, j] = float(np.sum(Kx * KYs[j])) / (n - 1) ** 2
+    return out
+
+
+def _hsic_lasso_weights(X: np.ndarray, Y: np.ndarray) -> np.ndarray:
+    """
+    HSIC-LASSO (Yamada et al. 2014): sparse feature importance per output metric.
+
+    Vectorizes centered kernel matrices and solves the LASSO:
+        min_w  (1/2)||b_j - A w||²  +  alpha ||w||₁
+    where A[:,i] = vec(K_{x_i,c})/(n-1) and b_j = vec(K_{y_j,c})/(n-1).
+    Alpha is set to 5% of alpha_max so approximately half the features survive.
+    Returns abs(coef) shaped (p, q).
+    """
+    n, p = X.shape
+    q = Y.shape[1]
+
+    # Cap n for speed: subsample deterministically if the dataset is large.
+    n_fit = min(n, 400)
+    idx = np.linspace(0, n - 1, n_fit, dtype=int) if n > n_fit else np.arange(n)
+    Xs, Ys = X[idx], Y[idx]
+    nf = len(idx)
+
+    cols = []
+    for i in range(p):
+        L = _center_kernel(_rbf_kernel(Xs[:, i])) / (nf - 1)
+        cols.append(L.ravel())
+    A = np.column_stack(cols)                             # (nf², p)
+
+    col_norms = np.linalg.norm(A, axis=0)
+    col_norms = np.where(col_norms < 1e-10, 1.0, col_norms)
+    A_norm = A / col_norms
+
+    weights = np.zeros((p, q))
+    for j in range(q):
+        b = (_center_kernel(_rbf_kernel(Ys[:, j])) / (nf - 1)).ravel()
+        alpha_max = float(np.max(np.abs(A_norm.T @ b))) / len(b)
+        alpha = max(alpha_max * 0.05, 1e-8)
+        model = Lasso(alpha=alpha, fit_intercept=False, max_iter=5000)
+        model.fit(A_norm, b)
+        weights[:, j] = np.abs(model.coef_) / col_norms
+    return weights
+
+
+def _draw_hsic_heatmap(
+    ax: "plt.Axes",
+    matrix: np.ndarray,
+    row_labels: list[str],
+    col_labels: list[str],
+    title: str,
+    normalize_cols: bool = True,  # unused; kept for call-site compatibility
+) -> None:
+    """Render an HSIC matrix as a heatmap onto *ax*.
+
+    Colors are mapped against the actual data range so the colorbar ticks
+    match the cell annotations.
+    """
+    vmax = float(matrix.max()) if matrix.max() > 1e-12 else 1.0
+    im = ax.imshow(matrix, cmap="YlOrRd", vmin=0, vmax=vmax, aspect="auto")
+    ax.set_xticks(range(len(col_labels)))
+    ax.set_xticklabels(col_labels, rotation=45, ha="right", fontsize=8)
+    ax.set_yticks(range(len(row_labels)))
+    ax.set_yticklabels(row_labels, fontsize=8)
+    ax.set_title(title, fontsize=9, pad=6)
+    plt.colorbar(im, ax=ax, fraction=0.03, pad=0.02, label="HSIC")
+    for i in range(matrix.shape[0]):
+        for j in range(matrix.shape[1]):
+            v = matrix[i, j] / vmax
+            ax.text(
+                j, i, f"{matrix[i, j]:.3f}",
+                ha="center", va="center", fontsize=5.5,
+                color="white" if v > 0.6 else "black",
+            )
+
+
+def _tag_pareto(all_trials: list[dict], front_entries: list[dict]) -> None:
+    """Add 'is_on_pareto' boolean in-place to each record in all_trials."""
+    def _fp(r: dict) -> tuple:
+        return (
+            r.get("learning_rate"),
+            r.get("perplexity"),
+            r.get("early_exaggeration_factor"),
+            r.get("curvature"),
+            r.get("geometry"),
+            r.get("dataset_name"),
+        )
+    fps = {_fp(r) for r in front_entries}
+    for r in all_trials:
+        r["is_on_pareto"] = _fp(r) in fps
+
+
+def plot_hsic_importance(records: list[dict], out_path: str) -> None:
+    """
+    Pairwise HSIC(param_i, metric_j) heatmap.
+
+    Uses all MOBO trial records so the full parameter–metric range is captured,
+    not just the Pareto-dominant subset.
+    """
+    X, Y, params, metrics = _build_xy(records, _HSIC_OPTIM_PARAMS, _HSIC_METRICS)
+    if X.shape[0] == 0:
+        print(f"  {out_path} (skipped — not enough complete records)")
+        return
+    X_t = _log_transform(X, params)
+    H = _hsic_pairwise(X_t, Y)
+
+    n_p, n_m = len(params), len(metrics)
+    fig, ax = plt.subplots(figsize=(max(8, n_m * 0.9 + 2.5), max(3, n_p * 0.55 + 1.8)))
+    _draw_hsic_heatmap(
+        ax, H, params, metrics,
+        f"HSIC parameter–metric dependence  (n={X.shape[0]} MOBO trials)",
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
+def plot_hsic_redundancy(records: list[dict], out_path: str) -> None:
+    """
+    Symmetric HSIC(param_i, param_j) redundancy heatmap.
+
+    Normalized by the geometric mean of the diagonal so values are in [0, 1],
+    analogous to a kernel correlation coefficient.  High values indicate
+    overlapping information between two parameters.
+    """
+    X, _, params, _ = _build_xy(records, _HSIC_OPTIM_PARAMS, _HSIC_OPTIM_PARAMS)
+    if X.shape[0] == 0:
+        print(f"  {out_path} (skipped — not enough complete records)")
+        return
+    X_t = _log_transform(X, params)
+    H = _hsic_pairwise(X_t, X_t)
+
+    diag = np.maximum(np.diag(H), 1e-12)
+    H_norm = H / np.sqrt(np.outer(diag, diag))
+
+    n_p = len(params)
+    fig, ax = plt.subplots(figsize=(max(5, n_p * 0.75 + 1.5), max(4, n_p * 0.65 + 1.5)))
+    _draw_hsic_heatmap(
+        ax, H_norm, params, params,
+        f"HSIC parameter redundancy  (n={X.shape[0]} MOBO trials)",
+        normalize_cols=False,
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
+def plot_hsic_lasso(records: list[dict], out_path: str) -> None:
+    """
+    HSIC-LASSO feature importance: sparse weights heatmap + aggregate bar chart.
+
+    Left panel: per-metric LASSO weights (params × metrics), normalized per metric.
+      Zero weights mean the parameter is redundant given the selected set.
+    Right panel: sum of weights across metrics — overall importance ranking.
+    """
+    X, Y, params, metrics = _build_xy(records, _HSIC_OPTIM_PARAMS, _HSIC_METRICS)
+    if X.shape[0] == 0:
+        print(f"  {out_path} (skipped — not enough complete records)")
+        return
+    n = X.shape[0]
+    print(f"    HSIC-LASSO: {n} trials, {len(params)} params, {len(metrics)} metrics ...")
+    X_t = _log_transform(X, params)
+    W = _hsic_lasso_weights(X_t, Y)           # (p, q)
+
+    aggregate = W.sum(axis=1)
+    order = np.argsort(aggregate)[::-1]
+
+    n_p, n_m = len(params), len(metrics)
+    fig, (ax_heat, ax_bar) = plt.subplots(
+        1, 2,
+        figsize=(max(14, n_m * 0.9 + n_p * 0.9 + 4), max(4, n_p * 0.55 + 2)),
+        gridspec_kw={"width_ratios": [2, 1]},
+    )
+
+    _draw_hsic_heatmap(
+        ax_heat, W, params, metrics,
+        "HSIC-LASSO weights (per-metric normalized)",
+    )
+
+    xs = [float(aggregate[i]) for i in order]
+    labels = [params[i] for i in order]
+    p75 = float(np.percentile(xs, 75)) if xs else 0.0
+    p50 = float(np.percentile(xs, 50)) if xs else 0.0
+    colors = [
+        "#d7191c" if x >= p75 else "#fdae61" if x >= p50 else "#abd9e9"
+        for x in xs
+    ]
+    ys = list(range(len(params)))
+    ax_bar.barh(ys, xs, color=colors, alpha=0.85, height=0.6)
+    ax_bar.set_yticks(ys)
+    ax_bar.set_yticklabels(labels, fontsize=8)
+    ax_bar.invert_yaxis()
+    ax_bar.set_xlabel("Aggregate HSIC-LASSO weight", fontsize=9)
+    ax_bar.set_title("Parameter importance ranking", fontsize=9)
+
+    fig.suptitle(f"HSIC-LASSO feature importance  (n={n} MOBO trials)", y=1.01)
+    fig.tight_layout()
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
+# ─── Gauge-invariance diagnostic (K, R_max) ───────────────────────────────────
+
+
+def _has_gauge_data(r: dict) -> bool:
+    k = r.get("curvature")
+    return (
+        k is not None
+        and k != 0.0
+        and r.get("r_max") is not None
+        and r["r_max"] > 0.0
+    )
+
+
+def plot_gauge_invariant(
+    all_trials: list[dict],
+    front_entries: list[dict],
+    out_path: str,
+) -> None:
+    """Diagnose the (K, R_max) gauge degeneracy from the paper's scale invariance.
+
+    Hyperbolic / spherical law of cosines is invariant under
+    (r → λr, K → K/λ²), so |K|·R_max² is the dimensionless invariant — |K|
+    alone is meaningless without a fixed radial gauge.
+
+    Left:  log|K| vs log R_max scatter. Background = all trials, gold = Pareto
+           front. Dashed lines are iso-|K|·R² curves: if optimisation is
+           wandering along the gauge, the front should lie *along* these lines.
+    Right: spread of log|K| vs log(|K|·R²) on the Pareto front. If the gauge
+           is free, σ(log|K|·R²) ≪ σ(log|K|).
+    """
+    pool = [r for r in (all_trials or front_entries) if _has_gauge_data(r)]
+    front = [r for r in front_entries if _has_gauge_data(r)]
+    if not pool and not front:
+        print(f"  {out_path} (skipped — no curved-geometry trials with r_max)")
+        return
+
+    datasets = sorted({r.get("dataset_name", "unknown") for r in pool + front})
+    n_ds = len(datasets)
+    fig, axes = plt.subplots(n_ds, 2, figsize=(11.0, n_ds * 4.4), squeeze=False)
+
+    all_geos = sorted({r.get("geometry", "unknown") for r in pool + front})
+
+    for row, ds in enumerate(datasets):
+        ax_l = axes[row, 0]
+        ax_r = axes[row, 1]
+        ds_pool = [r for r in pool if r.get("dataset_name") == ds]
+        ds_front = [r for r in front if r.get("dataset_name") == ds]
+
+        # --- Left: (|K|, R_max) scatter with iso-|K|·R² reference lines ----------
+        for geo in all_geos:
+            col = geo_color(geo, all_geos)
+            xs = [abs(r["curvature"]) for r in ds_pool if r.get("geometry") == geo]
+            ys = [r["r_max"] for r in ds_pool if r.get("geometry") == geo]
+            if xs:
+                ax_l.scatter(
+                    xs, ys, color=col, alpha=0.25, s=10, linewidths=0, label=geo
+                )
+
+        fxs = [abs(r["curvature"]) for r in ds_front]
+        fys = [r["r_max"] for r in ds_front]
+        if fxs:
+            ax_l.scatter(
+                fxs,
+                fys,
+                color="#FFD700",
+                s=55,
+                edgecolors="white",
+                linewidths=1.0,
+                zorder=5,
+                label="Pareto front",
+            )
+
+        # Iso |K|·R² = c reference lines (quartiles of the front's invariant).
+        if fxs and fys:
+            invs = np.sort(np.array(fxs) * np.array(fys) ** 2)
+            quartile_invs = invs[[len(invs) // 4, len(invs) // 2, 3 * len(invs) // 4]]
+            all_k = [abs(r["curvature"]) for r in ds_pool] + fxs
+            k_lo, k_hi = min(all_k), max(all_k)
+            k_grid = np.geomspace(k_lo, k_hi, 60)
+            for c in quartile_invs:
+                ax_l.plot(
+                    k_grid,
+                    np.sqrt(c / k_grid),
+                    color="#888",
+                    linestyle="--",
+                    linewidth=0.7,
+                    alpha=0.55,
+                )
+
+        ax_l.set_xscale("log")
+        ax_l.set_yscale("log")
+        ax_l.set_xlabel("|K|", fontsize=8)
+        ax_l.set_ylabel("R_max", fontsize=8)
+        ax_l.set_title(
+            f"{ds} — (|K|, R_max) plane\ndashed: iso |K|·R² (quartiles of front)",
+            fontsize=9,
+        )
+        ax_l.tick_params(labelsize=7)
+        ax_l.legend(fontsize=6, loc="best")
+        ax_l.grid(True, which="both", alpha=0.2)
+
+        # --- Right: spread of log10|K| vs log10(|K|·R²) on the Pareto front ------
+        if not ds_front:
+            ax_r.text(
+                0.5,
+                0.5,
+                "no Pareto-front entries",
+                ha="center",
+                va="center",
+                transform=ax_r.transAxes,
+                fontsize=8,
+                color="#888",
+            )
+            ax_r.set_xticks([])
+            ax_r.set_yticks([])
+            continue
+
+        K_arr = np.array(fxs)
+        inv_arr = K_arr * np.array(fys) ** 2
+        log_K = np.log10(K_arr[K_arr > 0])
+        log_inv = np.log10(inv_arr[inv_arr > 0])
+
+        if len(log_K) < 2 or len(log_inv) < 2:
+            ax_r.text(
+                0.5,
+                0.5,
+                "front too small for distribution",
+                ha="center",
+                va="center",
+                transform=ax_r.transAxes,
+                fontsize=8,
+                color="#888",
+            )
+            ax_r.set_xticks([])
+            ax_r.set_yticks([])
+            continue
+
+        parts = ax_r.violinplot(
+            [log_K, log_inv], positions=[0, 1], showmeans=True, showextrema=True
+        )
+        for body, fc in zip(parts["bodies"], ["#e6553a", "#FFD700"]):
+            body.set_facecolor(fc)
+            body.set_alpha(0.45)
+            body.set_edgecolor("#333")
+
+        # Overlay raw points (jittered) for transparency about sample size.
+        rng = np.random.default_rng(0)
+        for arr, x0 in [(log_K, 0), (log_inv, 1)]:
+            jitter = rng.uniform(-0.08, 0.08, size=arr.shape)
+            ax_r.scatter(
+                x0 + jitter, arr, s=10, color="#222", alpha=0.6, linewidths=0
+            )
+
+        sK, sI = log_K.std(), log_inv.std()
+        ratio = sK / sI if sI > 1e-12 else float("inf")
+        ax_r.set_xticks([0, 1])
+        ax_r.set_xticklabels(["log₁₀ |K|", "log₁₀ |K|·R²"], fontsize=8)
+        ax_r.set_ylabel("log₁₀ value (Pareto front)", fontsize=8)
+        ax_r.set_title(
+            f"{ds} — spread on front  "
+            f"σ(K)={sK:.2f}  σ(K·R²)={sI:.2f}  ratio={ratio:.1f}×",
+            fontsize=9,
+        )
+        ax_r.tick_params(labelsize=7)
+        ax_r.grid(axis="y", alpha=0.3)
+
+    fig.suptitle(
+        "Gauge-invariance diagnostic — is (K, R_max) free along the scale-invariance ridge?\n"
+        "Left: scatter near iso-|K|·R² lines suggests gauge wandering.  "
+        "Right: σ(K) ≫ σ(K·R²) confirms it.",
+        fontsize=10,
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
 # ─── Mode handlers ─────────────────────────────────────────────────────────────
 
 
@@ -2361,6 +2841,8 @@ def _run_pareto(args: "argparse.Namespace") -> None:
     geos = sorted({r.get("geometry", "?") for r in front_entries})
     print(f"Pareto front geometries: {geos}\n")
 
+    _tag_pareto(all_trials, front_entries)
+
     print("Generating Pareto analysis plots:")
     pool = all_trials if all_trials else front_entries
     plot_pareto_tradeoff(
@@ -2373,6 +2855,29 @@ def _run_pareto(args: "argparse.Namespace") -> None:
     plot_pareto_clusters(
         front_entries, os.path.join(args.output, "pareto_clusters.svg")
     )
+    plot_gauge_invariant(
+        all_trials,
+        front_entries,
+        os.path.join(args.output, "gauge_invariant.svg"),
+    )
+
+    if all_trials:
+        print("\nGenerating HSIC analysis plots (all MOBO trials):")
+        plot_hsic_importance(
+            all_trials, os.path.join(args.output, "hsic_importance.svg")
+        )
+        plot_hsic_redundancy(
+            all_trials, os.path.join(args.output, "hsic_redundancy.svg")
+        )
+        plot_hsic_lasso(
+            all_trials, os.path.join(args.output, "hsic_lasso.svg")
+        )
+    else:
+        print(
+            "\n  HSIC analysis skipped — no background trial data found.\n"
+            "  Ensure results.jsonl is present alongside the pareto JSON files."
+        )
+
     print(f"\nDone. All plots saved to '{args.output}/'.")
 
 

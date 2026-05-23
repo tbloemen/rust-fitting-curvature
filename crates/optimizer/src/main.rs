@@ -675,11 +675,8 @@ fn resolve_geometry(args: &Args, evaluator: &Evaluator) -> (&'static str, f64) {
     let detection = evaluator.infer_geometry();
     let g = detection.best_geometry;
     eprintln!(
-        "Geometry auto-detected: {} (euclidean R²={:.3}, spherical R²={:.3}, hyperbolic R²={:.3})",
-        g,
-        detection.euclidean.r_squared,
-        detection.spherical.r_squared,
-        detection.hyperbolic.r_squared,
+        "Geometry auto-detected: {} with curvature {}",
+        g, detection.curvature
     );
     let sign: f64 = match g {
         "hyperbolic" => -1.0,
