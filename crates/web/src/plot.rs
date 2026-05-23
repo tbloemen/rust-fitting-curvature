@@ -28,6 +28,34 @@ pub struct PlotParams<'a> {
 ///
 /// Returns the auto-fit half-extent so callers can anchor zoom/pan interactions.
 pub fn draw_embedding(canvas: &HtmlCanvasElement, params: &PlotParams) -> Result<f64, JsValue> {
+    let backend = CanvasBackend::with_canvas_object(canvas.clone())
+        .ok_or("failed to create canvas backend")?;
+    draw_embedding_with_backend(backend, canvas.width(), canvas.height(), params)
+}
+
+/// Render the embedding as a standalone SVG string of `size`×`size` pixels.
+///
+/// Always uses an aspect ratio of 1 (square plot area), independent of any
+/// live canvas dimensions.
+pub fn draw_embedding_svg(size: u32, params: &PlotParams) -> Result<String, JsValue> {
+    let mut buf = String::new();
+    {
+        let backend = SVGBackend::with_string(&mut buf, (size, size));
+        draw_embedding_with_backend(backend, size, size, params)?;
+    }
+    Ok(buf)
+}
+
+fn draw_embedding_with_backend<DB>(
+    backend: DB,
+    width: u32,
+    height: u32,
+    params: &PlotParams,
+) -> Result<f64, JsValue>
+where
+    DB: DrawingBackend,
+    DB::ErrorType: 'static,
+{
     let Projection2D {
         coords: projected,
         scale,
@@ -40,10 +68,8 @@ pub fn draw_embedding(canvas: &HtmlCanvasElement, params: &PlotParams) -> Result
     );
     let auto_half = calculate_auto_half(params.curvature, params.n_points, &projected);
 
-    let canvas_w = canvas.width() as f64;
-    let canvas_h = canvas.height() as f64;
-    let aspect = if canvas_h > 0.0 {
-        canvas_w / canvas_h
+    let aspect = if height > 0 {
+        width as f64 / height as f64
     } else {
         1.0
     };
@@ -56,8 +82,6 @@ pub fn draw_embedding(canvas: &HtmlCanvasElement, params: &PlotParams) -> Result
     let y_min = cy - half_y;
     let y_max = cy + half_y;
 
-    let backend = CanvasBackend::with_canvas_object(canvas.clone())
-        .ok_or("failed to create canvas backend")?;
     let root = backend.into_drawing_area();
     root.fill(&WHITE)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -101,14 +125,18 @@ pub fn draw_embedding(canvas: &HtmlCanvasElement, params: &PlotParams) -> Result
     Ok(auto_half)
 }
 
-fn draw_points(
-    chart: &mut Chart,
+fn draw_points<'a, DB>(
+    chart: &mut Chart<'a, DB>,
     projected: &[f64],
     n_points: usize,
     labels: Option<&[u32]>,
     label_names: Option<&[String]>,
-) -> Result<(), JsValue> {
-    let map_err = |e: DrawingAreaErrorKind<_>| JsValue::from_str(&e.to_string());
+) -> Result<(), JsValue>
+where
+    DB: DrawingBackend + 'a,
+    DB::ErrorType: 'static,
+{
+    let map_err = |e: DrawingAreaErrorKind<DB::ErrorType>| JsValue::from_str(&e.to_string());
 
     if let Some(labels) = labels {
         let mut label_set: Vec<u32> = labels.to_vec();
@@ -210,9 +238,9 @@ fn calculate_auto_half(curvature: f64, n_points: usize, projected: &[f64]) -> f6
     }
 }
 
-type Chart<'a> = ChartContext<
+type Chart<'a, DB> = ChartContext<
     'a,
-    CanvasBackend,
+    DB,
     Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>,
 >;
 
@@ -220,15 +248,19 @@ type Chart<'a> = ChartContext<
 ///
 /// `radius` is the hyperbolic radius r = 1/sqrt(-K).
 /// `half` is the current chart half-extent in Poincaré disk coordinates.
-fn draw_hyperbolic_grid(
-    chart: &mut Chart,
+fn draw_hyperbolic_grid<'a, DB>(
+    chart: &mut Chart<'a, DB>,
     radius: f64,
     cx: f64,
     cy: f64,
     half_x: f64,
     half_y: f64,
-) -> Result<(), JsValue> {
-    let map_err = |e: DrawingAreaErrorKind<_>| JsValue::from_str(&e.to_string());
+) -> Result<(), JsValue>
+where
+    DB: DrawingBackend + 'a,
+    DB::ErrorType: 'static,
+{
+    let map_err = |e: DrawingAreaErrorKind<DB::ErrorType>| JsValue::from_str(&e.to_string());
     let half_max = half_x.max(half_y);
 
     // Boundary circle — plotters clips to viewport automatically
@@ -371,15 +403,19 @@ fn poincare_geodesic_arc(a: f64, vertical: bool) -> Vec<(f64, f64)> {
 }
 
 /// Draw spherical grid: concentric circles for parallels, radial meridians.
-fn draw_spherical_grid(
-    chart: &mut Chart,
+fn draw_spherical_grid<'a, DB>(
+    chart: &mut Chart<'a, DB>,
     projection: SphericalProjection,
     cx: f64,
     cy: f64,
     half_x: f64,
     half_y: f64,
-) -> Result<(), JsValue> {
-    let map_err = |e: DrawingAreaErrorKind<_>| JsValue::from_str(&e.to_string());
+) -> Result<(), JsValue>
+where
+    DB: DrawingBackend + 'a,
+    DB::ErrorType: 'static,
+{
+    let map_err = |e: DrawingAreaErrorKind<DB::ErrorType>| JsValue::from_str(&e.to_string());
 
     // Boundary circle — plotters clips to viewport
     let boundary = circle_points(0.0, 0.0, 1.0, 128);
@@ -456,15 +492,19 @@ fn draw_spherical_grid(
 }
 
 /// Draw Euclidean grid: straight lines with tick labels in original coordinates.
-fn draw_euclidean_grid(
-    chart: &mut Chart,
+fn draw_euclidean_grid<'a, DB>(
+    chart: &mut Chart<'a, DB>,
     cx: f64,
     cy: f64,
     half_x: f64,
     half_y: f64,
     scale: f64,
-) -> Result<(), JsValue> {
-    let map_err = |e: DrawingAreaErrorKind<_>| JsValue::from_str(&e.to_string());
+) -> Result<(), JsValue>
+where
+    DB: DrawingBackend + 'a,
+    DB::ErrorType: 'static,
+{
+    let map_err = |e: DrawingAreaErrorKind<DB::ErrorType>| JsValue::from_str(&e.to_string());
 
     let (x_min, x_max) = (cx - half_x, cx + half_x);
     let (y_min, y_max) = (cy - half_y, cy + half_y);

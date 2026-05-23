@@ -79,7 +79,7 @@ let panLastY = 0;
 
 // DOM refs
 let canvas, canvasWrapper, zoomIndicator;
-let status, lossDisplay, fpsDisplay, runBtn, stopBtn, stepBtn;
+let status, lossDisplay, fpsDisplay, runBtn, stopBtn, stepBtn, downloadSvgBtn;
 let progressContainer, progressBar, metricsPanel, metricsContent;
 let sidebar, sidebarToggle;
 let lastFrameTime = 0;
@@ -118,6 +118,7 @@ function main() {
   runBtn = document.getElementById("run-btn");
   stopBtn = document.getElementById("stop-btn");
   stepBtn = document.getElementById("step-btn");
+  downloadSvgBtn = document.getElementById("download-svg-btn");
   progressContainer = document.getElementById("progress-container");
   progressBar = document.getElementById("progress-bar");
   metricsPanel = document.getElementById("metrics-panel");
@@ -186,6 +187,7 @@ function setupUI() {
     }
   });
   stepBtn.addEventListener("click", stepEmbedding);
+  downloadSvgBtn.addEventListener("click", downloadSvg);
   window.addEventListener("resize", () => {
     setupCanvas();
     if (runner !== null && animationId === null) {
@@ -512,6 +514,7 @@ function renderFrame() {
   runner.render();
   drawNameOverlay();
   if (dataSource === "pareto") drawParetoColorOverlay();
+  downloadSvgBtn.disabled = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -692,10 +695,35 @@ function resetEmbedding() {
   stopBtn.disabled = true;
   runBtn.disabled = false;
   stepBtn.disabled = false;
+  downloadSvgBtn.disabled = true;
   lossDisplay.textContent = "";
   progressContainer.style.display = "none";
   metricsPanel.style.display = "none";
   status.textContent = "Reset. Click Run or Step to start.";
+}
+
+/**
+ * Download the current embedding as a square SVG.
+ * Uses the WASM SVG backend so the output matches the canvas rendering
+ * (plot + legend, no quality metrics, no HTML title overlay).
+ */
+function downloadSvg() {
+  if (runner === null) return;
+  try {
+    const svg = runner.render_svg(800);
+    const blob = new Blob([svg], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `embedding-${Date.now()}.svg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    status.textContent = "SVG export failed: " + e;
+    console.error(e);
+  }
 }
 
 // Metric groups: each dual-variant metric shows manifold + 2D columns.

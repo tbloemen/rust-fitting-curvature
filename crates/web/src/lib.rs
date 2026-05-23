@@ -248,6 +248,23 @@ impl EmbeddingRunner {
         Ok(())
     }
 
+    /// Render the current state as a square SVG string of `size`×`size` pixels.
+    pub fn render_svg(&self, size: u32) -> Result<String, JsValue> {
+        plot::draw_embedding_svg(
+            size,
+            &plot::PlotParams {
+                points: &self.state.points,
+                n_points: self.state.n_points,
+                ambient_dim: self.state.ambient_dim,
+                curvature: self.state.config().curvature,
+                labels: self.state.labels.as_deref(),
+                label_names: self.label_names.as_deref(),
+                projection: self.state.projection,
+                view: self.view,
+            },
+        )
+    }
+
     /// Return the 2D projected coordinates of all points as a flat Float64Array [x0,y0,x1,y1,...].
     /// Coordinates are in the same plot space used by `render()`.
     pub fn get_projected_coords(&self) -> Vec<f64> {
