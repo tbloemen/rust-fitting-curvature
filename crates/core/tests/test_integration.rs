@@ -4,7 +4,7 @@
 use fitting_core::config::{InitMethod, ScalingLossType, TrainingConfig};
 use fitting_core::embedding::EmbeddingState;
 use fitting_core::matrices::get_default_init_scale;
-use fitting_core::synthetic_data::Rng;
+use fitting_core::synthetic_data::{Rng, load_synthetic};
 use fitting_core::visualisation::SphericalProjection;
 
 fn create_test_data(n_samples: usize, n_features: usize, seed: u64) -> Vec<f64> {
@@ -567,4 +567,53 @@ fn test_compute_snapshot_from_distances() {
     let snap = state.compute_snapshot();
     assert!(!snap.trustworthiness_manifold.is_nan());
     assert!(!snap.trustworthiness_2d.is_nan());
+}
+
+/// Regression: the hyperbolic feature norm loss must target the *bounded* input
+/// Poincaré radius, not the raw ambient ‖x‖². Tree data places nodes near the
+/// Poincaré boundary, where ‖x‖² diverges (~1e6), which previously produced a
+/// loss of ~1e9 that dwarfed the KL gradient. With the bounded target the norm
+/// loss is O(1) and stays comparable to the no-norm-loss run.
+#[test]
+fn test_tree_norm_loss_bounded() {
+    let synth = load_synthetic("tree_structured", 300, 42).unwrap();
+
+    let base = TrainingConfig {
+        n_points: synth.n_points,
+        embed_dim: 2,
+        curvature: -1.0,
+        perplexity: 30.0,
+        n_iterations: 100,
+        learning_rate: 20.0,
+        init_method: InitMethod::Pca,
+        ..Default::default()
+    };
+
+    let mut without = EmbeddingState::new(&synth.x, synth.ambient_dim, &base);
+    without.run(|_| true);
+
+    let with_cfg = TrainingConfig {
+        norm_loss_weight: 10.0,
+        ..base
+    };
+    let mut with = EmbeddingState::new(&synth.x, synth.ambient_dim, &with_cfg);
+    with.run(|_| true);
+
+    assert!(with.loss.is_finite(), "loss must be finite");
+    // Bounded target ⇒ the norm-loss term is ≤ weight·1 (here ≤ 10): the total
+    // stays in the KL regime, nowhere near the ~1e9 the raw-‖x‖² formulation
+    // produced for this dataset (which would also trip this bound by ~7 orders).
+    assert!(
+        with.loss < 1000.0,
+        "tree norm-loss should be bounded, got {}",
+        with.loss
+    );
+    // The added term cannot exceed weight·max((r_y - r_x)²) = 10·1 = 10, so the
+    // total must stay close to the no-norm-loss run (with generous slack).
+    assert!(
+        with.loss < without.loss + 15.0,
+        "norm loss should not blow up the total: with={} without={}",
+        with.loss,
+        without.loss
+    );
 }
