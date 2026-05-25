@@ -51,7 +51,8 @@ All point data is **flat row-major `Vec<f64>`** of shape `(n_points, ambient_dim
 
 ### Additional modules
 
-- **`curvature_detection.rs`**: Detects geometry (Euclidean/spherical/hyperbolic) and intrinsic dimension from a pairwise distance matrix using shell density histograms + OLS fitting. Native-only (no WASM).
+- **`curvature_detection.rs`**: Detects geometry sign (Euclidean/spherical/hyperbolic) and radius of curvature from a pairwise distance matrix. Fits a constant-curvature Gram matrix `Z(r)` for a target embedding dimension and minimises a normalised signature residual (`fit_spherical`/`fit_hyperbolic`/`detect_geometry`), gated by a Gromov 4-point δ check. Eigenvalues via power iteration + deflation. Native-only (no WASM).
+- **`histogram_curvature.rs`**: Estimates intrinsic dimension and geometry from shell-density histograms + OLS fitting of log-density vs (transformed) radius. Also provides `gromov_hyperbolicity` used by `curvature_detection`.
 - **`kl_divergence.rs`**: Global t-SNE similarity matrix (`compute_global_similarities`) using `(1 + d²)` kernel (Zhou & Sharpee loss variant that emphasizes large distances).
 - **`scaling_loss.rs`**: Radial regularization for hyperbolic embeddings — penalizes geodesic spread from origin. Returns `(loss, ambient_gradient)`; caller must project gradient to tangent space.
 - **`data.rs`**: MNIST loader from IDX binary format. `#[cfg(not(target_arch = "wasm32"))]` — not compiled for WASM.

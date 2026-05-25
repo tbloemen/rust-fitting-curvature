@@ -39,7 +39,8 @@ impl Evaluator {
 
     /// Detect the best-fitting geometry for this dataset using shell density profiles.
     pub fn infer_geometry(&self) -> GeometryDetection {
-        detect_geometry(&self.high_dim_dist, self.n_samples)
+        // Fit the curvature models at the embedding target dimension (2-D).
+        detect_geometry(&self.high_dim_dist, self.n_samples, 2)
     }
 
     pub fn compute_all_metrics(

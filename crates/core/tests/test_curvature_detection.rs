@@ -7,15 +7,15 @@ use fitting_core::curvature_detection::{
     spherical_residual_at,
 };
 use fitting_core::synthetic_data::{
-    generate_hd_sphere, generate_uniform_ball_2d, generate_uniform_ball_3d,
-    generate_uniform_hyperbolic, generate_uniform_hyperbolic3, generate_uniform_sphere,
-    generate_uniform_sphere3,
+    generate_uniform_ball_2d, generate_uniform_hyperbolic, generate_uniform_sphere,
 };
 
 const N: usize = 400;
 const SEED: u64 = 42;
 const E_RADIUS: f64 = 5.0;
 const H_MAX_RHO: f64 = 5.0;
+/// Target embedding dimension the curvature models are fitted at.
+const DIM: usize = 2;
 
 // ── Sanity checks ──────────────────────────────────────────────────────────
 
@@ -28,8 +28,8 @@ fn fit_spherical_unit_sphere_recovers_radius() {
         radius,
         residual,
         at_upper_bound,
-    } = fit_spherical(&data.distances, N);
-    println!("S²: r* = {radius:.3}, |λ₁| = {residual:.3e}, at_upper = {at_upper_bound}");
+    } = fit_spherical(&data.distances, N, DIM);
+    println!("S²: r* = {radius:.3}, ρ = {residual:.3e}, at_upper = {at_upper_bound}");
     assert!(
         (0.8..=1.5).contains(&radius),
         "S² recovered radius {radius:.3} should be near 1 (true)"
@@ -49,10 +49,10 @@ fn fit_spherical_unit_sphere_recovers_radius() {
 fn fit_spherical_euclidean_has_small_angular_extent() {
     let data = generate_uniform_ball_2d(N, SEED, E_RADIUS);
     let d_max = data.distances.iter().cloned().fold(0.0_f64, f64::max);
-    let fit = fit_spherical(&data.distances, N);
+    let fit = fit_spherical(&data.distances, N, DIM);
     let angular = d_max / fit.radius;
     println!(
-        "E²(spherical fit): r* = {:.3}, |λ₁| = {:.3e}, d_max/r* = {:.3}",
+        "E²(spherical fit): r* = {:.3}, ρ = {:.3e}, d_max/r* = {:.3}",
         fit.radius, fit.residual, angular,
     );
     assert!(
@@ -66,9 +66,9 @@ fn fit_spherical_euclidean_has_small_angular_extent() {
 #[test]
 fn fit_hyperbolic_h2_recovers_finite_radius() {
     let data = generate_uniform_hyperbolic(N, SEED, H_MAX_RHO);
-    let fit = fit_hyperbolic(&data.distances, N);
+    let fit = fit_hyperbolic(&data.distances, N, DIM);
     println!(
-        "H²: r* = {:.3}, |λ₂| = {:.3e}, at_upper = {}",
+        "H²: r* = {:.3}, ρ = {:.3e}, at_upper = {}",
         fit.radius, fit.residual, fit.at_upper_bound,
     );
     assert!(
@@ -81,15 +81,13 @@ fn fit_hyperbolic_h2_recovers_finite_radius() {
 
 #[test]
 fn detect_curvature_single_seed_per_geometry() {
-    let cases: [(&str, Vec<f64>, &str); 6] = [
+    // Only intrinsically-2D fixtures: the detector fits dim-2 models, so
+    // higher-dimensional manifolds (S³, H³, …) have no well-defined
+    // expected radius/geometry under this criterion.
+    let cases: [(&str, Vec<f64>, &str); 3] = [
         (
             "E²",
             generate_uniform_ball_2d(N, SEED, E_RADIUS).distances,
-            "euclidean",
-        ),
-        (
-            "E³",
-            generate_uniform_ball_3d(N, SEED, E_RADIUS).distances,
             "euclidean",
         ),
         (
@@ -98,24 +96,14 @@ fn detect_curvature_single_seed_per_geometry() {
             "spherical",
         ),
         (
-            "S³",
-            generate_uniform_sphere3(N, SEED).distances,
-            "spherical",
-        ),
-        (
             "H²",
             generate_uniform_hyperbolic(N, SEED, H_MAX_RHO).distances,
-            "hyperbolic",
-        ),
-        (
-            "H³",
-            generate_uniform_hyperbolic3(N, SEED, H_MAX_RHO).distances,
             "hyperbolic",
         ),
     ];
 
     for (name, dist, expected) in &cases {
-        let r = detect_geometry(dist, N);
+        let r = detect_geometry(dist, N, DIM);
         println!(
             "{name}: best = {}, K = {:+.3}, S(r={:.2}, ε={:.2e}), H(r={:.2}, ε={:.2e})",
             r.best_geometry,
@@ -138,15 +126,10 @@ fn detect_curvature_single_seed_per_geometry() {
 #[test]
 #[ignore = "diagnostic only"]
 fn diag_all_fixtures() {
-    let cases: [(&str, Vec<f64>, &str); 6] = [
+    let cases: [(&str, Vec<f64>, &str); 3] = [
         (
             "E²",
             generate_uniform_ball_2d(N, SEED, E_RADIUS).distances,
-            "euclidean",
-        ),
-        (
-            "E³",
-            generate_uniform_ball_3d(N, SEED, E_RADIUS).distances,
             "euclidean",
         ),
         (
@@ -155,18 +138,8 @@ fn diag_all_fixtures() {
             "spherical",
         ),
         (
-            "S³",
-            generate_uniform_sphere3(N, SEED).distances,
-            "spherical",
-        ),
-        (
             "H²",
             generate_uniform_hyperbolic(N, SEED, H_MAX_RHO).distances,
-            "hyperbolic",
-        ),
-        (
-            "H³",
-            generate_uniform_hyperbolic3(N, SEED, H_MAX_RHO).distances,
             "hyperbolic",
         ),
     ];
@@ -175,7 +148,7 @@ fn diag_all_fixtures() {
     println!("Fixture | best        | S(r*, ε, d/r*)     | H(r*, ε, d/r*)");
     for (name, dist, _expected) in &cases {
         let d_max = dist.iter().cloned().fold(0.0f64, f64::max);
-        let r = detect_geometry(dist, N);
+        let r = detect_geometry(dist, N, DIM);
         let s_ang = d_max / r.spherical.radius;
         let h_ang = d_max / r.hyperbolic.radius;
         println!(
@@ -196,10 +169,9 @@ fn diag_all_fixtures() {
 #[test]
 #[ignore = "diagnostic only"]
 fn diag_residual_curve() {
-    let cases: [(&str, Vec<f64>); 4] = [
+    let cases: [(&str, Vec<f64>); 3] = [
         ("E²", generate_uniform_ball_2d(N, SEED, E_RADIUS).distances),
         ("S²", generate_uniform_sphere(N, SEED).distances),
-        ("S³", generate_uniform_sphere3(N, SEED).distances),
         (
             "H²",
             generate_uniform_hyperbolic(N, SEED, H_MAX_RHO).distances,
@@ -209,7 +181,7 @@ fn diag_residual_curve() {
     for (name, dist) in &cases {
         let d_max = dist.iter().cloned().fold(0.0f64, f64::max);
         println!("\n── {name} (d_max={d_max:.2}) ──");
-        println!("       r        |λ₁(spherical)|     |λ₂(hyperbolic)|");
+        println!("       r        ρ(spherical)       ρ(hyperbolic)");
         // Span the full hyperbolic search range from d_max/20 to 5*d_max
         // so we see whether residual minima live at small r (the true
         // hyperbolic regime) or large r (the Euclidean limit).
@@ -219,11 +191,11 @@ fn diag_residual_curve() {
             let t = i as f64 / 19.0;
             let r = r_lo * (r_hi / r_lo).powf(t);
             let s_res = if r >= d_max / std::f64::consts::PI {
-                spherical_residual_at(dist, N, r)
+                spherical_residual_at(dist, N, DIM, r)
             } else {
                 f64::NAN
             };
-            let h_res = hyperbolic_residual_at(dist, N, r);
+            let h_res = hyperbolic_residual_at(dist, N, DIM, r);
             println!("  {r:8.3}    {s_res:14.3e}    {h_res:14.3e}");
         }
     }
@@ -235,7 +207,7 @@ const ROBUSTNESS_SEEDS: u64 = 1;
 
 fn hit_rate<F: Fn(u64) -> Vec<f64>>(make_dist: F, expected: &str) -> usize {
     (0..ROBUSTNESS_SEEDS)
-        .filter(|&s| detect_geometry(&make_dist(s), N).best_geometry == expected)
+        .filter(|&s| detect_geometry(&make_dist(s), N, DIM).best_geometry == expected)
         .count()
 }
 
@@ -253,55 +225,12 @@ fn robust_seeds_e2() {
 }
 
 #[test]
-fn robust_seeds_e3() {
-    let h = hit_rate(
-        |s| generate_uniform_ball_3d(N, s, E_RADIUS).distances,
-        "euclidean",
-    );
-    println!("E³: {h}/{ROBUSTNESS_SEEDS}");
-    assert!(
-        h as u64 >= ROBUSTNESS_SEEDS - 1,
-        "E³: {h}/{ROBUSTNESS_SEEDS}"
-    );
-}
-
-#[test]
 fn robust_seeds_s2() {
     let h = hit_rate(|s| generate_uniform_sphere(N, s).distances, "spherical");
     println!("S²: {h}/{ROBUSTNESS_SEEDS}");
     assert!(
         h as u64 >= ROBUSTNESS_SEEDS - 1,
         "S²: {h}/{ROBUSTNESS_SEEDS}"
-    );
-}
-
-#[test]
-fn robust_seeds_s3() {
-    let h = hit_rate(|s| generate_uniform_sphere3(N, s).distances, "spherical");
-    println!("S³: {h}/{ROBUSTNESS_SEEDS}");
-    assert!(
-        h as u64 >= ROBUSTNESS_SEEDS - 1,
-        "S³: {h}/{ROBUSTNESS_SEEDS}"
-    );
-}
-
-#[test]
-fn robust_seeds_s4() {
-    let h = hit_rate(|s| generate_hd_sphere(N, 5, s).distances, "spherical");
-    println!("S⁴: {h}/{ROBUSTNESS_SEEDS}");
-    assert!(
-        h as u64 >= ROBUSTNESS_SEEDS - 1,
-        "S⁴: {h}/{ROBUSTNESS_SEEDS}"
-    );
-}
-
-#[test]
-fn robust_seeds_s5() {
-    let h = hit_rate(|s| generate_hd_sphere(N, 6, s).distances, "spherical");
-    println!("S⁵: {h}/{ROBUSTNESS_SEEDS}");
-    assert!(
-        h as u64 >= ROBUSTNESS_SEEDS - 1,
-        "S⁵: {h}/{ROBUSTNESS_SEEDS}"
     );
 }
 
@@ -315,18 +244,5 @@ fn robust_seeds_h2() {
     assert!(
         h as u64 >= ROBUSTNESS_SEEDS - 1,
         "H²: {h}/{ROBUSTNESS_SEEDS}"
-    );
-}
-
-#[test]
-fn robust_seeds_h3() {
-    let h = hit_rate(
-        |s| generate_uniform_hyperbolic3(N, s, H_MAX_RHO).distances,
-        "hyperbolic",
-    );
-    println!("H³: {h}/{ROBUSTNESS_SEEDS}");
-    assert!(
-        h as u64 >= ROBUSTNESS_SEEDS - 1,
-        "H³: {h}/{ROBUSTNESS_SEEDS}"
     );
 }
