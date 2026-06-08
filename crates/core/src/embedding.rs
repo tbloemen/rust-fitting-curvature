@@ -103,29 +103,27 @@ impl EmbeddingState {
         //   r = ‖x[1..]‖ / (x[0] + 1) ∈ [0, 1).
         // The depth norm loss then matches the embedding's Poincaré radius to it.
         // Euclidean (k = 0) and spherical (k > 0) keep the feature ‖x‖² loss.
-        let target_norms = if config.norm_loss_weight > 0.0
-            && config.curvature < 0.0
-            && n_features >= 2
-        {
-            (0..n_points)
-                .map(|i| {
-                    let o = i * n_features;
-                    let x0 = data[o];
-                    let spatial = (1..n_features)
-                        .map(|d| data[o + d] * data[o + d])
-                        .sum::<f64>()
-                        .sqrt();
-                    let denom = x0 + 1.0;
-                    if denom <= 1e-12 {
-                        0.0
-                    } else {
-                        (spatial / denom).clamp(0.0, 1.0 - 1e-6)
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let target_norms =
+            if config.norm_loss_weight > 0.0 && config.curvature < 0.0 && n_features >= 2 {
+                (0..n_points)
+                    .map(|i| {
+                        let o = i * n_features;
+                        let x0 = data[o];
+                        let spatial = (1..n_features)
+                            .map(|d| data[o + d] * data[o + d])
+                            .sum::<f64>()
+                            .sqrt();
+                        let denom = x0 + 1.0;
+                        if denom <= 1e-12 {
+                            0.0
+                        } else {
+                            (spatial / denom).clamp(0.0, 1.0 - 1e-6)
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
         Self {
             points,
