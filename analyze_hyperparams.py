@@ -13,6 +13,7 @@ Hyperparameter sensitivity analysis for fitting-curvature optimizer results.
   Also runs HSIC analysis on ALL MOBO trial records (not just the Pareto front):
   hsic_importance.svg  — Pairwise HSIC(param, metric) heatmap: raw kernel-based dependence
   hsic_redundancy.svg  — HSIC(param_i, param_j) redundancy matrix: which params are collinear
+  hsic_metric_redundancy.svg — HSIC(metric_i, metric_j): which metrics measure the same thing
   hsic_lasso.svg       — HSIC-LASSO (Yamada et al. 2014): sparse weights heatmap + bar chart
 
 --mode scan
@@ -2288,7 +2289,8 @@ def _build_xy(
 ) -> tuple[np.ndarray, np.ndarray, list[str], list[str]]:
     """Extract aligned X (n×p) and Y (n×q) arrays, dropping zero-variance columns."""
     valid = [
-        r for r in records
+        r
+        for r in records
         if all(isinstance(r.get(p), (int, float)) for p in params)
         and all(isinstance(r.get(m), (int, float)) for m in metrics)
     ]
@@ -2301,7 +2303,8 @@ def _build_xy(
     x_keep = [i for i, s in enumerate(X.std(axis=0)) if s > 1e-10]
     y_keep = [i for i, s in enumerate(Y.std(axis=0)) if s > 1e-10]
     return (
-        X[:, x_keep], Y[:, y_keep],
+        X[:, x_keep],
+        Y[:, y_keep],
         [params[i] for i in x_keep],
         [metrics[i] for i in y_keep],
     )
@@ -2321,7 +2324,17 @@ def _hsic_pairwise(X: np.ndarray, Y: np.ndarray) -> np.ndarray:
     Compute (p, q) matrix of HSIC values.
 
     HSIC(x_i, y_j) = tr(K_{x_i,c} K_{y_j,c}) / (n-1)²
+
+    Each RBF kernel is n×n, so n is capped (deterministic subsample) to keep
+    memory bounded — at a few thousand trials the uncapped kernels are >1 GB
+    each and exhaust RAM.  500 samples is ample for a dependence estimate and
+    matches the cap used by ``_hsic_lasso_weights``.
     """
+    # n_cap = 500
+    # if X.shape[0] > n_cap:
+    #     idx = np.linspace(0, X.shape[0] - 1, n_cap, dtype=int)
+    #     X, Y = X[idx], Y[idx]
+
     n, p = X.shape
     q = Y.shape[1]
     out = np.zeros((p, q))
@@ -2356,7 +2369,7 @@ def _hsic_lasso_weights(X: np.ndarray, Y: np.ndarray) -> np.ndarray:
     for i in range(p):
         L = _center_kernel(_rbf_kernel(Xs[:, i])) / (nf - 1)
         cols.append(L.ravel())
-    A = np.column_stack(cols)                             # (nf², p)
+    A = np.column_stack(cols)  # (nf², p)
 
     col_norms = np.linalg.norm(A, axis=0)
     col_norms = np.where(col_norms < 1e-10, 1.0, col_norms)
@@ -2398,14 +2411,19 @@ def _draw_hsic_heatmap(
         for j in range(matrix.shape[1]):
             v = matrix[i, j] / vmax
             ax.text(
-                j, i, f"{matrix[i, j]:.3f}",
-                ha="center", va="center", fontsize=5.5,
+                j,
+                i,
+                f"{matrix[i, j]:.3f}",
+                ha="center",
+                va="center",
+                fontsize=5.5,
                 color="white" if v > 0.6 else "black",
             )
 
 
 def _tag_pareto(all_trials: list[dict], front_entries: list[dict]) -> None:
     """Add 'is_on_pareto' boolean in-place to each record in all_trials."""
+
     def _fp(r: dict) -> tuple:
         return (
             r.get("learning_rate"),
@@ -2415,6 +2433,7 @@ def _tag_pareto(all_trials: list[dict], front_entries: list[dict]) -> None:
             r.get("geometry"),
             r.get("dataset_name"),
         )
+
     fps = {_fp(r) for r in front_entries}
     for r in all_trials:
         r["is_on_pareto"] = _fp(r) in fps
@@ -2437,7 +2456,10 @@ def plot_hsic_importance(records: list[dict], out_path: str) -> None:
     n_p, n_m = len(params), len(metrics)
     fig, ax = plt.subplots(figsize=(max(8, n_m * 0.9 + 2.5), max(3, n_p * 0.55 + 1.8)))
     _draw_hsic_heatmap(
-        ax, H, params, metrics,
+        ax,
+        H,
+        params,
+        metrics,
         f"HSIC parameter–metric dependence  (n={X.shape[0]} MOBO trials)",
     )
     fig.tight_layout()
@@ -2467,8 +2489,51 @@ def plot_hsic_redundancy(records: list[dict], out_path: str) -> None:
     n_p = len(params)
     fig, ax = plt.subplots(figsize=(max(5, n_p * 0.75 + 1.5), max(4, n_p * 0.65 + 1.5)))
     _draw_hsic_heatmap(
-        ax, H_norm, params, params,
+        ax,
+        H_norm,
+        params,
+        params,
         f"HSIC parameter redundancy  (n={X.shape[0]} MOBO trials)",
+        normalize_cols=False,
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"  {out_path}")
+
+
+def plot_hsic_metric_redundancy(records: list[dict], out_path: str) -> None:
+    """
+    Symmetric HSIC(metric_i, metric_j) redundancy heatmap.
+
+    Metric-side analogue of ``plot_hsic_redundancy``: instead of measuring which
+    parameters carry overlapping information, this measures which *metrics* do.
+    Unlike ``metric_correlation.svg`` (Spearman, monotonic only), HSIC captures
+    any dependence — including nonlinear / non-monotonic — so two metrics that
+    redundantly track the same structure show up even when their rank
+    correlation is weak.
+
+    Normalized by the geometric mean of the diagonal so values are in [0, 1],
+    analogous to a kernel correlation coefficient.  High values mean the two
+    metrics essentially measure the same thing.
+    """
+    _, Y, _, metrics = _build_xy(records, _HSIC_OPTIM_PARAMS, _HSIC_METRICS)
+    if Y.shape[0] == 0 or len(metrics) < 2:
+        print(f"  {out_path} (skipped — fewer than 2 metrics with variance)")
+        return
+    H = _hsic_pairwise(Y, Y)
+
+    diag = np.maximum(np.diag(H), 1e-12)
+    H_norm = H / np.sqrt(np.outer(diag, diag))
+
+    n_m = len(metrics)
+    fig, ax = plt.subplots(figsize=(max(5, n_m * 0.75 + 1.5), max(4, n_m * 0.65 + 1.5)))
+    _draw_hsic_heatmap(
+        ax,
+        H_norm,
+        metrics,
+        metrics,
+        f"HSIC metric redundancy  (n={Y.shape[0]} MOBO trials)",
         normalize_cols=False,
     )
     fig.tight_layout()
@@ -2490,22 +2555,28 @@ def plot_hsic_lasso(records: list[dict], out_path: str) -> None:
         print(f"  {out_path} (skipped — not enough complete records)")
         return
     n = X.shape[0]
-    print(f"    HSIC-LASSO: {n} trials, {len(params)} params, {len(metrics)} metrics ...")
+    print(
+        f"    HSIC-LASSO: {n} trials, {len(params)} params, {len(metrics)} metrics ..."
+    )
     X_t = _log_transform(X, params)
-    W = _hsic_lasso_weights(X_t, Y)           # (p, q)
+    W = _hsic_lasso_weights(X_t, Y)  # (p, q)
 
     aggregate = W.sum(axis=1)
     order = np.argsort(aggregate)[::-1]
 
     n_p, n_m = len(params), len(metrics)
     fig, (ax_heat, ax_bar) = plt.subplots(
-        1, 2,
+        1,
+        2,
         figsize=(max(14, n_m * 0.9 + n_p * 0.9 + 4), max(4, n_p * 0.55 + 2)),
         gridspec_kw={"width_ratios": [2, 1]},
     )
 
     _draw_hsic_heatmap(
-        ax_heat, W, params, metrics,
+        ax_heat,
+        W,
+        params,
+        metrics,
         "HSIC-LASSO weights (per-metric normalized)",
     )
 
@@ -2514,8 +2585,7 @@ def plot_hsic_lasso(records: list[dict], out_path: str) -> None:
     p75 = float(np.percentile(xs, 75)) if xs else 0.0
     p50 = float(np.percentile(xs, 50)) if xs else 0.0
     colors = [
-        "#d7191c" if x >= p75 else "#fdae61" if x >= p50 else "#abd9e9"
-        for x in xs
+        "#d7191c" if x >= p75 else "#fdae61" if x >= p50 else "#abd9e9" for x in xs
     ]
     ys = list(range(len(params)))
     ax_bar.barh(ys, xs, color=colors, alpha=0.85, height=0.6)
@@ -2538,10 +2608,7 @@ def plot_hsic_lasso(records: list[dict], out_path: str) -> None:
 def _has_gauge_data(r: dict) -> bool:
     k = r.get("curvature")
     return (
-        k is not None
-        and k != 0.0
-        and r.get("r_max") is not None
-        and r["r_max"] > 0.0
+        k is not None and k != 0.0 and r.get("r_max") is not None and r["r_max"] > 0.0
     )
 
 
@@ -2681,9 +2748,7 @@ def plot_gauge_invariant(
         rng = np.random.default_rng(0)
         for arr, x0 in [(log_K, 0), (log_inv, 1)]:
             jitter = rng.uniform(-0.08, 0.08, size=arr.shape)
-            ax_r.scatter(
-                x0 + jitter, arr, s=10, color="#222", alpha=0.6, linewidths=0
-            )
+            ax_r.scatter(x0 + jitter, arr, s=10, color="#222", alpha=0.6, linewidths=0)
 
         sK, sI = log_K.std(), log_inv.std()
         ratio = sK / sI if sI > 1e-12 else float("inf")
@@ -2848,7 +2913,9 @@ def _run_pareto(args: "argparse.Namespace") -> None:
     plot_pareto_tradeoff(
         pool, front_entries, os.path.join(args.output, "pareto_tradeoff.svg")
     )
-    plot_pareto_objectives(front_entries, args.output)
+    # plot_pareto_objectives is skipped: with large Pareto fronts (hundreds of
+    # entries) its one-row-per-entry heatmap produces a figure tens of inches
+    # tall whose rasterised image exhausts memory.
     plot_pareto_hyperparam_split_v2(
         front_entries, os.path.join(args.output, "pareto_hyperparam_split_v2.svg")
     )
@@ -2869,9 +2936,10 @@ def _run_pareto(args: "argparse.Namespace") -> None:
         plot_hsic_redundancy(
             all_trials, os.path.join(args.output, "hsic_redundancy.svg")
         )
-        plot_hsic_lasso(
-            all_trials, os.path.join(args.output, "hsic_lasso.svg")
+        plot_hsic_metric_redundancy(
+            all_trials, os.path.join(args.output, "hsic_metric_redundancy.svg")
         )
+        plot_hsic_lasso(all_trials, os.path.join(args.output, "hsic_lasso.svg"))
     else:
         print(
             "\n  HSIC analysis skipped — no background trial data found.\n"

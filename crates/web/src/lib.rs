@@ -225,6 +225,22 @@ impl EmbeddingRunner {
             }
             self.state.step();
         }
+        // Diagnostic: log the norm-loss gradient magnitude vs the full gradient so
+        // its effect (or lack thereof) is visible in the browser dev console.
+        let norm_rms = self.state.last_norm_grad_rms;
+        let total_rms = self.state.last_total_grad_rms;
+        let ratio = if total_rms > 0.0 {
+            norm_rms / total_rms
+        } else {
+            0.0
+        };
+        web_sys::console::log_1(&JsValue::from_str(&format!(
+            "iter {} | norm-loss grad RMS {:.3e} | total grad RMS {:.3e} | ratio {:.2}%",
+            self.state.iteration,
+            norm_rms,
+            total_rms,
+            ratio * 100.0
+        )));
         true
     }
 

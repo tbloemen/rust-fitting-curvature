@@ -24,6 +24,11 @@ pub struct EmbeddingState {
     pub ambient_dim: usize,
     pub iteration: usize,
     pub loss: f64,
+    /// Diagnostic: RMS magnitude of the weighted, tangent-projected norm-loss
+    /// gradient contribution added during the last `step` (0 when inactive).
+    pub last_norm_grad_rms: f64,
+    /// Diagnostic: RMS magnitude of the full gradient during the last `step`.
+    pub last_total_grad_rms: f64,
     config: TrainingConfig,
     manifold: Box<dyn Manifold>,
     optimizer: RiemannianSGDMomentum,
@@ -37,11 +42,11 @@ pub struct EmbeddingState {
     /// Pre-computed high-dimensional distance matrix.
     /// Set by `from_distances`; empty for feature-based construction.
     precomputed_distances: Vec<f64>,
-    /// Per-point target depth norms for the distance-based norm loss.
-    /// `target_norms[i] = tanh(dist_to_root[i] / (2R))` for k < 0,
-    /// `dist_to_root[i]` for k = 0.
-    /// Non-empty only for `from_distances` when `norm_loss_weight > 0`.
-    /// When non-empty, the depth norm loss is used instead of the feature norm loss.
+    /// Per-point target depths (bounded Poincaré radius for k < 0) for the depth
+    /// norm loss. Populated when `norm_loss_weight > 0` from either the root graph
+    /// distance (`from_distances`: `tanh(dist_to_root / 2R)`) or the input vector's
+    /// own Poincaré radius (`new`, hyperbolic feature data). When non-empty the
+    /// depth norm loss is used instead of the raw-‖x‖² feature norm loss.
     target_norms: Vec<f64>,
     // Metric computation state -------------------------------------------
     /// Class labels for label-dependent metrics; `None` if unavailable.
@@ -90,12 +95,44 @@ impl EmbeddingState {
             Vec::new()
         };
 
+        // For hyperbolic feature data, the norm loss targets each point's *input*
+        // Poincaré radius (bounded in [0, 1)) instead of its raw ambient ‖x‖²
+        // (which diverges near the boundary and dwarfs the KL gradient — see the
+        // depth norm loss). The input vector is interpreted as a unit-hyperboloid
+        // point (coord 0 = time, coords 1.. = spatial), whose Poincaré radius is
+        //   r = ‖x[1..]‖ / (x[0] + 1) ∈ [0, 1).
+        // The depth norm loss then matches the embedding's Poincaré radius to it.
+        // Euclidean (k = 0) and spherical (k > 0) keep the feature ‖x‖² loss.
+        let target_norms =
+            if config.norm_loss_weight > 0.0 && config.curvature < 0.0 && n_features >= 2 {
+                (0..n_points)
+                    .map(|i| {
+                        let o = i * n_features;
+                        let x0 = data[o];
+                        let spatial = (1..n_features)
+                            .map(|d| data[o + d] * data[o + d])
+                            .sum::<f64>()
+                            .sqrt();
+                        let denom = x0 + 1.0;
+                        if denom <= 1e-12 {
+                            0.0
+                        } else {
+                            (spatial / denom).clamp(0.0, 1.0 - 1e-6)
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
         Self {
             points,
             n_points,
             ambient_dim,
             iteration: 0,
             loss: 0.0,
+            last_norm_grad_rms: 0.0,
+            last_total_grad_rms: 0.0,
             config: config.clone(),
             manifold,
             optimizer,
@@ -104,7 +141,7 @@ impl EmbeddingState {
             input_data: data.to_vec(),
             n_features,
             precomputed_distances: Vec::new(),
-            target_norms: Vec::new(),
+            target_norms,
             labels: None,
             projection: SphericalProjection::AzimuthalEquidistant,
         }
@@ -187,6 +224,8 @@ impl EmbeddingState {
             ambient_dim,
             iteration: 0,
             loss: 0.0,
+            last_norm_grad_rms: 0.0,
+            last_total_grad_rms: 0.0,
             config: config.clone(),
             manifold,
             optimizer,
@@ -243,6 +282,9 @@ impl EmbeddingState {
     pub fn step(&mut self) -> &str {
         let n_points = self.n_points;
         let ambient_dim = self.ambient_dim;
+
+        // Reset per-step diagnostics; repopulated below if the norm loss is active.
+        self.last_norm_grad_rms = 0.0;
 
         // Phase transition
         if self.iteration == self.config.early_exaggeration_iterations {
@@ -321,9 +363,11 @@ impl EmbeddingState {
             self.loss += self.config.global_loss_weight * kl_loss(&q_hat, &self.p_hat, n_points);
         }
 
-        // Depth norm loss for graph/tree data: compares each point's depth from
-        // the embedding origin to a target depth derived from its root distance.
-        // Used when initialized from a pairwise distance matrix (no feature vectors).
+        // Depth norm loss: compares each point's depth (Poincaré radius for k < 0)
+        // from the embedding origin to a bounded target. The target is derived from
+        // the root graph distance (distance-based path) or from the input vector's
+        // own Poincaré radius (hyperbolic feature path). Bounded, so it cannot dwarf
+        // the KL gradient the way the raw-‖x‖² feature loss does.
         if self.config.norm_loss_weight > 0.0 && !self.target_norms.is_empty() {
             let (depth_loss, mut depth_grad) = depth_norm_loss_gradient(
                 &self.points,
@@ -335,16 +379,22 @@ impl EmbeddingState {
             );
             self.manifold
                 .project_to_tangent(&self.points, &mut depth_grad, n_points, ambient_dim);
+            let mut sumsq = 0.0;
             for k in 0..grad.len() {
-                grad[k] += self.config.norm_loss_weight * depth_grad[k];
+                let contrib = self.config.norm_loss_weight * depth_grad[k];
+                grad[k] += contrib;
+                sumsq += contrib * contrib;
             }
+            self.last_norm_grad_rms = (sumsq / grad.len() as f64).sqrt();
             self.loss += self.config.norm_loss_weight * depth_loss;
         }
 
         // Feature norm loss: penalizes mismatch between ||x_i||² and ||y_i||².
         // Gradient is in ambient coordinates; project to tangent space first.
-        // Skipped when initialized from distances (no input feature vectors).
-        if self.config.norm_loss_weight > 0.0 && self.n_features > 0 {
+        // Skipped when distances drive the loss and when `target_norms` is set
+        // (the bounded Poincaré-radius depth loss above replaces it for k < 0).
+        if self.config.norm_loss_weight > 0.0 && self.n_features > 0 && self.target_norms.is_empty()
+        {
             let (norm_loss, mut norm_grad) = norm_loss_gradient(
                 &self.input_data,
                 &self.points,
@@ -354,11 +404,20 @@ impl EmbeddingState {
             );
             self.manifold
                 .project_to_tangent(&self.points, &mut norm_grad, n_points, ambient_dim);
+            let mut sumsq = 0.0;
             for k in 0..grad.len() {
-                grad[k] += self.config.norm_loss_weight * norm_grad[k];
+                let contrib = self.config.norm_loss_weight * norm_grad[k];
+                grad[k] += contrib;
+                sumsq += contrib * contrib;
             }
+            self.last_norm_grad_rms = (sumsq / grad.len() as f64).sqrt();
             self.loss += self.config.norm_loss_weight * norm_loss;
         }
+
+        // Diagnostic: RMS of the full gradient (for comparison with the norm-loss
+        // contribution captured above).
+        let total_sumsq: f64 = grad.iter().map(|g| g * g).sum();
+        self.last_total_grad_rms = (total_sumsq / grad.len() as f64).sqrt();
 
         // Optimizer step
         self.optimizer.step(
