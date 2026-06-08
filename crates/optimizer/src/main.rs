@@ -1189,10 +1189,10 @@ fn main() {
         eprintln!("Note: --metric is ignored for --mode pareto (optimises all objectives).");
     }
 
-    if let Some(parent) = Path::new(&args.output).parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent).ok();
+    if let Some(parent) = Path::new(&args.output).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).ok();
+        }
     }
 
     let dataset_names = get_dataset_names(&args.dataset);
