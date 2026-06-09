@@ -1,5 +1,4 @@
 #!/bin/sh
-#SBATCH --job-name="mnist-all_off"
 #SBATCH --partition=compute
 #SBATCH --time=06:00:00
 #SBATCH --ntasks=1
@@ -23,7 +22,7 @@ set -eu
 
 DATASET="${DATASET:-mnist}"
 EXPERIMENT="${EXPERIMENT:-all_off}"
-GEOMETRIES="hyperbolic euclidean spherical"
+GEOMETRIES="hyperbolic euclidean"
 
 module load 2025
 module load compiler
