@@ -3,8 +3,8 @@
 //! head-to-head comparison.
 
 use fitting_core::curvature_detection::{
-    WilsonFit, detect_geometry, fit_hyperbolic, fit_spherical, hyperbolic_residual_at,
-    spherical_residual_at,
+    detect_geometry, fit_hyperbolic, fit_spherical, hyperbolic_residual_at, spherical_residual_at,
+    WilsonFit,
 };
 use fitting_core::synthetic_data::{
     generate_uniform_ball_2d, generate_uniform_hyperbolic, generate_uniform_sphere,

@@ -4,7 +4,7 @@
 use fitting_core::config::{InitMethod, ScalingLossType, TrainingConfig};
 use fitting_core::embedding::EmbeddingState;
 use fitting_core::matrices::get_default_init_scale;
-use fitting_core::synthetic_data::{Rng, load_synthetic};
+use fitting_core::synthetic_data::{load_synthetic, Rng};
 use fitting_core::visualisation::SphericalProjection;
 
 fn create_test_data(n_samples: usize, n_features: usize, seed: u64) -> Vec<f64> {

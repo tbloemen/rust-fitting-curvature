@@ -3,7 +3,7 @@ use plotters_canvas::CanvasBackend;
 use wasm_bindgen::JsValue;
 use web_sys::HtmlCanvasElement;
 
-use fitting_core::visualisation::{Projection2D, SphericalProjection, project_to_2d, tab10_color};
+use fitting_core::visualisation::{project_to_2d, tab10_color, Projection2D, SphericalProjection};
 
 const GRID_COLOR: RGBColor = RGBColor(200, 200, 200);
 const AXIS_COLOR: RGBColor = RGBColor(140, 140, 140);

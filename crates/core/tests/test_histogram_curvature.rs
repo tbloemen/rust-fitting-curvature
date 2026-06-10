@@ -1,6 +1,6 @@
 use fitting_core::histogram_curvature::{
-    GROMOV_THRESHOLD, PEAK_RATIO_SPHERICAL, detect_geometry, gromov_hyperbolicity,
-    shell_density_profile,
+    detect_geometry, gromov_hyperbolicity, shell_density_profile, GROMOV_THRESHOLD,
+    PEAK_RATIO_SPHERICAL,
 };
 use fitting_core::synthetic_data::{
     generate_hd_sphere, generate_uniform_ball_2d, generate_uniform_ball_3d,
