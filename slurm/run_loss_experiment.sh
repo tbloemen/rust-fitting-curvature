@@ -28,6 +28,13 @@ module load 2025
 module load compiler
 module load rust
 
+# Build the binary (idempotent). Builds on the compute node, so it links against
+# the cluster's glibc. Cargo file-locks target/ and the registry, so concurrent
+# jobs serialize on the first build and then no-op. --offline avoids needing
+# internet on compute nodes; run `cargo fetch --locked` once on the login node
+# first to populate ~/.cargo so the deps are already downloaded.
+cargo build --release --locked --offline -p fitting-optimizer
+
 PREFIX=${EXPERIMENT}_${DATASET}
 SCRATCH_DIR=/scratch/"$USER"/fitting/results
 HOME_DIR="$HOME"/fitting/results
