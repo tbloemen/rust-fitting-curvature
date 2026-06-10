@@ -1,5 +1,4 @@
 #!/bin/sh
-#SBATCH --job-name="mnist-all_off"
 #SBATCH --partition=compute
 #SBATCH --time=06:00:00
 #SBATCH --ntasks=1
