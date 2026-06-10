@@ -191,7 +191,11 @@ pub fn geodesic_distortion_gu2019(
             }
         }
     }
-    if count == 0 { 0.0 } else { sum / count as f64 }
+    if count == 0 {
+        0.0
+    } else {
+        sum / count as f64
+    }
 }
 
 /// Geodesic distortion (MSE): mean (d_embed - d_high)^2.
@@ -209,7 +213,11 @@ pub fn geodesic_distortion_mse(
             count += 1;
         }
     }
-    if count == 0 { 0.0 } else { sum / count as f64 }
+    if count == 0 {
+        0.0
+    } else {
+        sum / count as f64
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -1189,10 +1189,10 @@ fn main() {
         eprintln!("Note: --metric is ignored for --mode pareto (optimises all objectives).");
     }
 
-    if let Some(parent) = Path::new(&args.output).parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent).ok();
+    if let Some(parent) = Path::new(&args.output).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).ok();
+        }
     }
 
     let dataset_names = get_dataset_names(&args.dataset);
@@ -1296,18 +1296,16 @@ fn main() {
         let queue = Arc::clone(&queue);
         let args = args.clone();
         let mp = Arc::clone(&mp);
-        let h = thread::spawn(move || {
-            loop {
-                let item = queue.lock().unwrap().pop_front();
-                match item {
-                    None => break,
-                    Some((dataset_name, evaluator)) => match args.mode.as_str() {
-                        "scan" => run_scan(&dataset_name, &args, evaluator, &mp),
-                        "bayes" => run_bayes(&dataset_name, &args, evaluator, &mp, n_threads),
-                        "pareto" => run_pareto(&dataset_name, &args, evaluator, &mp, n_threads),
-                        _ => run_random(&dataset_name, &args, evaluator, &mp),
-                    },
-                }
+        let h = thread::spawn(move || loop {
+            let item = queue.lock().unwrap().pop_front();
+            match item {
+                None => break,
+                Some((dataset_name, evaluator)) => match args.mode.as_str() {
+                    "scan" => run_scan(&dataset_name, &args, evaluator, &mp),
+                    "bayes" => run_bayes(&dataset_name, &args, evaluator, &mp, n_threads),
+                    "pareto" => run_pareto(&dataset_name, &args, evaluator, &mp, n_threads),
+                    _ => run_random(&dataset_name, &args, evaluator, &mp),
+                },
             }
         });
         handles.push(h);

@@ -1,11 +1,11 @@
-use fitting_core::curvature_detection::{GeometryDetection, detect_geometry};
+use fitting_core::curvature_detection::{detect_geometry, GeometryDetection};
 use fitting_core::embedding::EmbeddingState;
 use fitting_core::matrices::compute_euclidean_distance_matrix;
 use fitting_core::metrics::{
     class_density_measure, cluster_density_measure, continuity, davies_bouldin_ratio, dunn_index,
     knn_overlap, neighborhood_hit, normalized_stress, shepard_goodness, trustworthiness,
 };
-use fitting_core::visualisation::{SphericalProjection, project_to_2d};
+use fitting_core::visualisation::{project_to_2d, SphericalProjection};
 use indicatif::ProgressBar;
 
 use crate::data::Dataset;

@@ -425,7 +425,11 @@ fn fit_spherical_curved(r_vals: &[f64], log_density: &[f64]) -> FitResult {
             let arg = sqrt_c * r;
             if arg < std::f64::consts::PI {
                 let s = arg.sin();
-                if s > 1e-10 { Some(s.ln()) } else { None }
+                if s > 1e-10 {
+                    Some(s.ln())
+                } else {
+                    None
+                }
             } else {
                 None
             }
