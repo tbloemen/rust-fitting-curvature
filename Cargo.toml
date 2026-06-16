@@ -4,3 +4,7 @@ resolver = "2"
 
 [profile.release]
 lto = true
+# Single codegen unit lets LTO fully inline/vectorise the O(n²) distance and
+# gradient inner loops (the hot path for the 5000-sample sweeps). Costs a slower
+# one-time compile; the SLURM build is cached so jobs pay it at most once.
+codegen-units = 1
