@@ -338,8 +338,30 @@ fn default_pareto_metrics() -> Vec<Metric> {
     ]
 }
 
+/// Build the objective vector fed to the optimizer. A diverged embedding (e.g. an
+/// unbounded Euclidean run that blew up to inf/NaN) yields non-finite metric
+/// values; substitute each metric's worst finite value so the trial is scored as
+/// bad rather than poisoning the GP normalisation or panicking the Pareto sorts.
+/// The raw (possibly non-finite) values are still recorded in the JSONL via
+/// `with_all_metrics`, so diverged trials remain visible in the results.
 fn metrics_to_vec(m: &AllMetrics, metrics: &[Metric]) -> Vec<f64> {
-    metrics.iter().map(|metric| metric.value(m)).collect()
+    use crate::search_space::OptimizeDirection;
+    metrics
+        .iter()
+        .map(|metric| {
+            let v = metric.value(m);
+            if v.is_finite() {
+                v
+            } else {
+                match metric.direction() {
+                    // The maximised metrics here are bounded below by 0 (0 = degenerate);
+                    // normalized_stress is minimised and bounded above by 1 (1 = worst).
+                    OptimizeDirection::Maximize => 0.0,
+                    OptimizeDirection::Minimize => 1.0,
+                }
+            }
+        })
+        .collect()
 }
 
 fn write_pareto_front(front: &[&MultiTrial], metrics: &[Metric], n_samples: usize, path: &str) {
