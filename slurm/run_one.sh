@@ -1,6 +1,6 @@
 #!/bin/sh
 #SBATCH --partition=compute
-#SBATCH --time=06:00:00
+#SBATCH --time=08:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=48
 #SBATCH --mem-per-cpu=3G
