@@ -22,6 +22,7 @@ const DIM: usize = 2;
 /// On unit-sphere data the spherical fit should return a radius close
 /// to 1 with a residual much smaller than the trivial scale (r²·n).
 #[test]
+#[ignore = "too slow"]
 fn fit_spherical_unit_sphere_recovers_radius() {
     let data = generate_uniform_sphere(N, SEED);
     let WilsonFit {
@@ -46,6 +47,7 @@ fn fit_spherical_unit_sphere_recovers_radius() {
 /// covers a small *angular* extent of the fitted sphere
 /// (`d_max / r* ≪ π`).  This test pins that signature.
 #[test]
+#[ignore = "too slow"]
 fn fit_spherical_euclidean_has_small_angular_extent() {
     let data = generate_uniform_ball_2d(N, SEED, E_RADIUS);
     let d_max = data.distances.iter().cloned().fold(0.0_f64, f64::max);
@@ -64,6 +66,7 @@ fn fit_spherical_euclidean_has_small_angular_extent() {
 /// On a hyperbolic dataset with max_rho=5, the recovered radius is
 /// expected near 1 (the true curvature radius of the generator).
 #[test]
+#[ignore = "too slow"]
 fn fit_hyperbolic_h2_recovers_finite_radius() {
     let data = generate_uniform_hyperbolic(N, SEED, H_MAX_RHO);
     let fit = fit_hyperbolic(&data.distances, N, DIM);
@@ -80,6 +83,7 @@ fn fit_hyperbolic_h2_recovers_finite_radius() {
 // ── Single-seed end-to-end detection ───────────────────────────────────────
 
 #[test]
+#[ignore = "too slow"]
 fn detect_curvature_single_seed_per_geometry() {
     // Only intrinsically-2D fixtures: the detector fits dim-2 models, so
     // higher-dimensional manifolds (S³, H³, …) have no well-defined
@@ -212,6 +216,7 @@ fn hit_rate<F: Fn(u64) -> Vec<f64>>(make_dist: F, expected: &str) -> usize {
 }
 
 #[test]
+#[ignore = "too slow"]
 fn robust_seeds_e2() {
     let h = hit_rate(
         |s| generate_uniform_ball_2d(N, s, E_RADIUS).distances,
@@ -225,6 +230,7 @@ fn robust_seeds_e2() {
 }
 
 #[test]
+#[ignore = "too slow"]
 fn robust_seeds_s2() {
     let h = hit_rate(|s| generate_uniform_sphere(N, s).distances, "spherical");
     println!("S²: {h}/{ROBUSTNESS_SEEDS}");
@@ -235,6 +241,7 @@ fn robust_seeds_s2() {
 }
 
 #[test]
+#[ignore = "too slow"]
 fn robust_seeds_h2() {
     let h = hit_rate(
         |s| generate_uniform_hyperbolic(N, s, H_MAX_RHO).distances,

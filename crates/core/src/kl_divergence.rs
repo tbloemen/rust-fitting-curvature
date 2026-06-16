@@ -227,6 +227,12 @@ pub fn kl_gradient(
 }
 
 /// Euclidean KL gradient: -log_{y_i}(y_j) = y_i - y_j.
+///
+/// `p`, `q` and `distances` are assumed symmetric (they are throughout t-SNE),
+/// so each unordered pair {i, j} is visited once and its contribution scattered
+/// into both points: the per-pair `factor` is symmetric and the displacement
+/// flips sign. This is bit-for-bit identical to the naive double loop but does
+/// half the work.
 fn kl_gradient_euclidean(
     points: &[f64],
     q: &[f64],
@@ -238,17 +244,17 @@ fn kl_gradient_euclidean(
     let mut grad = vec![0.0; n_points * ambient_dim];
 
     for i in 0..n_points {
-        for j in 0..n_points {
-            if i == j {
-                continue;
-            }
+        let oi = i * ambient_dim;
+        for j in (i + 1)..n_points {
             let idx = i * n_points + j;
             let d = distances[idx];
             let factor = 4.0 * (p[idx] - q[idx]) / (1.0 + d * d);
 
+            let oj = j * ambient_dim;
             for dim in 0..ambient_dim {
-                let diff = points[i * ambient_dim + dim] - points[j * ambient_dim + dim];
-                grad[i * ambient_dim + dim] += factor * diff;
+                let diff = points[oi + dim] - points[oj + dim];
+                grad[oi + dim] += factor * diff;
+                grad[oj + dim] -= factor * diff;
             }
         }
     }
@@ -273,12 +279,13 @@ fn kl_gradient_hyperboloid(
     let mut grad = vec![0.0; n_points * ambient_dim];
     let r_sq = radius * radius;
 
+    // `p`, `q`, `distances` and the Lorentz inner product are all symmetric in
+    // (i, j), so `alpha` and `scale` (the costly acosh + sqrt) are computed once
+    // per unordered pair and the log map is scattered into both endpoints. The
+    // result is bit-for-bit identical to the naive double loop.
     for i in 0..n_points {
         let oi = i * ambient_dim;
-        for j in 0..n_points {
-            if i == j {
-                continue;
-            }
+        for j in (i + 1)..n_points {
             let idx = i * n_points + j;
             let d = distances[idx];
             let w_ij = 1.0 / (1.0 + d * d);
@@ -302,10 +309,16 @@ fn kl_gradient_hyperboloid(
                 alpha.acosh() / (alpha * alpha - 1.0).sqrt()
             };
 
-            // -log_{y_i}(y_j) = -scale * (y_j - alpha * y_i)
+            // -log_{y_i}(y_j) = -scale * (y_j - alpha * y_i), and symmetrically
+            // -log_{y_j}(y_i) = -scale * (y_i - alpha * y_j). Expressions kept in
+            // the original grouping so the output matches the naive loop exactly.
             for dim in 0..ambient_dim {
-                let u = points[oj + dim] - alpha * points[oi + dim];
-                grad[oi + dim] += coeff * (-scale * u);
+                let yi = points[oi + dim];
+                let yj = points[oj + dim];
+                let ui = yj - alpha * yi;
+                let uj = yi - alpha * yj;
+                grad[oi + dim] += coeff * (-scale * ui);
+                grad[oj + dim] += coeff * (-scale * uj);
             }
         }
     }
@@ -330,12 +343,13 @@ fn kl_gradient_sphere(
     let mut grad = vec![0.0; n_points * ambient_dim];
     let r_sq = radius * radius;
 
+    // Symmetric pair iteration (see `kl_gradient_hyperboloid`): `cos_theta` and
+    // `scale` (the costly acos + sin) are computed once per unordered pair and
+    // the log map scattered into both endpoints. Bit-for-bit identical to the
+    // naive double loop.
     for i in 0..n_points {
         let oi = i * ambient_dim;
-        for j in 0..n_points {
-            if i == j {
-                continue;
-            }
+        for j in (i + 1)..n_points {
             let idx = i * n_points + j;
             let d = distances[idx];
             let w_ij = 1.0 / (1.0 + d * d);
@@ -360,10 +374,15 @@ fn kl_gradient_sphere(
                 theta / sin_theta
             };
 
-            // -log_{y_i}(y_j) = -scale * (y_j - cos_theta * y_i)
+            // -log_{y_i}(y_j) = -scale * (y_j - cos_theta * y_i), and symmetrically
+            // -log_{y_j}(y_i) = -scale * (y_i - cos_theta * y_j).
             for dim in 0..ambient_dim {
-                let u = points[oj + dim] - cos_theta * points[oi + dim];
-                grad[oi + dim] += coeff * (-scale * u);
+                let yi = points[oi + dim];
+                let yj = points[oj + dim];
+                let ui = yj - cos_theta * yi;
+                let uj = yi - cos_theta * yj;
+                grad[oi + dim] += coeff * (-scale * ui);
+                grad[oj + dim] += coeff * (-scale * uj);
             }
         }
     }

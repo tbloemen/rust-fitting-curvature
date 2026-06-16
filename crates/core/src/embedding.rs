@@ -33,9 +33,18 @@ pub struct EmbeddingState {
     manifold: Box<dyn Manifold>,
     optimizer: RiemannianSGDMomentum,
     p_base: Vec<f64>,
+    /// Early-exaggeration copy of `p_base` (each entry scaled by the exaggeration
+    /// factor). Pre-computed once and used during the early phase instead of
+    /// re-allocating a scaled `p_base` every iteration; freed at the phase
+    /// boundary. Empty when there is no early-exaggeration phase.
+    p_early: Vec<f64>,
     /// Globally-normalized input similarities p̂_ij for the Zhou & Sharpee global loss.
     /// Only populated when `config.global_loss_weight > 0`.
     p_hat: Vec<f64>,
+    /// Whether to compute the (O(n²)) KL loss each `step`. The hyperparameter
+    /// search never reads `loss`, so it leaves this off; the interactive/web
+    /// path enables it for display. Default: on.
+    track_loss: bool,
     /// Original input data, kept for metric computation.
     input_data: Vec<f64>,
     n_features: usize,
@@ -125,6 +134,8 @@ impl EmbeddingState {
                 Vec::new()
             };
 
+        let p_early = make_p_early(&p_base, config);
+
         Self {
             points,
             n_points,
@@ -137,7 +148,9 @@ impl EmbeddingState {
             manifold,
             optimizer,
             p_base,
+            p_early,
             p_hat,
+            track_loss: true,
             input_data: data.to_vec(),
             n_features,
             precomputed_distances: Vec::new(),
@@ -218,6 +231,8 @@ impl EmbeddingState {
             Vec::new()
         };
 
+        let p_early = make_p_early(&p_base, config);
+
         Self {
             points,
             n_points,
@@ -230,7 +245,9 @@ impl EmbeddingState {
             manifold,
             optimizer,
             p_base,
+            p_early,
             p_hat,
+            track_loss: true,
             // No input feature vectors in the distance-based path.
             input_data: Vec::new(),
             n_features: 0,
@@ -250,6 +267,16 @@ impl EmbeddingState {
     /// Set the spherical projection used when computing "after-projection" (2D) metrics.
     pub fn with_projection(mut self, projection: SphericalProjection) -> Self {
         self.projection = projection;
+        self
+    }
+
+    /// Enable or disable per-step KL-loss tracking (`self.loss`).
+    ///
+    /// Computing the loss is an O(n²) pass with a `ln` per pair. Callers that
+    /// never read `loss` (e.g. the hyperparameter search) should disable it to
+    /// avoid that work each iteration. Defaults to enabled.
+    pub fn with_loss_tracking(mut self, track: bool) -> Self {
+        self.track_loss = track;
         self
     }
 
@@ -289,16 +316,19 @@ impl EmbeddingState {
         // Phase transition
         if self.iteration == self.config.early_exaggeration_iterations {
             self.optimizer.set_momentum(self.config.momentum_main);
+            // The exaggerated P copy is only needed during the early phase; free
+            // it now that we switch back to the un-exaggerated `p_base`.
+            self.p_early = Vec::new();
         }
 
-        // Current P (with or without exaggeration)
-        let p_current: Vec<f64> = if self.iteration < self.config.early_exaggeration_iterations {
-            self.p_base
-                .iter()
-                .map(|&x| x * self.config.early_exaggeration_factor)
-                .collect()
+        // Current P: the pre-computed exaggerated copy during the early phase,
+        // otherwise the base affinities. No per-iteration allocation.
+        let p_current: &[f64] = if self.iteration < self.config.early_exaggeration_iterations
+            && !self.p_early.is_empty()
+        {
+            &self.p_early
         } else {
-            self.p_base.clone()
+            &self.p_base
         };
 
         // Compute Q and distances
@@ -310,15 +340,17 @@ impl EmbeddingState {
             1.0,
         );
 
-        // Compute loss
-        self.loss = kl_loss(&q, &p_current, n_points);
+        // Compute loss (skipped when loss tracking is disabled, e.g. the search).
+        if self.track_loss {
+            self.loss = kl_loss(&q, p_current, n_points);
+        }
 
         // Compute Riemannian gradient (already a tangent vector)
         let mut grad = kl_gradient(
             self.manifold.as_ref(),
             &self.points,
             &q,
-            &p_current,
+            p_current,
             &distances,
             n_points,
             ambient_dim,
@@ -360,7 +392,10 @@ impl EmbeddingState {
             for k in 0..grad.len() {
                 grad[k] += self.config.global_loss_weight * global_grad[k];
             }
-            self.loss += self.config.global_loss_weight * kl_loss(&q_hat, &self.p_hat, n_points);
+            if self.track_loss {
+                self.loss +=
+                    self.config.global_loss_weight * kl_loss(&q_hat, &self.p_hat, n_points);
+            }
         }
 
         // Depth norm loss: compares each point's depth (Poincaré radius for k < 0)
@@ -498,6 +533,19 @@ impl EmbeddingState {
     pub fn distances_from_origin(&self) -> Vec<f64> {
         self.manifold
             .distances_from_origin(&self.points, self.n_points, self.ambient_dim)
+    }
+}
+
+/// Pre-compute the early-exaggeration P matrix (`p_base` scaled by the
+/// exaggeration factor), or an empty vector when there is no early-exaggeration
+/// phase (zero iterations, or a factor of exactly 1.0 which leaves `p_base`
+/// unchanged). Lets `step` reuse this instead of re-scaling every iteration.
+fn make_p_early(p_base: &[f64], config: &TrainingConfig) -> Vec<f64> {
+    if config.early_exaggeration_iterations > 0 && config.early_exaggeration_factor != 1.0 {
+        let factor = config.early_exaggeration_factor;
+        p_base.iter().map(|&x| x * factor).collect()
+    } else {
+        Vec::new()
     }
 }
 

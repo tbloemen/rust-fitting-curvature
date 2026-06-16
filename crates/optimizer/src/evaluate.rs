@@ -60,7 +60,8 @@ impl Evaluator {
             EmbeddingState::new(&self.dataset.x, self.dataset.n_features, &training_config)
         } else {
             EmbeddingState::from_distances(&self.dataset.precomputed_distances, n, &training_config)
-        };
+        }
+        .with_loss_tracking(false);
         while !state.is_done() {
             state.step();
             pb_iters.inc(1);
@@ -141,7 +142,8 @@ impl Evaluator {
             EmbeddingState::new(&self.dataset.x, self.dataset.n_features, &training_config)
         } else {
             EmbeddingState::from_distances(&self.dataset.precomputed_distances, n, &training_config)
-        };
+        }
+        .with_loss_tracking(false);
         while !state.is_done() {
             state.step();
             pb_iters.inc(1);
