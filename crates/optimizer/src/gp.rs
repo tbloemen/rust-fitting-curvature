@@ -126,12 +126,12 @@ impl GpOptimizer {
             OptimizeDirection::Maximize => self
                 .trials
                 .iter()
-                .max_by(|a, b| a.metric.partial_cmp(&b.metric).unwrap())
+                .max_by(|a, b| a.metric.total_cmp(&b.metric))
                 .map(|t| &t.config),
             OptimizeDirection::Minimize => self
                 .trials
                 .iter()
-                .min_by(|a, b| a.metric.partial_cmp(&b.metric).unwrap())
+                .min_by(|a, b| a.metric.total_cmp(&b.metric))
                 .map(|t| &t.config),
         }
     }

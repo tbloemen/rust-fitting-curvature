@@ -1,6 +1,6 @@
 #!/bin/sh
 #SBATCH --partition=compute
-#SBATCH --time=06:00:00
+#SBATCH --time=08:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=48
 #SBATCH --mem-per-cpu=3G
@@ -46,6 +46,7 @@ mkdir -p "$SCRATCH_DIR" "$HOME_DIR"
 # before the time limit.
 sync_back() {
   cp -f "$SCRATCH_DIR"/"$PREFIX"_*.jsonl "$HOME_DIR"/ 2>/dev/null || true
+  cp -f "$SCRATCH_DIR"/"$PREFIX"_*_pareto_*.json "$HOME_DIR"/ 2>/dev/null || true
 }
 trap sync_back EXIT
 

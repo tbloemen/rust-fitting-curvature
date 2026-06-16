@@ -17,11 +17,9 @@ fn compute_ranks(distances: &[f64], n: usize) -> Vec<usize> {
     let mut ranks = vec![0usize; n * n];
     for i in 0..n {
         let mut indices: Vec<usize> = (0..n).collect();
-        indices.sort_by(|&a, &b| {
-            distances[i * n + a]
-                .partial_cmp(&distances[i * n + b])
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // total_cmp gives a proper total order (NaN/inf sort last), so sort_by
+        // cannot panic when a diverged embedding produces non-finite distances.
+        indices.sort_by(|&a, &b| distances[i * n + a].total_cmp(&distances[i * n + b]));
         for (rank, &j) in indices.iter().enumerate() {
             ranks[i * n + j] = rank;
         }
@@ -34,11 +32,7 @@ fn knn_index_sets(dist: &[f64], n: usize, k: usize) -> Vec<Vec<usize>> {
     (0..n)
         .map(|i| {
             let mut indices: Vec<usize> = (0..n).filter(|&j| j != i).collect();
-            indices.sort_by(|&a, &b| {
-                dist[i * n + a]
-                    .partial_cmp(&dist[i * n + b])
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            indices.sort_by(|&a, &b| dist[i * n + a].total_cmp(&dist[i * n + b]));
             indices.truncate(k);
             indices
         })
@@ -542,11 +536,7 @@ pub fn davies_bouldin_ratio(
 /// Assign 0-based ranks to `values` (rank 0 = smallest value).
 fn rank_vector(values: &[f64]) -> Vec<usize> {
     let mut indices: Vec<usize> = (0..values.len()).collect();
-    indices.sort_by(|&a, &b| {
-        values[a]
-            .partial_cmp(&values[b])
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    indices.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
     let mut ranks = vec![0usize; values.len()];
     for (rank, &idx) in indices.iter().enumerate() {
         ranks[idx] = rank;
