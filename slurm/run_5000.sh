@@ -3,7 +3,7 @@
 #SBATCH --time=84:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=48
-#SBATCH --mem-per-cpu=4G
+#SBATCH --mem-per-cpu=3968MB
 #SBATCH --account=education-eemcs-msc-cs
 
 # 5000-sample variant of run_one.sh / run_loss_experiment.sh.
