@@ -147,7 +147,10 @@ fn resume_reproduces_uninterrupted_run() {
     let before = std::fs::read_to_string(&chunked).unwrap();
     let stdout = run_pareto(&chunked, N_FULL, true);
     let after = std::fs::read_to_string(&chunked).unwrap();
-    assert_eq!(before, after, "resuming a complete run must not change the JSONL");
+    assert_eq!(
+        before, after,
+        "resuming a complete run must not change the JSONL"
+    );
     assert!(
         stdout.contains("already complete"),
         "expected an 'already complete' early-exit message, got:\n{stdout}"
@@ -155,7 +158,11 @@ fn resume_reproduces_uninterrupted_run() {
 
     // The pareto-front sidecar should also have been written.
     let front = dir.join(format!("chunked_pareto_{DATASET}_{GEOMETRY}.json"));
-    assert!(front.exists(), "pareto front file {} missing", front.display());
+    assert!(
+        front.exists(),
+        "pareto front file {} missing",
+        front.display()
+    );
 
     std::fs::remove_dir_all(&dir).ok();
 }
