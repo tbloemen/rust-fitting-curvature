@@ -69,24 +69,6 @@ pub struct ShellProfile {
     pub bin_centers_trunc: Vec<f64>,
     /// Density of the peak-truncated profile.
     pub density_trunc: Vec<f64>,
-    /// Bin centres of the full 95th-percentile range.
-    pub bin_centers_full: Vec<f64>,
-    /// Density of the full 95th-percentile range.
-    pub density_full: Vec<f64>,
-    /// Position of the (smoothed) density peak on the full profile, as a
-    /// fraction of n_bins: 0 ≈ left edge, 1 ≈ right edge.
-    pub peak_ratio: f64,
-    /// Fraction of the full profile's density mass that sits past the
-    /// peak bin.  Spherical sin^(d−1) densities are roughly symmetric
-    /// around √c·r = π/2, so tail_mass ≈ 0.5.  Euclidean and hyperbolic
-    /// profiles peak near the sample boundary (rising volume-growth law
-    /// cut off by finite-N effects), so most of the mass sits *before*
-    /// the peak and tail_mass is small (≲ 0.3).  This diagnostic is far
-    /// more dimension-stable than `peak_ratio` because it captures the
-    /// global *shape* (symmetric vs clipped) rather than the peak
-    /// location, which drifts inward in high-d due to distance
-    /// concentration.
-    pub tail_mass: f64,
 }
 
 /// Compute the empirical shell density profile from a distance matrix.
@@ -105,10 +87,6 @@ pub fn shell_density_profile(distances: &[f64], n_points: usize, n_bins: usize) 
     let empty = ShellProfile {
         bin_centers_trunc: vec![0.0; n_bins],
         density_trunc: vec![0.0; n_bins],
-        bin_centers_full: vec![0.0; n_bins],
-        density_full: vec![0.0; n_bins],
-        peak_ratio: 1.0,
-        tail_mass: 0.0,
     };
 
     if n_points < 3 {
@@ -159,7 +137,7 @@ pub fn shell_density_profile(distances: &[f64], n_points: usize, n_bins: usize) 
         return empty;
     }
 
-    let (bin_centers_full, density_full) = histogram(&local_dists, r_full, n_bins);
+    let density_full = histogram(&local_dists, r_full, n_bins).1;
 
     // Locate the smoothed peak on the full profile.  For E^d/H^d this
     // marks the onset of boundary clipping; for S^d it is the intrinsic
@@ -179,16 +157,10 @@ pub fn shell_density_profile(distances: &[f64], n_points: usize, n_bins: usize) 
         .map(|(i, _)| i)
         .unwrap_or(n_bins - 1);
 
-    let peak_ratio = (peak_bin as f64 + 0.5) / n_bins as f64;
-
     // Tail mass past the peak.  density_full integrates to ~1 with bin
     // width r_full / n_bins, so this is simply the post-peak fraction of
     // the area under the curve.
     let bin_width_full = r_full / n_bins as f64;
-    let tail_mass: f64 = density_full[(peak_bin + 1).min(n_bins)..]
-        .iter()
-        .sum::<f64>()
-        * bin_width_full;
 
     // Truncated profile: re-bin out to the peak.  This is the working
     // window for the Euclidean and hyperbolic fits, where the signal is in
@@ -205,10 +177,6 @@ pub fn shell_density_profile(distances: &[f64], n_points: usize, n_bins: usize) 
     ShellProfile {
         bin_centers_trunc,
         density_trunc,
-        bin_centers_full,
-        density_full,
-        peak_ratio,
-        tail_mass,
     }
 }
 

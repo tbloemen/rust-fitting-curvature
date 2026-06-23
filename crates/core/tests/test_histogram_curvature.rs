@@ -38,18 +38,6 @@ fn shell_profile_is_well_formed() {
 
     assert_eq!(p.bin_centers_trunc.len(), BINS);
     assert_eq!(p.density_trunc.len(), BINS);
-    assert_eq!(p.bin_centers_full.len(), BINS);
-    assert_eq!(p.density_full.len(), BINS);
-    assert!(
-        (0.0..=1.0).contains(&p.peak_ratio),
-        "peak_ratio out of range: {}",
-        p.peak_ratio
-    );
-    assert!(
-        (0.0..=1.0).contains(&p.tail_mass),
-        "tail_mass out of range: {}",
-        p.tail_mass
-    );
 }
 
 // ── Fit machinery ─────────────────────────────────────────────────────────────
@@ -97,8 +85,16 @@ fn matching_model_recovers_dimension() {
     println!("E² euclidean fit: dim={:.2} R²={:.3}", f2.dim, f2.r_squared);
     println!("E³ euclidean fit: dim={:.2} R²={:.3}", f3.dim, f3.r_squared);
 
-    assert!(f2.r_squared > 0.9, "E² euclidean R²={:.3} too low", f2.r_squared);
-    assert!(f3.r_squared > 0.9, "E³ euclidean R²={:.3} too low", f3.r_squared);
+    assert!(
+        f2.r_squared > 0.9,
+        "E² euclidean R²={:.3} too low",
+        f2.r_squared
+    );
+    assert!(
+        f3.r_squared > 0.9,
+        "E³ euclidean R²={:.3} too low",
+        f3.r_squared
+    );
     assert!(
         (1.0..=3.5).contains(&f2.dim),
         "E² recovered dim {:.2} implausible",
@@ -119,7 +115,10 @@ fn verdict_is_coherent() {
     let cases = [
         ("E²", generate_uniform_ball_2d(N, SEED, E_RADIUS).distances),
         ("S²", generate_uniform_sphere(N, SEED).distances),
-        ("H²", generate_uniform_hyperbolic(N, SEED, H_MAX_RHO).distances),
+        (
+            "H²",
+            generate_uniform_hyperbolic(N, SEED, H_MAX_RHO).distances,
+        ),
     ];
 
     for (name, dist) in &cases {
@@ -146,7 +145,10 @@ fn diag_fit_degeneracy() {
     let cases = [
         ("E²", generate_uniform_ball_2d(N, SEED, E_RADIUS).distances),
         ("S²", generate_uniform_sphere(N, SEED).distances),
-        ("H²", generate_uniform_hyperbolic(N, SEED, H_MAX_RHO).distances),
+        (
+            "H²",
+            generate_uniform_hyperbolic(N, SEED, H_MAX_RHO).distances,
+        ),
     ];
     println!("\nfixture | euc R² | sph R² | hyp R² | verdict");
     for (name, dist) in &cases {
