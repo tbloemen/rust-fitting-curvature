@@ -1,4 +1,4 @@
-use fitting_core::curvature_detection::{detect_geometry, GeometryDetection};
+use fitting_core::curvature_detection::{detect_geometry, GeometryVerdict};
 use fitting_core::embedding::EmbeddingState;
 use fitting_core::matrices::compute_euclidean_distance_matrix;
 use fitting_core::metrics::{
@@ -37,10 +37,12 @@ impl Evaluator {
         self.n_samples
     }
 
-    /// Detect the best-fitting geometry for this dataset using shell density profiles.
-    pub fn infer_geometry(&self) -> GeometryDetection {
+    /// Detect the best-fitting geometry for this dataset.  Returns only
+    /// the [`GeometryVerdict`] (geometry label + curvature) — the caller
+    /// acts on the decision, not the detector's diagnostic internals.
+    pub fn infer_geometry(&self) -> GeometryVerdict {
         // Fit the curvature models at the embedding target dimension (2-D).
-        detect_geometry(&self.high_dim_dist, self.n_samples, 2)
+        detect_geometry(&self.high_dim_dist, self.n_samples, 2).verdict
     }
 
     pub fn compute_all_metrics(

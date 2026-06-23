@@ -1,10 +1,14 @@
-//! Geometry detection from pairwise distances.
+//! Shell-density geometry detection from pairwise distances.
 //!
-//! Given a distance matrix, the algorithm detects whether the underlying
-//! geometry is Euclidean, spherical, or hyperbolic, estimates the intrinsic
-//! dimension d, and (for non-Euclidean cases) estimates the curvature
-//! magnitude c, where the sectional curvature is k = -c (hyperbolic) or
-//! k = +c (spherical).
+//! **Purpose.** This is the deliberately *naive* baseline detector: it
+//! fits each constant-curvature shell-density curve to the empirical
+//! profile and picks whichever fits best (highest R²).  It exists to
+//! demonstrate that curvature *sign* cannot be reliably read off the
+//! residuals — Euclidean is the `c → 0` limit of both the spherical and
+//! hyperbolic densities, so the three models are nearly degenerate on
+//! finite samples and the best-R² winner is often the wrong sign.  The
+//! growing-ball Gromov test ([`super::gromov_ball_curve::detect_hyperbolic`]) is the
+//! principled alternative; the contrast with this detector is the point.
 //!
 //! **Mathematical basis.** In a d-dimensional Riemannian manifold of constant
 //! curvature, the surface area of a geodesic sphere of radius r is proportional
@@ -21,51 +25,16 @@
 //! slope and c from the curvature scale that maximises R².
 //!
 //! **Algorithm.**
-//! 1. For each central point, collect its neighbour distances.
-//! 2. Build TWO shell density histograms:
-//!    - a **full** profile over the 95th-percentile range, and
-//!    - a **peak-truncated** profile (rising regime only) that excludes
-//!      boundary-clipping artefacts.
-//! 3. Euclidean and hyperbolic fits use the truncated profile (their
-//!    signature is the rising regime; the tail is contaminated by the
-//!    finite-sample boundary).
-//! 4. Spherical fit uses the **full** profile.  In S^d the density
-//!    sin^(d−1)(√c·r) genuinely peaks at √c·r = π/2 and descends to 0 at
-//!    √c·r = π; truncating at the peak removes the disambiguating signal.
-//! 5. Model selection:
-//!    - Strong spherical signal: density peak well-interior to the data
-//!      range (`peak_ratio < PEAK_RATIO_SPHERICAL`) and spherical R² above
-//!      `SPHERICAL_R2_MIN` → spherical.
-//!    - Strong hyperbolic signal: normalised Gromov δ below
-//!      `GROMOV_THRESHOLD` → hyperbolic.
-//!    - Otherwise compare R² on the truncated profile with `R2_MARGIN`.
+//! 1. For each central point, collect its neighbour distances and build a
+//!    shell-density profile (see [`shell_density_profile`]).
+//! 2. Fit all three curves (Euclidean power-law, spherical sin, hyperbolic
+//!    sinh) to the same sampled (radius, log-density) values via
+//!    [`fit_geometries`].
+//! 3. [`detect_geometry`] returns the [`GeometryVerdict`] for whichever
+//!    curve has the highest R²; ties favour the simpler Euclidean model.
+//!    No Gromov gate, no peak-shape heuristics — just the residuals.
 
-pub const GROMOV_THRESHOLD: f64 = 0.15;
-
-/// Loose peak-position ratio: above this threshold the density's peak
-/// sits too close to the sample boundary to be a real spherical peak at
-/// √c·r = π/2.  Used as a necessary (not sufficient) condition combined
-/// with the spherical-vs-Euclidean R² gap.  The 0.72 value clears the
-/// histogram-quantisation boundary at 0.700 (peak_bin=24/n_bins=35) so
-/// high-d sphere realisations (S⁵ at SEED=42 lands at 0.671) whose peak
-/// drifts toward the right edge are not silently excluded.  The price
-/// is roughly one Euclidean false positive per ten seeds.
-pub const PEAK_RATIO_SPHERICAL: f64 = 0.72;
-
-/// Tight peak-position ratio: when the peak sits this far into the
-/// profile, it is the dominant signal on its own.  In S^d the intrinsic
-/// peak is at √c·r = π/2 (peak_ratio ≈ 0.5); peak_ratio < 0.6 is reached
-/// reliably on S² and frequently on S³ at N=400.  Below this threshold
-/// no additional confirmation is required.
-pub const PEAK_RATIO_SPHERICAL_STRONG: f64 = 0.60;
-
-/// Minimum (spherical_R² − Euclidean_R²) gap on the full profile.  Sin
-/// can model the post-peak descent; r^(d−1) cannot.  On genuine S^d the
-/// gap is typically 0.15–0.65 across seeds; on Euclidean data it stays
-/// below ~0.14 on most seeds, with rare excursions to ~0.15 on
-/// adversarial realisations — those are the dominant residual failure
-/// mode of the spherical-vs-Euclidean discrimination at this N.
-pub const SPHERICAL_R2_GAP: f64 = 0.15;
+use super::signature::GeometryVerdict;
 
 /// Result of fitting one geometry model.
 #[derive(Debug, Clone)]
@@ -82,14 +51,15 @@ pub struct FitResult {
     pub curvature_scale: f64,
 }
 
-/// Full result of geometry detection.
+/// The three constant-curvature fits to the shell-density profile.
+/// Exposed so the near-degeneracy of the residuals can be inspected —
+/// that the R² values are typically close is exactly why
+/// [`detect_geometry`]'s best-fit pick is an unreliable curvature sign.
 #[derive(Debug, Clone)]
-pub struct GeometryDetection {
+pub struct GeometryFits {
     pub euclidean: FitResult,
     pub spherical: FitResult,
     pub hyperbolic: FitResult,
-    /// `"euclidean"`, `"spherical"`, `"hyperbolic"`, or `"unknown"`.
-    pub best_geometry: &'static str,
 }
 
 /// Full shell-density profile and the diagnostics derived from it.
@@ -440,18 +410,25 @@ fn fit_spherical_curved(r_vals: &[f64], log_density: &[f64]) -> FitResult {
     )
 }
 
-/// Detect the underlying geometry and estimate the intrinsic dimension.
+/// Fit all three constant-curvature shell-density curves to the *same*
+/// sampled (radius, log-density) values.
+///
+/// Uses the peak-truncated (rising-regime) profile, where the finite-sample
+/// boundary clipping of the tail is excluded.  Curve transforms: Euclidean
+/// `log r`, spherical `log sin(√c·r)`, hyperbolic `log sinh(√c·r)`, with `c`
+/// grid-searched for the curved models (`curvature_scale = 0` for Euclidean).
+/// Fitting all three to identical points makes their R² directly comparable
+/// — and reveals the degeneracy that defeats the detector: in the rising
+/// regime all three curves are nearly the same power law, so their R²
+/// barely differ and the best-fit curvature sign is essentially noise.
 ///
 /// * `distances`    — flat row-major n×n distance matrix.
 /// * `n_points`     — n.
 /// * `n_bins`       — histogram resolution (30–50 works well).
-pub fn detect_geometry(distances: &[f64], n_points: usize, n_bins: usize) -> GeometryDetection {
+pub fn fit_geometries(distances: &[f64], n_points: usize, n_bins: usize) -> GeometryFits {
     let profile = shell_density_profile(distances, n_points, n_bins);
 
-    // Truncated profile: Euclidean and hyperbolic fits.  Their signature
-    // lives in the rising regime; the tail of the full profile is
-    // dominated by sample-boundary clipping.
-    let (r_trunc, log_d_trunc): (Vec<f64>, Vec<f64>) = profile
+    let (r, log_d): (Vec<f64>, Vec<f64>) = profile
         .bin_centers_trunc
         .iter()
         .copied()
@@ -460,164 +437,66 @@ pub fn detect_geometry(distances: &[f64], n_points: usize, n_bins: usize) -> Geo
         .map(|(r, d)| (r, d.ln()))
         .unzip();
 
-    // Full profile: spherical fit.  The disambiguating signal for S^d is
-    // the post-peak descent of sin^(d−1)(√c·r), which the truncated
-    // profile discards.
-    let (r_full, log_d_full): (Vec<f64>, Vec<f64>) = profile
-        .bin_centers_full
-        .iter()
-        .copied()
-        .zip(profile.density_full.iter().copied())
-        .filter(|&(r, d)| r > 1e-10 && d > 1e-10)
-        .map(|(r, d)| (r, d.ln()))
-        .unzip();
-
-    if r_trunc.len() < 3 || r_full.len() < 3 {
-        let zero = FitResult {
-            dim: 1.0,
-            r_squared: 0.0,
-            log_scale: 0.0,
-            curvature_scale: 0.0,
-        };
-        return GeometryDetection {
+    let zero = FitResult {
+        dim: 1.0,
+        r_squared: 0.0,
+        log_scale: 0.0,
+        curvature_scale: 0.0,
+    };
+    if r.len() < 3 {
+        return GeometryFits {
             euclidean: zero.clone(),
             spherical: zero.clone(),
-            hyperbolic: zero.clone(),
-            best_geometry: "unknown",
+            hyperbolic: zero,
         };
     }
 
-    // Euclidean on truncated profile (rising regime).  Reported as the
-    // canonical Euclidean fit, also used for the curvature-scale=0 case.
-    let euclidean = fit_model(&r_trunc, &log_d_trunc);
-
-    // Hyperbolic: log ρ ~ (d−1) log sinh(√c r), c searched.
-    let hyperbolic = fit_hyperbolic_curved(&r_trunc, &log_d_trunc);
-
-    // Spherical: log ρ ~ (d−1) log sin(√c r), c searched, on the full
-    // profile so the post-peak sin descent participates in the fit.
-    let spherical = fit_spherical_curved(&r_full, &log_d_full);
-
-    // Auxiliary: Euclidean fit on the **full** profile, only used as a
-    // spherical-vs-Euclidean discriminator (not reported).  Sin can model
-    // a rise-and-descent profile; r^(d−1) cannot — so on S^d the gap
-    // (S_full − E_full) is sizeable, while on E^d sin with c → 0
-    // degenerates to a power law and the gap is small.
-    let euclidean_full = fit_model(&r_full, &log_d_full);
-    let r2_gap = spherical.r_squared - euclidean_full.r_squared;
-
-    // --- Model selection ---
-    //
-    // 1. Spherical: tiered.  Either the density peak is firmly interior
-    //    (peak_ratio < tight threshold) — a near-unambiguous signature
-    //    of √c·r = π/2 — OR the peak is moderately interior AND the
-    //    spherical fit beats the Euclidean fit by a wide R² margin on
-    //    the full profile.  The tiered structure is needed because
-    //    high-d spheres concentrate distances near π/2 and finite-N
-    //    noise shifts the empirical peak rightward; in those cases the
-    //    R² gap carries the signal.
-    //
-    // 2. Hyperbolic: tree-like 4-point Gromov δ below threshold.
-    //    Euclidean is the c → 0 limit of sinh, so log-space R² differs
-    //    by only ~1e-3 between the two on Euclidean data — too small to
-    //    discriminate reliably across seeds.  Gromov δ, by contrast,
-    //    diverges between hyperbolic (≲ 0.15) and Euclidean (~0.24).
-    //
-    // 3. Euclidean: default.
-    let gromov = gromov_hyperbolicity(distances, n_points, 5000);
-
-    let strong_spherical = profile.peak_ratio < PEAK_RATIO_SPHERICAL_STRONG
-        || (profile.peak_ratio < PEAK_RATIO_SPHERICAL && r2_gap > SPHERICAL_R2_GAP);
-
-    let best_geometry = if strong_spherical {
-        "spherical"
-    } else if gromov < GROMOV_THRESHOLD {
-        "hyperbolic"
-    } else {
-        "euclidean"
-    };
-
-    GeometryDetection {
-        euclidean,
-        spherical,
-        hyperbolic,
-        best_geometry,
+    GeometryFits {
+        euclidean: fit_model(&r, &log_d),
+        spherical: fit_spherical_curved(&r, &log_d),
+        hyperbolic: fit_hyperbolic_curved(&r, &log_d),
     }
 }
 
-/// Estimate Gromov 4-point hyperbolicity from the distance matrix.
+/// Detect the underlying geometry by picking the best-fitting shell-density
+/// curve.
 ///
-/// Samples random 4-tuples, computes δ = (S_max − S_mid) / 2 for each
-/// (where S are the three distance-pair sums), and returns the 90th
-/// percentile of δ normalised by the median pairwise distance.
+/// Deliberately naive: fit all three curves ([`fit_geometries`]) and
+/// return the [`GeometryVerdict`] for whichever has the highest R²; ties
+/// favour the simpler Euclidean model.  Because Euclidean is the `c → 0`
+/// limit of both curved densities, the residuals barely separate the
+/// models on finite samples, so the returned curvature *sign* is often
+/// wrong — that is the intended demonstration, motivating the principled
+/// growing-ball test in [`super::gromov_ball_curve::detect_hyperbolic`].
 ///
-/// Hyperbolic spaces have small normalised δ (bounded by log(2)/R for
-/// curvature −1 and typical distance R), while Euclidean/spherical
-/// spaces produce larger values.
-pub fn gromov_hyperbolicity(distances: &[f64], n: usize, n_samples: usize) -> f64 {
-    if n < 4 {
-        return 0.0;
+/// * `distances`    — flat row-major n×n distance matrix.
+/// * `n_points`     — n.
+/// * `n_bins`       — histogram resolution (30–50 works well).
+pub fn detect_geometry(distances: &[f64], n_points: usize, n_bins: usize) -> GeometryVerdict {
+    let fits = fit_geometries(distances, n_points, n_bins);
+
+    // (label, signed curvature, R²).  Euclidean first so it wins ties.
+    let candidates = [
+        ("euclidean", 0.0, fits.euclidean.r_squared),
+        (
+            "spherical",
+            fits.spherical.curvature_scale,
+            fits.spherical.r_squared,
+        ),
+        (
+            "hyperbolic",
+            -fits.hyperbolic.curvature_scale,
+            fits.hyperbolic.r_squared,
+        ),
+    ];
+
+    let (best_geometry, curvature, _) = candidates
+        .into_iter()
+        .reduce(|best, c| if c.2 > best.2 { c } else { best })
+        .unwrap();
+
+    GeometryVerdict {
+        best_geometry,
+        curvature,
     }
-
-    // Simple deterministic PRNG for reproducible sampling.
-    let mut state: u64 = 0xdeadbeef;
-    let mut rng = || -> usize {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-        ((state >> 33) as usize) % n
-    };
-
-    let mut deltas = Vec::with_capacity(n_samples);
-    for _ in 0..n_samples {
-        let a = rng();
-        let mut b = rng();
-        while b == a {
-            b = rng();
-        }
-        let mut c = rng();
-        while c == a || c == b {
-            c = rng();
-        }
-        let mut d = rng();
-        while d == a || d == b || d == c {
-            d = rng();
-        }
-
-        let dab = distances[a * n + b];
-        let dcd = distances[c * n + d];
-        let dac = distances[a * n + c];
-        let dbd = distances[b * n + d];
-        let dad = distances[a * n + d];
-        let dbc = distances[b * n + c];
-
-        let s1 = dab + dcd;
-        let s2 = dac + dbd;
-        let s3 = dad + dbc;
-
-        let mut sums = [s1, s2, s3];
-        sums.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let delta = (sums[2] - sums[1]) / 2.0;
-        deltas.push(delta);
-    }
-
-    deltas.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-    // 90th percentile δ.
-    let p90_idx = (deltas.len() as f64 * 0.90) as usize;
-    let delta_90 = deltas[p90_idx.min(deltas.len() - 1)];
-
-    // Normalise by median pairwise distance.
-    let mut all_dists: Vec<f64> = Vec::with_capacity(n * (n - 1) / 2);
-    for i in 0..n {
-        for j in (i + 1)..n {
-            all_dists.push(distances[i * n + j]);
-        }
-    }
-    all_dists.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let median_d = all_dists[all_dists.len() / 2];
-
-    if median_d < 1e-12 {
-        return 0.0;
-    }
-
-    delta_90 / median_d
 }

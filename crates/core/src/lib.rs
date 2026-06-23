@@ -3,7 +3,6 @@ pub mod config;
 pub mod curvature_detection;
 pub mod data;
 pub mod embedding;
-pub mod histogram_curvature;
 pub mod kernels;
 pub mod kl_divergence;
 pub mod manifolds;

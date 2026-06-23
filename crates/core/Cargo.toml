@@ -5,3 +5,8 @@ edition = "2021"
 rust-version = "1.81"
 
 [dependencies]
+
+# Dev-only: the library itself stays dependency-free; plotters is used
+# solely by `examples/` for diagnostic plots.
+[dev-dependencies]
+plotters = "0.3"

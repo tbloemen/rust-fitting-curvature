@@ -110,17 +110,17 @@ fn detect_curvature_single_seed_per_geometry() {
         let r = detect_geometry(dist, N, DIM);
         println!(
             "{name}: best = {}, K = {:+.3}, S(r={:.2}, ε={:.2e}), H(r={:.2}, ε={:.2e})",
-            r.best_geometry,
-            r.curvature,
+            r.verdict.best_geometry,
+            r.verdict.curvature,
             r.spherical.radius,
             r.spherical.residual,
             r.hyperbolic.radius,
             r.hyperbolic.residual,
         );
         assert_eq!(
-            r.best_geometry, *expected,
+            r.verdict.best_geometry, *expected,
             "{name}: expected {expected}, got {}",
-            r.best_geometry,
+            r.verdict.best_geometry,
         );
     }
 }
@@ -157,7 +157,7 @@ fn diag_all_fixtures() {
         let h_ang = d_max / r.hyperbolic.radius;
         println!(
             "{name:7} | {:11} | r={:6.3} ε={:.2e} d/r*={:.2} | r={:6.3} ε={:.2e} d/r*={:.2}",
-            r.best_geometry,
+            r.verdict.best_geometry,
             r.spherical.radius,
             r.spherical.residual,
             s_ang,
@@ -211,7 +211,7 @@ const ROBUSTNESS_SEEDS: u64 = 1;
 
 fn hit_rate<F: Fn(u64) -> Vec<f64>>(make_dist: F, expected: &str) -> usize {
     (0..ROBUSTNESS_SEEDS)
-        .filter(|&s| detect_geometry(&make_dist(s), N, DIM).best_geometry == expected)
+        .filter(|&s| detect_geometry(&make_dist(s), N, DIM).verdict.best_geometry == expected)
         .count()
 }
 
