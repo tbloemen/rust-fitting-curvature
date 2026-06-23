@@ -72,21 +72,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| "www/public/data".to_string());
 
     let fixtures: Vec<(&'static str, RGBColor, DataPoints)> = vec![
-        (
-            "mnist",
-            RED,
-            load_mnist(&format!("{data_root}/mnist"), N)?,
-        ),
+        ("mnist", RED, load_mnist(&format!("{data_root}/mnist"), N)?),
         (
             "fashion_mnist",
             RGBColor(255, 140, 0), // orange
             load_fashion_mnist(&format!("{data_root}/fashion-mnist"), N)?,
         ),
-        (
-            "pbmc",
-            GREEN,
-            load_pbmc(&format!("{data_root}/pbmc"), N)?,
-        ),
+        ("pbmc", GREEN, load_pbmc(&format!("{data_root}/pbmc"), N)?),
         (
             "wordnet_mammals",
             BLUE,
@@ -168,9 +160,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         |p| p.delta_mean,
     )?;
 
-    println!(
-        "\nWrote plots/gromov_delta_curve_real.png and plots/gromov_delta_curve_real_raw.png"
-    );
+    println!("\nWrote plots/gromov_delta_curve_real.png and plots/gromov_delta_curve_real_raw.png");
     Ok(())
 }
 
