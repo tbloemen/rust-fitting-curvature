@@ -460,7 +460,7 @@ pub fn fit_hyperbolic(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
 /// curvature.  This is intentionally decoupled from the diagnostic
 /// internals (Wilson fits, Gromov tail slope) so that consumers like the
 /// optimizer depend only on the decision, not on how it was reached —
-/// obtain it from [`GeometryDetection::verdict`] or [`detect_geometry`].
+/// obtain it from [`detect_geometry`].
 #[derive(Debug, Clone, Copy)]
 pub struct GeometryVerdict {
     /// `"spherical"`, `"hyperbolic"`, or `"euclidean"`.
@@ -468,22 +468,6 @@ pub struct GeometryVerdict {
     /// Signed sectional curvature estimate at the detected radius.
     /// `0.0` when the detection is `"euclidean"`.
     pub curvature: f64,
-}
-
-/// Full curvature-detection result: the [`GeometryVerdict`] plus the
-/// supporting evidence (spherical/hyperbolic Wilson fits and the
-/// growing-ball Gromov saturation slope) that produced it.
-#[derive(Debug, Clone, Copy)]
-pub struct GeometryDetection {
-    /// The decision the pipeline acts on.
-    pub verdict: GeometryVerdict,
-    pub spherical: WilsonFit,
-    pub hyperbolic: WilsonFit,
-    /// Log–log tail slope of the Gromov δ(k) growing-ball curve (see
-    /// [`super::gromov_ball_curve::detect_hyperbolic`]).  A slope near 0 means δ(k)
-    /// saturated ⇒ δ-hyperbolic; a clearly positive slope means δ keeps
-    /// growing with the ball diameter ⇒ flat / spherical.
-    pub tail_slope: f64,
 }
 
 /// Diagnostic: spherical signature residual `ρ` at a single r for a
@@ -526,29 +510,29 @@ pub const SPHERICAL_ANGULAR_MIN: f64 = 2.5;
 /// `dim` is the target embedding dimension — the spherical and
 /// hyperbolic models are fitted as `dim`-dimensional manifolds (rank
 /// `dim+1` Gram matrices).
-pub fn detect_geometry(distances: &[f64], n: usize, dim: usize) -> GeometryDetection {
+pub fn detect_geometry(distances: &[f64], n: usize, dim: usize) -> GeometryVerdict {
     let spherical = fit_spherical(distances, n, dim);
-    let hyperbolic = fit_hyperbolic(distances, n, dim);
 
     let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
     let s_angular = d_max / spherical.radius;
+
+    if s_angular >= SPHERICAL_ANGULAR_MIN {
+        return GeometryVerdict {
+            best_geometry: "spherical",
+            curvature: 1.0 / (spherical.radius * spherical.radius),
+        };
+    }
     let hyp = detect_hyperbolic(distances, n);
-
-    let (best_geometry, curvature) = if s_angular >= SPHERICAL_ANGULAR_MIN {
-        ("spherical", 1.0 / (spherical.radius * spherical.radius))
-    } else if hyp.is_hyperbolic {
-        ("hyperbolic", -1.0 / (hyperbolic.radius * hyperbolic.radius))
+    if hyp.is_hyperbolic {
+        let hyperbolic = fit_hyperbolic(distances, n, dim);
+        GeometryVerdict {
+            best_geometry: "hyperbolic",
+            curvature: -1.0 / (hyperbolic.radius * hyperbolic.radius),
+        }
     } else {
-        ("euclidean", 0.0)
-    };
-
-    GeometryDetection {
-        verdict: GeometryVerdict {
-            best_geometry,
-            curvature,
-        },
-        spherical,
-        hyperbolic,
-        tail_slope: hyp.tail_slope,
+        GeometryVerdict {
+            best_geometry: "euclidean",
+            curvature: 0.0,
+        }
     }
 }

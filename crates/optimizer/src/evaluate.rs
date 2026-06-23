@@ -42,7 +42,7 @@ impl Evaluator {
     /// acts on the decision, not the detector's diagnostic internals.
     pub fn infer_geometry(&self) -> GeometryVerdict {
         // Fit the curvature models at the embedding target dimension (2-D).
-        detect_geometry(&self.high_dim_dist, self.n_samples, 2).verdict
+        detect_geometry(&self.high_dim_dist, self.n_samples, 2)
     }
 
     pub fn compute_all_metrics(
