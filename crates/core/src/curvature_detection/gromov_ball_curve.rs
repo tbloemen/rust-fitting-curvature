@@ -69,14 +69,8 @@ pub fn gromov_delta_curve(
 ) -> GromovBallCurve {
     let median = median_pairwise_distance(distances, n);
 
-    // Self-contained LCG so the curve does not depend on synthetic_data.
-    let mut state: u64 = seed ^ 0x9e3779b97f4a7c15;
-    let mut next = || -> usize {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (state >> 33) as usize
-    };
+    let mut rng = crate::rng::Rng::new(seed ^ 0x9e3779b97f4a7c15);
+    let mut next = || -> usize { rng.next_raw() };
 
     let mut points = Vec::with_capacity(ball_sizes.len());
     for &k_raw in ball_sizes {
