@@ -49,6 +49,62 @@ pub struct GromovBallCurve {
     pub median_distance: f64,
 }
 
+/// Pick `n_centers` distinct random indices in `[0, n)`, or all nodes when
+/// `n_centers ≥ n`.
+fn pick_centers(n: usize, n_centers: usize, next: &mut impl FnMut() -> usize) -> Vec<usize> {
+    let n_c = n_centers.min(n);
+    if n_c >= n {
+        (0..n).collect()
+    } else {
+        let mut chosen = vec![false; n];
+        let mut out = Vec::with_capacity(n_c);
+        while out.len() < n_c {
+            let c = next() % n;
+            if !chosen[c] {
+                chosen[c] = true;
+                out.push(c);
+            }
+        }
+        out
+    }
+}
+
+/// Supremum of the Gromov 4-point δ over all (or a random subset of)
+/// quadruples in `ball`.  Returns the per-ball δ.
+fn ball_delta(
+    distances: &[f64],
+    n: usize,
+    ball: &[usize],
+    bk: usize,
+    max_quads_per_ball: usize,
+    next: &mut impl FnMut() -> usize,
+) -> f64 {
+    let mut ball_delta = 0.0_f64;
+    if comb4(bk) <= max_quads_per_ball as u128 {
+        for i in 0..bk {
+            for j in (i + 1)..bk {
+                for l in (j + 1)..bk {
+                    for m in (l + 1)..bk {
+                        let d = quad_delta(distances, n, ball[i], ball[j], ball[l], ball[m]);
+                        if d > ball_delta {
+                            ball_delta = d;
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        for _ in 0..max_quads_per_ball {
+            let [p0, p1, p2, p3] = four_distinct(bk, next);
+            let d = quad_delta(distances, n, ball[p0], ball[p1], ball[p2], ball[p3]);
+            if d > ball_delta {
+                ball_delta = d;
+            }
+        }
+    }
+    ball_delta
+}
+
 /// Compute the δ(k) convergence curve of the NeTS-proposal procedure.
 ///
 /// - `ball_sizes`: the k values to probe (each clamped to `[4, n]`).
@@ -76,22 +132,7 @@ pub fn gromov_delta_curve(
     for &k_raw in ball_sizes {
         let k = k_raw.clamp(4, n);
 
-        // Pick distinct centres (or all nodes when n_centers ≥ n).
-        let n_c = n_centers.min(n);
-        let centers: Vec<usize> = if n_c >= n {
-            (0..n).collect()
-        } else {
-            let mut chosen = vec![false; n];
-            let mut out = Vec::with_capacity(n_c);
-            while out.len() < n_c {
-                let c = next() % n;
-                if !chosen[c] {
-                    chosen[c] = true;
-                    out.push(c);
-                }
-            }
-            out
-        };
+        let centers = pick_centers(n, n_centers, &mut next);
 
         let mut sum_delta = 0.0;
         let mut cnt = 0usize;
@@ -102,30 +143,7 @@ pub fn gromov_delta_curve(
                 continue;
             }
 
-            let mut ball_delta = 0.0_f64;
-            if comb4(bk) <= max_quads_per_ball as u128 {
-                for i in 0..bk {
-                    for j in (i + 1)..bk {
-                        for l in (j + 1)..bk {
-                            for m in (l + 1)..bk {
-                                let d =
-                                    quad_delta(distances, n, ball[i], ball[j], ball[l], ball[m]);
-                                if d > ball_delta {
-                                    ball_delta = d;
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                for _ in 0..max_quads_per_ball {
-                    let [p0, p1, p2, p3] = four_distinct(bk, &mut next);
-                    let d = quad_delta(distances, n, ball[p0], ball[p1], ball[p2], ball[p3]);
-                    if d > ball_delta {
-                        ball_delta = d;
-                    }
-                }
-            }
+            let ball_delta = ball_delta(distances, n, &ball, bk, max_quads_per_ball, &mut next);
 
             sum_delta += ball_delta;
             cnt += 1;
