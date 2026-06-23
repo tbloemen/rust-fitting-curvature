@@ -6,7 +6,19 @@ rust-version = "1.81"
 
 [dependencies]
 
-# Dev-only: the library itself stays dependency-free; plotters is used
-# solely by `examples/` for diagnostic plots.
-[dev-dependencies]
-plotters = "0.3"
+# plotters is used solely by `examples/` for diagnostic plots, and it drags in
+# font-kit/fontconfig (a system library). Gate it behind an optional feature and
+# `required-features` on the examples so the library, tests and clippy stay
+# dependency-free — CI doesn't need fontconfig to test/lint core.
+plotters = { version = "0.3", optional = true }
+
+[features]
+plot-examples = ["dep:plotters"]
+
+[[example]]
+name = "gromov_delta_curve"
+required-features = ["plot-examples"]
+
+[[example]]
+name = "gromov_delta_curve_real"
+required-features = ["plot-examples"]
