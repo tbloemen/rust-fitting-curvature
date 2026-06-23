@@ -17,13 +17,9 @@ pub fn gromov_hyperbolicity(distances: &[f64], n: usize, n_samples: usize) -> f6
         return 0.0;
     }
 
-    // Simple deterministic PRNG for reproducible sampling (raw u64 stream;
-    // `four_distinct` reduces modulo the range).
-    let mut state: u64 = 0xdeadbeef;
-    let mut next = || -> usize {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-        (state >> 33) as usize
-    };
+    // Use the crate-wide Rng for reproducible sampling.
+    let mut rng = crate::rng::Rng::new(0xdeadbeef);
+    let mut next = || -> usize { rng.next_raw() };
 
     let mut deltas = Vec::with_capacity(n_samples);
     for _ in 0..n_samples {
