@@ -62,13 +62,13 @@ pub struct GeometryFits {
     pub hyperbolic: FitResult,
 }
 
-/// Full shell-density profile and the diagnostics derived from it.
+/// Full shell-density profile.
 #[derive(Debug, Clone)]
 pub struct ShellProfile {
-    /// Bin centres of the peak-truncated profile (rising regime only).
-    pub bin_centers_trunc: Vec<f64>,
-    /// Density of the peak-truncated profile.
-    pub density_trunc: Vec<f64>,
+    /// Bin centres of the profile.
+    pub bin_centers: Vec<f64>,
+    /// Normalised density (integrates to ~1).
+    pub density: Vec<f64>,
 }
 
 /// Compute the empirical shell density profile from a distance matrix.
@@ -84,13 +84,11 @@ pub struct ShellProfile {
 /// * `n_points`     — n.
 /// * `n_bins`       — histogram resolution (30–50 recommended).
 pub fn shell_density_profile(distances: &[f64], n_points: usize, n_bins: usize) -> ShellProfile {
-    let empty = ShellProfile {
-        bin_centers_trunc: vec![0.0; n_bins],
-        density_trunc: vec![0.0; n_bins],
-    };
-
     if n_points < 3 {
-        return empty;
+        return ShellProfile {
+            bin_centers: vec![0.0; n_bins],
+            density: vec![0.0; n_bins],
+        };
     }
 
     let n_ref = (n_points / 10).max(3);
@@ -107,76 +105,33 @@ pub fn shell_density_profile(distances: &[f64], n_points: usize, n_bins: usize) 
     let mut order: Vec<usize> = (0..n_points).collect();
     order.sort_by(|&a, &b| mean_dist[a].partial_cmp(&mean_dist[b]).unwrap());
 
-    let k = n_points - 1;
-
-    let mut local_dists = Vec::with_capacity(n_ref * k);
+    let mut local_dists = Vec::with_capacity(n_ref * (n_points - 1));
     for &ri in &order[..n_ref] {
-        let row = &distances[ri * n_points..(ri + 1) * n_points];
-        let mut dists: Vec<f64> = row
-            .iter()
-            .enumerate()
-            .filter(|&(j, _)| j != ri)
-            .map(|(_, d)| *d)
-            .collect();
-        dists.sort_by(|a: &f64, b| a.partial_cmp(b).unwrap());
-        local_dists.extend_from_slice(&dists[..k.min(dists.len())]);
+        local_dists.extend(
+            distances[ri * n_points..(ri + 1) * n_points]
+                .iter()
+                .enumerate()
+                .filter(|&(j, _)| j != ri)
+                .map(|(_, &d)| d),
+        );
     }
 
-    if local_dists.is_empty() {
-        return empty;
-    }
+    local_dists.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-    // Full range: 95th percentile of neighbour distances.  This is the
-    // working window for the spherical fit (which needs the post-peak
-    // descent) and for diagnosing where the peak sits.
-    local_dists.sort_by(|a: &f64, b| a.partial_cmp(b).unwrap());
     let idx95 = ((local_dists.len() as f64) * 0.95) as usize;
-    let r_full = local_dists[idx95.min(local_dists.len() - 1)];
-
-    if r_full < 1e-12 {
-        return empty;
+    let r_max = local_dists[idx95.min(local_dists.len() - 1)];
+    if r_max < 1e-12 {
+        return ShellProfile {
+            bin_centers: vec![0.0; n_bins],
+            density: vec![0.0; n_bins],
+        };
     }
 
-    let density_full = histogram(&local_dists, r_full, n_bins).1;
-
-    // Locate the smoothed peak on the full profile.  For E^d/H^d this
-    // marks the onset of boundary clipping; for S^d it is the intrinsic
-    // density peak near √c·r = π/2.
-    let smoothed: Vec<f64> = (0..n_bins)
-        .map(|i| {
-            let lo = if i > 0 { i - 1 } else { 0 };
-            let hi = (i + 1).min(n_bins - 1);
-            density_full[lo..=hi].iter().sum::<f64>() / (hi - lo + 1) as f64
-        })
-        .collect();
-
-    let peak_bin = smoothed
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-        .map(|(i, _)| i)
-        .unwrap_or(n_bins - 1);
-
-    // Tail mass past the peak.  density_full integrates to ~1 with bin
-    // width r_full / n_bins, so this is simply the post-peak fraction of
-    // the area under the curve.
-    let bin_width_full = r_full / n_bins as f64;
-
-    // Truncated profile: re-bin out to the peak.  This is the working
-    // window for the Euclidean and hyperbolic fits, where the signal is in
-    // the rising regime and the tail would be dominated by sample-
-    // boundary clipping.
-    let r_trunc = (peak_bin as f64 + 1.0) * bin_width_full;
-
-    let (bin_centers_trunc, density_trunc) = if r_trunc < 1e-12 {
-        (vec![0.0; n_bins], vec![0.0; n_bins])
-    } else {
-        histogram(&local_dists, r_trunc, n_bins)
-    };
+    let (bin_centers, density) = histogram(&local_dists, r_max, n_bins);
 
     ShellProfile {
-        bin_centers_trunc,
-        density_trunc,
+        bin_centers,
+        density,
     }
 }
 
@@ -397,10 +352,10 @@ pub fn fit_geometries(distances: &[f64], n_points: usize, n_bins: usize) -> Geom
     let profile = shell_density_profile(distances, n_points, n_bins);
 
     let (r, log_d): (Vec<f64>, Vec<f64>) = profile
-        .bin_centers_trunc
+        .bin_centers
         .iter()
         .copied()
-        .zip(profile.density_trunc.iter().copied())
+        .zip(profile.density.iter().copied())
         .filter(|&(r, d)| r > 1e-10 && d > 1e-10)
         .map(|(r, d)| (r, d.ln()))
         .unzip();
