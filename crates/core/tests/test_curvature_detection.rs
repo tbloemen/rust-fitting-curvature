@@ -107,20 +107,24 @@ fn detect_curvature_single_seed_per_geometry() {
     ];
 
     for (name, dist, expected) in &cases {
-        let r = detect_geometry(dist, N, DIM);
+        let verdict = detect_geometry(dist, N, DIM);
+        // The Wilson fits are no longer carried on the detection result;
+        // recompute them directly for the diagnostic print.
+        let spherical = fit_spherical(dist, N, DIM);
+        let hyperbolic = fit_hyperbolic(dist, N, DIM);
         println!(
             "{name}: best = {}, K = {:+.3}, S(r={:.2}, ε={:.2e}), H(r={:.2}, ε={:.2e})",
-            r.best_geometry,
-            r.curvature,
-            r.spherical.radius,
-            r.spherical.residual,
-            r.hyperbolic.radius,
-            r.hyperbolic.residual,
+            verdict.best_geometry,
+            verdict.curvature,
+            spherical.radius,
+            spherical.residual,
+            hyperbolic.radius,
+            hyperbolic.residual,
         );
         assert_eq!(
-            r.best_geometry, *expected,
+            verdict.best_geometry, *expected,
             "{name}: expected {expected}, got {}",
-            r.best_geometry,
+            verdict.best_geometry,
         );
     }
 }
@@ -152,17 +156,19 @@ fn diag_all_fixtures() {
     println!("Fixture | best        | S(r*, ε, d/r*)     | H(r*, ε, d/r*)");
     for (name, dist, _expected) in &cases {
         let d_max = dist.iter().cloned().fold(0.0f64, f64::max);
-        let r = detect_geometry(dist, N, DIM);
-        let s_ang = d_max / r.spherical.radius;
-        let h_ang = d_max / r.hyperbolic.radius;
+        let verdict = detect_geometry(dist, N, DIM);
+        let spherical = fit_spherical(dist, N, DIM);
+        let hyperbolic = fit_hyperbolic(dist, N, DIM);
+        let s_ang = d_max / spherical.radius;
+        let h_ang = d_max / hyperbolic.radius;
         println!(
             "{name:7} | {:11} | r={:6.3} ε={:.2e} d/r*={:.2} | r={:6.3} ε={:.2e} d/r*={:.2}",
-            r.best_geometry,
-            r.spherical.radius,
-            r.spherical.residual,
+            verdict.best_geometry,
+            spherical.radius,
+            spherical.residual,
             s_ang,
-            r.hyperbolic.radius,
-            r.hyperbolic.residual,
+            hyperbolic.radius,
+            hyperbolic.residual,
             h_ang,
         );
     }

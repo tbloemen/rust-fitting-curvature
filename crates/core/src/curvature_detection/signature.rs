@@ -68,7 +68,7 @@
 
 use std::f64::consts::PI;
 
-use crate::histogram_curvature::gromov_hyperbolicity;
+use super::gromov_ball_curve::detect_hyperbolic;
 
 const POWER_MAX_ITER: usize = 500;
 const POWER_TOL: f64 = 1e-10;
@@ -455,17 +455,14 @@ pub fn fit_hyperbolic(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
 
 // ── Detection ───────────────────────────────────────────────────────────────
 
-/// Curvature-detection result combining the spherical and hyperbolic
-/// fits with a coarse-geometric (Gromov) hyperbolicity check.
+/// The minimal geometry-detection result the embedding pipeline acts on:
+/// *which* constant-curvature space to use and its signed sectional
+/// curvature.  This is intentionally decoupled from the diagnostic
+/// internals (Wilson fits, Gromov tail slope) so that consumers like the
+/// optimizer depend only on the decision, not on how it was reached —
+/// obtain it from [`detect_geometry`].
 #[derive(Debug, Clone, Copy)]
-pub struct GeometryDetection {
-    pub spherical: WilsonFit,
-    pub hyperbolic: WilsonFit,
-    /// Normalised 4-point Gromov δ (90th percentile, divided by the
-    /// median pairwise distance).  Small values (≲ `GROMOV_THRESHOLD`)
-    /// indicate δ-hyperbolic / "negatively curved" metric structure;
-    /// Euclidean data typically lands near 0.24.
-    pub gromov_delta: f64,
+pub struct GeometryVerdict {
     /// `"spherical"`, `"hyperbolic"`, or `"euclidean"`.
     pub best_geometry: &'static str,
     /// Signed sectional curvature estimate at the detected radius.
@@ -493,29 +490,6 @@ pub fn hyperbolic_residual_at(distances: &[f64], n: usize, dim: usize, r: f64) -
 /// arbitrarily small residual.
 pub const SPHERICAL_ANGULAR_MIN: f64 = 2.5;
 
-/// Maximum normalised 4-point Gromov δ for the data to be treated as
-/// δ-hyperbolic.  δ is the supremum over quadruples of
-/// `(S_max − S_mid)/2` where the three S values are the pair-distance
-/// sums; we use the 90th percentile of sampled quadruples, normalised
-/// by the median pairwise distance.
-///
-/// Theoretical backing (unlike the prior `d_max / r` "angular extent"
-/// heuristic on a non-compact space):
-///
-/// - `H²` with `K = −1` has 4-point hyperbolicity constant `log(2)/2 ≈
-///   0.347`, and the sup of δ scales as `r` under `K → −1/r²`, so
-///   `δ / d_max → 0` as the data covers many curvature radii.
-/// - `ℝⁿ` is *not* δ-hyperbolic; the normalised δ on a uniform sample
-///   stabilises around ~0.24 (empirically) and the underlying δ scales
-///   with the diameter.
-///
-/// `0.18` sits in the (wide) gap between the two regimes observed in
-/// the test fixtures (≲ 0.15 hyperbolic, ~0.24 Euclidean).
-pub const GROMOV_THRESHOLD: f64 = 0.18;
-
-/// Number of random 4-tuples sampled for the Gromov δ estimate.
-const GROMOV_SAMPLES: usize = 5000;
-
 /// Detect curvature from a distance matrix.
 ///
 /// Decision rule:
@@ -523,37 +497,42 @@ const GROMOV_SAMPLES: usize = 5000;
 /// 1. **Spherical** if `d_max / r_s* ≥ SPHERICAL_ANGULAR_MIN`.  On a
 ///    sphere `d/r` is the subtended angle, so this is a literal
 ///    coverage criterion.
-/// 2. **Hyperbolic** if the normalised 4-point Gromov δ is below
-///    `GROMOV_THRESHOLD` AND the Wilson hyperbolic fit did not pin at
-///    its upper bound (which would mean Wilson's residual minimum is
-///    the Euclidean-limit artifact, so the reported curvature
-///    magnitude cannot be trusted).
+/// 2. **Hyperbolic** if the Gromov δ(k) growing-ball curve **saturates**
+///    (its log–log tail slope is below
+///    [`super::gromov_ball_curve::SATURATION_SLOPE_THRESHOLD`]).  This is the
+///    theoretically-backed NeTS-proposal test: only negatively-curved
+///    spaces have a δ bounded below the diameter, so only they plateau
+///    as the ball grows.  It replaces the earlier global-percentile
+///    Gromov δ threshold, which was a scale-dependent order statistic
+///    with no link to the underlying geometry.
 /// 3. **Euclidean** otherwise.
 ///
 /// `dim` is the target embedding dimension — the spherical and
 /// hyperbolic models are fitted as `dim`-dimensional manifolds (rank
 /// `dim+1` Gram matrices).
-pub fn detect_geometry(distances: &[f64], n: usize, dim: usize) -> GeometryDetection {
+pub fn detect_geometry(distances: &[f64], n: usize, dim: usize) -> GeometryVerdict {
     let spherical = fit_spherical(distances, n, dim);
-    let hyperbolic = fit_hyperbolic(distances, n, dim);
 
     let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
     let s_angular = d_max / spherical.radius;
-    let gromov_delta = gromov_hyperbolicity(distances, n, GROMOV_SAMPLES);
 
-    let (best_geometry, curvature) = if s_angular >= SPHERICAL_ANGULAR_MIN {
-        ("spherical", 1.0 / (spherical.radius * spherical.radius))
-    } else if !hyperbolic.at_upper_bound && gromov_delta < GROMOV_THRESHOLD {
-        ("hyperbolic", -1.0 / (hyperbolic.radius * hyperbolic.radius))
+    if s_angular >= SPHERICAL_ANGULAR_MIN {
+        return GeometryVerdict {
+            best_geometry: "spherical",
+            curvature: 1.0 / (spherical.radius * spherical.radius),
+        };
+    }
+    let hyp = detect_hyperbolic(distances, n);
+    if hyp.is_hyperbolic {
+        let hyperbolic = fit_hyperbolic(distances, n, dim);
+        GeometryVerdict {
+            best_geometry: "hyperbolic",
+            curvature: -1.0 / (hyperbolic.radius * hyperbolic.radius),
+        }
     } else {
-        ("euclidean", 0.0)
-    };
-
-    GeometryDetection {
-        spherical,
-        hyperbolic,
-        gromov_delta,
-        best_geometry,
-        curvature,
+        GeometryVerdict {
+            best_geometry: "euclidean",
+            curvature: 0.0,
+        }
     }
 }

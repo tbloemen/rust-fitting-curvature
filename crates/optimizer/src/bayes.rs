@@ -15,7 +15,7 @@ use crate::trial_result::{write_result, TrialResult};
 /// Resolve the target geometry (name + curvature sign) from CLI args or auto-detection.
 ///
 /// `--geometry hyperbolic|spherical|euclidean` forces the choice; omitting it triggers
-/// shell-density-profile detection via `evaluator.infer_geometry()`.
+/// geometry detection via `evaluator.infer_geometry()`.
 pub(crate) fn resolve_geometry(args: &Args, evaluator: &Evaluator) -> (&'static str, f64) {
     if let Some(geo) = &args.geometry {
         return match geo.as_str() {
