@@ -43,23 +43,23 @@ fn fit_spherical_unit_sphere_recovers_radius() {
 
 /// Wilson's eigenvalue residual on its own cannot tell Euclidean data
 /// from a small cap on a very-large-radius sphere — both produce small
-/// |λ₁|.  The distinguishing fact for Euclidean is that the data only
-/// covers a small *angular* extent of the fitted sphere
-/// (`d_max / r* ≪ π`).  This test pins that signature.
+/// |λ₁|.  Under the narrowed angular-coverage window Euclidean data can't
+/// find an interior spherical minimum: its residual keeps falling toward
+/// the flatter (larger-`r`) edge, so the fit pins at the upper bound —
+/// exactly the signal `detect_geometry` uses to reject a spherical
+/// verdict.  This test pins that signature.
 #[test]
 #[ignore = "too slow"]
-fn fit_spherical_euclidean_has_small_angular_extent() {
+fn fit_spherical_euclidean_pins_at_upper_bound() {
     let data = generate_uniform_ball_2d(N, SEED, E_RADIUS);
-    let d_max = data.distances.iter().cloned().fold(0.0_f64, f64::max);
     let fit = fit_spherical(&data.distances, N, DIM);
-    let angular = d_max / fit.radius;
     println!(
-        "E²(spherical fit): r* = {:.3}, ρ = {:.3e}, d_max/r* = {:.3}",
-        fit.radius, fit.residual, angular,
+        "E²(spherical fit): r* = {:.3}, ρ = {:.3e}, at_upper = {}",
+        fit.radius, fit.residual, fit.at_upper_bound,
     );
     assert!(
-        angular < 2.0,
-        "E²: d_max/r* = {angular:.3} should be small (< 2.0) — far from π"
+        fit.at_upper_bound,
+        "E²: spherical fit should pin at the flat-ward upper bound (not a genuine sphere)"
     );
 }
 

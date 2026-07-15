@@ -288,9 +288,12 @@ pub struct WilsonFit {
     /// fraction of `‖Z‖_F²` outside the rank-`(dim+1)` signature
     /// subspace.  Small ⇒ data conforms well to the model.
     pub residual: f64,
-    /// True if `radius` is at the upper bound of the search range,
-    /// which usually means the data is closer to Euclidean than to the
-    /// curved model at any finite radius.
+    /// True if `radius` is pinned at the upper bound of the search range.
+    /// For the spherical fit this is the flat-ward edge of the coverage
+    /// window (`d_max/`[`SPHERICAL_ANGULAR_MIN`]): being pinned there
+    /// means the residual is still falling toward flatter radii, i.e. the
+    /// data prefers a flatter model than a well-covered sphere — the
+    /// signal [`detect_geometry`] uses to reject a spherical verdict.
     pub at_upper_bound: bool,
 }
 
@@ -408,14 +411,31 @@ fn minimise_log_spaced(
 /// signature residual `ρ(r)` (energy outside the rank-`(dim+1)` PSD
 /// subspace of `Z_spherical(r)`).
 ///
-/// Search bounds (Section V.A): r ≥ d_max/π (so the largest geodesic
-/// distance fits on the sphere) and r ≤ 5·d_max (well into the
-/// Euclidean limit; the paper's quoted upper bound `3·d_min` is a typo
-/// — see the discussion in this file's history).
+/// Search bounds — the **angular-coverage window**:
+///
+/// - Lower `r ≥ d_max/π` is a *hard feasibility* bound: the largest
+///   geodesic distance on a radius-`r` sphere is `πr`, so `d_max ≤ πr`
+///   is required (below it the farthest pair would be beyond antipodal
+///   and `Z` is degenerate).  Finite sampling puts the true radius
+///   *above* this floor (no exactly-antipodal pair ⇒ `d_max < πR`), so
+///   it never clips a genuine minimum.
+/// - Upper `r ≤ d_max/`[`SPHERICAL_ANGULAR_MIN`] is the flat-ward edge of
+///   the coverage window: a spherical verdict requires
+///   `d_max/r ≥ SPHERICAL_ANGULAR_MIN`, so radii above this can never be
+///   labelled spherical anyway.
+///
+/// The window is narrow — `[d_max/π, d_max/2.5]` ≈ `[0.318, 0.400]·d_max`
+/// — which sharpens the radius estimate *and* keeps the fit out of the
+/// large-`r` regime where the `‖Z‖_F²` normalisation drives ρ → 0 for
+/// *any* geometry (the identifiability artifact).  A fit pinned at the
+/// upper edge ([`WilsonFit::at_upper_bound`]) therefore means the data
+/// prefers a flatter sphere than the coverage threshold allows ⇒ not
+/// spherical; that flag, not a post-hoc angular comparison, is what
+/// [`detect_geometry`] reads.
 pub fn fit_spherical(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
     let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
     let r_lower = d_max / PI;
-    let r_upper = 5.0 * d_max;
+    let r_upper = d_max / SPHERICAL_ANGULAR_MIN;
 
     let mut residual_at = |r: f64| -> f64 { spherical_residual(distances, n, dim, r) };
 
@@ -487,16 +507,24 @@ pub fn hyperbolic_residual_at(distances: &[f64], n: usize, dim: usize, r: f64) -
 /// `d_max ≈ π · r` and `d/r` is literally the subtended angle in
 /// radians, so 2.5 (≈ 0.8 π) accepts near-full coverage while rejecting
 /// Euclidean data which fits a small cap on a very large sphere with
-/// arbitrarily small residual.
+/// arbitrarily small residual.  It also sets the flat-ward edge of the
+/// spherical search window in [`fit_spherical`]
+/// (`r_upper = d_max / SPHERICAL_ANGULAR_MIN`), so the coverage criterion
+/// is enforced *by construction* of the search range rather than checked
+/// after the fact.
 pub const SPHERICAL_ANGULAR_MIN: f64 = 2.5;
 
 /// Detect curvature from a distance matrix.
 ///
 /// Decision rule:
 ///
-/// 1. **Spherical** if `d_max / r_s* ≥ SPHERICAL_ANGULAR_MIN`.  On a
-///    sphere `d/r` is the subtended angle, so this is a literal
-///    coverage criterion.
+/// 1. **Spherical** if the spherical fit's minimum lies inside its
+///    angular-coverage window rather than pinned at the flat-ward upper
+///    edge (`!at_upper_bound`).  Because the window is exactly
+///    `[d_max/π, d_max/SPHERICAL_ANGULAR_MIN]`, this is still a literal
+///    coverage criterion (`d_max/r ≥ SPHERICAL_ANGULAR_MIN`) — but read
+///    off the fit's position, avoiding the large-`r` regime where ρ is a
+///    normalisation artifact rather than evidence of flatness.
 /// 2. **Hyperbolic** if the Gromov δ(k) growing-ball curve **saturates**
 ///    (its log–log tail slope is below
 ///    [`super::gromov_ball_curve::SATURATION_SLOPE_THRESHOLD`]).  This is the
@@ -513,10 +541,12 @@ pub const SPHERICAL_ANGULAR_MIN: f64 = 2.5;
 pub fn detect_geometry(distances: &[f64], n: usize, dim: usize) -> GeometryVerdict {
     let spherical = fit_spherical(distances, n, dim);
 
-    let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
-    let s_angular = d_max / spherical.radius;
-
-    if s_angular >= SPHERICAL_ANGULAR_MIN {
+    // The spherical fit searches only the angular-coverage window
+    // `[d_max/π, d_max/SPHERICAL_ANGULAR_MIN]`.  A minimum in its interior
+    // (or at the feasibility floor) means the data genuinely prefers a
+    // well-covered sphere; a minimum pinned at the flat-ward upper edge
+    // means it prefers a flatter model than the coverage threshold allows.
+    if !spherical.at_upper_bound {
         return GeometryVerdict {
             best_geometry: "spherical",
             curvature: 1.0 / (spherical.radius * spherical.radius),
