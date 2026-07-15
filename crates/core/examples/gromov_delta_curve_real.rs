@@ -4,11 +4,9 @@
 //! for the method description and references).
 //!
 //! Datasets:
-//!   - `mnist` / `fashion_mnist` — 28×28 pixel vectors (Euclidean distances
-//!      in pixel space).
+//!   - `mnist` / `fashion_mnist` — 28×28 pixel vectors (Euclidean distances in pixel space).
 //!   - `pbmc` — single-cell RNA-seq PCA features (Euclidean distances).
-//!   - `wordnet_mammals` — the mammal subtree; distances are the graph
-//!      shortest-path (BFS) matrix, already supplied by the loader.
+//!   - `wordnet_mammals` — the mammal subtree; distances are the graph shortest-path (BFS) matrix, already supplied by the loader.
 //!
 //! WordNet (a tree) should saturate at a small δ (hyperbolic); the
 //! feature-space datasets are expected to keep growing (not δ-hyperbolic).
