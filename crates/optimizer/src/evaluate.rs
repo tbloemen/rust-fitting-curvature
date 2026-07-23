@@ -37,6 +37,13 @@ impl Evaluator {
         self.n_samples
     }
 
+    /// The precomputed high-dimensional pairwise distance matrix (flat,
+    /// row-major, `n_points × n_points`). Used by `--mode detect` to run the
+    /// curvature-detection fits directly on the data distances.
+    pub fn distances(&self) -> &[f64] {
+        &self.high_dim_dist
+    }
+
     /// Detect the best-fitting geometry for this dataset.  Returns only
     /// the [`GeometryVerdict`] (geometry label + curvature) — the caller
     /// acts on the decision, not the detector's diagnostic internals.
