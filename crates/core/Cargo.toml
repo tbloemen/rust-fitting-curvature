@@ -22,3 +22,11 @@ required-features = ["plot-examples"]
 [[example]]
 name = "gromov_delta_curve_real"
 required-features = ["plot-examples"]
+
+[[example]]
+name = "wilson_residual_curve"
+required-features = ["plot-examples"]
+
+[[example]]
+name = "wilson_residual_curve_real"
+required-features = ["plot-examples"]
