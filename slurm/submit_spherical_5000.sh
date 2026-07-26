@@ -1,6 +1,6 @@
 #!/bin/sh
-# 5000-sample counterpart to submit_spherical.sh (DISCREPANCIES.md A1): the 12
-# missing spherical cells (centering_only/global_only/all_free x 4 real
+# 5000-sample counterpart to submit_spherical.sh (DISCREPANCIES.md A1): the 24
+# missing spherical cells (centering_only/global_only/all_free x all 8
 # datasets), at N=5000. Chains CHUNKS jobs per cell via run_5000.sh, same as
 # submit_all_5000.sh, since a single geometry at N=5000 does not fit the 24h
 # wall-clock cap.
@@ -12,7 +12,7 @@
 
 set -eu
 
-DATASETS="mnist fashion_mnist pbmc wordnet_mammals"
+DATASETS="mnist fashion_mnist pbmc wordnet_mammals sphere antipodal_clusters tree hyperbolic_shells"
 EXPERIMENTS="centering_only global_only all_free"
 GEOMETRY="spherical"
 

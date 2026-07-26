@@ -5,10 +5,9 @@
 # TrialConfig::rms_anchored() path exists but was never swept. Only the
 # hyperbolic geometry is meaningful here (rms_anchored gauge-fixes curvature).
 #
-# Defaults to the 4 real datasets per the DISCREPANCIES.md resolution; pass
-# DATASETS to also cover the hyperbolic-verdict synthetics (tree,
-# hyperbolic_shells), e.g.:
-#   DATASETS="tree hyperbolic_shells" sh slurm/submit_rms_anchored.sh
+# Covers all 8 datasets (matching submit_all.sh/submit_main.sh), not just the
+# 4 real ones -- the synthetic hyperbolic fixtures (tree, hyperbolic_shells)
+# and the euclidean/spherical-verdict synthetics all feed the analysis too.
 #
 # Reuses run_loss_experiment.sh unmodified via GEOMETRIES=hyperbolic.
 #
@@ -18,7 +17,7 @@
 
 set -eu
 
-DATASETS="${DATASETS:-mnist fashion_mnist pbmc wordnet_mammals}"
+DATASETS="${DATASETS:-mnist fashion_mnist pbmc wordnet_mammals sphere antipodal_clusters tree hyperbolic_shells}"
 
 for ds in $DATASETS; do
   sbatch \
