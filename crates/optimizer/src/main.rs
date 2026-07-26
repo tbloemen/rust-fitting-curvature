@@ -42,6 +42,7 @@ fn get_dataset_names(dataset_arg: &Option<String>) -> Vec<String> {
             "antipodal_clusters".to_string(),
             "tree".to_string(),
             "hyperbolic_shells".to_string(),
+            "grid".to_string(),
         ],
         Some(name) if name == "real" => vec![
             "mnist".to_string(),
