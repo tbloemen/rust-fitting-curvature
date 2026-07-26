@@ -22,7 +22,10 @@ set -eu
 
 DATASET="${DATASET:-mnist}"
 EXPERIMENT="${EXPERIMENT:-all_off}"
-GEOMETRIES="hyperbolic euclidean"
+# Default matches the original loss-experiment sweep; overridable via `sbatch
+# --export=...,GEOMETRIES="spherical"` so the same template drives the follow-up
+# spherical-only fill-in jobs (see submit_spherical.sh) without a duplicate runner.
+GEOMETRIES="${GEOMETRIES:-hyperbolic euclidean}"
 
 module load 2025
 module load compiler
