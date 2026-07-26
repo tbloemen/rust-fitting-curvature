@@ -174,7 +174,11 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
         record.delta_is_hyperbolic,
     );
 
-    let mut file = match OpenOptions::new().create(true).append(true).open(&args.output) {
+    let mut file = match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&args.output)
+    {
         Ok(f) => f,
         Err(e) => {
             eprintln!("detect: failed to open {} for append: {e}", args.output);

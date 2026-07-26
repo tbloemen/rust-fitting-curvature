@@ -31,8 +31,7 @@ pub(crate) struct Args {
     ///         Geometry sign is detected automatically unless --geometry is given.
     /// scan:   sweep each parameter individually from a base config (requires --metric).
     /// pareto: qParEGO multi-objective optimisation over 10 objectives (no --metric needed).
-    /// detect: run curvature detection on the data distances and append κ_data
-    ///         diagnostics to --output (no embedding fit); one JSONL line per dataset.
+    /// detect: run curvature detection on the data distances; one JSONL line per dataset.
     #[arg(long, default_value = "random")]
     pub(crate) mode: String,
 
