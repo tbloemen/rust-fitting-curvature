@@ -1,0 +1,38 @@
+[package]
+name = "fitting-analysis"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+
+[dependencies]
+fitting-core = { path = "../core" }
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+# `float_roundtrip` makes float parsing correctly rounded. serde_json's default
+# fast path can land one ulp off the true nearest double, and the Pareto sort is
+# a chain of exact `<=` comparisons: two trials whose metrics agree to 16 digits
+# are a real occurrence in these sweeps, and one ulp is enough to turn a tie into
+# a domination and silently drop a front point. Costs ~2x on float parsing, which
+# is nothing next to the Monte-Carlo integration.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+
+# plotters is used solely by the `figures` binary, and it drags in
+# font-kit/fontconfig (a system library). Same treatment as `fitting-core`'s
+# plot examples: optional dep + `required-features`, so the library, the `hv`
+# binary, tests and clippy stay fontconfig-free. This is what lets the cluster
+# run `cargo build --release --locked` without any system font stack.
+plotters = { version = "0.3", optional = true }
+
+[features]
+plots = ["dep:plotters"]
+
+# The cluster-side binary: Monte-Carlo hypervolume + ΔH aggregation. No plotting.
+[[bin]]
+name = "hv"
+path = "src/bin/hv.rs"
+
+# Local-only: renders the thesis result figures.
+[[bin]]
+name = "figures"
+path = "src/bin/figures.rs"
+required-features = ["plots"]

@@ -2,7 +2,7 @@
 
 Cross-check of the claims in `docs/thesis/sections/5results.typ` (and the
 methods it cites) against what is actually in `results/`, as of the analysis in
-`analyze_experiments.py` / `hv_stats.py` / `--mode detect`. No thesis `.typ`
+the `figures` / `hv` binaries of `crates/analysis` and `--mode detect`. No thesis `.typ`
 files were edited. Each item says what the thesis asserts, what the data shows,
 and a suggested resolution.
 
@@ -21,7 +21,7 @@ Datasets present: `mnist`, `fashion_mnist`, `pbmc`, `wordnet_mammals`,
 `sphere`, `antipodal_clusters`, `tree`, `hyperbolic_shells`. (No `grid`.)
 
 128 saved `_pareto_*.json` fronts (40 at N=1000, 88 at N=5000); the other 49
-cells have no saved front but are recomputed exactly by `pareto_utils.front_entries`
+cells have no saved front but are recomputed exactly by `hv front`
 (validated to reproduce a saved front bit-for-bit).
 
 ---
@@ -31,17 +31,17 @@ cells have no saved front but are recomputed exactly by `pareto_utils.front_entr
 ### A1. Spherical is missing for every non-baseline loss setting — **the "56 Pareto fronts" of Experiment 2 do not exist**
 - **Thesis** (§ablation-results, l.103): *"At each sample size this yields fifty-six Pareto fronts: the nominal 5×4×3 grid minus the four spherical `norm_only` cells."* This assumes spherical runs for `all_off`, `centering_only`, `global_only`, `all_free` on the 4 real datasets.
 - **Data:** spherical exists **only for `all_off`**. `centering_only`, `global_only`, `all_free` have **no spherical runs at all** (euclidean + hyperbolic only). Real-dataset Exp 2 fronts actually present per N: `all_off` 4×3=12, `{centering,global,all_free}` 4×2×3=24, `norm_only` 4×2=8 → **44 fronts, not 56**. The 12 missing are the spherical `centering_only`/`global_only`/`all_free` × 4-real-dataset cells.
-- **Resolution:** either (a) run the 12 missing spherical cells per N (24 total), or (b) restate Exp 2 as a **44-front** design and note spherical is only compared under `all_off` (which is what Exp 5 already does). The ΔH figure/table and `hv_aggregate.py` already handle the reduced grid gracefully (spherical simply has no non-baseline ΔH row).
+- **Resolution:** either (a) run the 12 missing spherical cells per N (24 total), or (b) restate Exp 2 as a **44-front** design and note spherical is only compared under `all_off` (which is what Exp 5 already does). The ΔH figure/table and `hv aggregate` already handle the reduced grid gracefully (spherical simply has no non-baseline ΔH row).
 
 ### A2. `rms_anchored` is specified but never run — **Experiment 3's reproducibility test cannot be done**
 - **Thesis** (§tab:loss-ablations l.218 lists it as the 6th setting; §gauge-fixing l.252; §curvature-magnitude-results l.126, l.131): the `rms_anchored` setting fixes R_rms=1 so the search runs over κ directly, and Exp 3 overlays unanchored vs `rms_anchored` κ distributions per hyperbolic dataset.
 - **Data:** zero `rms_anchored_*` files. The `TrialConfig::rms_anchored()` code path exists (`common.rs`) but was never executed.
-- **Resolution:** run `--experiment rms_anchored --geometry hyperbolic` on the 4 real datasets (+ synthetics if wanted) at N=1000/5000, or drop the reproducibility sub-claim. `analyze_experiments.py::exp3_rms_anchored` already detects the absence and skips with a notice, and will produce the overlay automatically once the runs exist.
+- **Resolution:** run `--experiment rms_anchored --geometry hyperbolic` on the 4 real datasets (+ synthetics if wanted) at N=1000/5000, or drop the reproducibility sub-claim. `figures::exp3::RmsAnchored` already detects the absence and skips with a notice, and will produce the overlay automatically once the runs exist.
 
 ### A3. N=5000 κ_data not yet computed
 - **Thesis** (§curvature-magnitude-results, §manifold-projection-gap): Exp 3 and Exp 4 are reported at both N=1000 and N=5000.
 - **Data:** `results/kappa_data.jsonl` exists for **N=1000 only** (produced locally via `--mode detect`). The Exp 3 scatter needs `kappa_data_n5000.jsonl`.
-- **Resolution:** run `slurm/submit_detect.sh` (writes `kappa_data_n5000.jsonl`). `analyze_experiments.py::load_kappa_data` already looks for the `_n5000` file and the Exp 3 N=5000 panel will render once it lands. (Exp 4 needs no κ_data file — it derives κ per trial — so it is already produced at both N.)
+- **Resolution:** run `slurm/submit_detect.sh` (writes `kappa_data_n5000.jsonl`). `figures::load_kappa_data` already looks for the `_n5000` file and the Exp 3 N=5000 panel will render once it lands. (Exp 4 needs no κ_data file — it derives κ per trial — so it is already produced at both N.)
 
 ### A4. No Euclidean synthetic ("Grid") dataset
 - **Thesis** (§datasets l.23; Exp 1 figure grid, l.76–79): lists *Grid (Euclidean): a lattice in R²* as one of four synthetic datasets, and the Exp 1 curvature-grid figure has a "Euclidean Grid" row.
@@ -79,7 +79,7 @@ cells have no saved front but are recomputed exactly by `pareto_utils.front_entr
 
 ### C3. κ uses R_rms, not R_max — **fixed in analysis**
 - **Thesis** (§gauge-fixing l.240, l.246): κ = |K|·R_rms².
-- The earlier `analyze_hyperparams.py` used `|K|·r_max²`. The new `analyze_experiments.py` uses `r_rms` throughout (both the per-trial κ and the median-front κ). No data change — both `r_rms` and `r_max` are already logged per trial.
+- The earlier `analyze_hyperparams.py` used `|K|·r_max²`. The `figures` binary uses `r_rms` throughout (both the per-trial κ and the median-front κ). No data change — both `r_rms` and `r_max` are already logged per trial.
 
 ---
 
@@ -101,7 +101,7 @@ data, surfaced by `--mode detect` at N=1000. They are not bugs in the export.
 |---|---|---|
 | 1 | curvature grid (embeddings) | needs embedding-image pipeline + Grid dataset (A4); not from sweep JSONL |
 | 2 | stacked Pareto fronts | ✅ produced (N=1000/5000); spherical column is `all_off`-only (A1) |
-| 2 | ΔH table | ✅ `hv_aggregate.py`; spherical has no non-baseline ΔH (A1) |
+| 2 | ΔH table | ✅ `hv aggregate`; spherical has no non-baseline ΔH (A1) |
 | 3 | κ vs κ_data scatter | ✅ N=1000 (κ_data fixed, C1); N=5000 needs A3 |
 | 3 | rms_anchored κ overlay | ❌ blocked by A2 |
 | 4 | ρ_man-proj(κ) | ✅ produced (both N) |

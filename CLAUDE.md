@@ -26,6 +26,13 @@ cargo build --release --locked
 cargo run --release -p fitting-optimizer -- \
   --mode pareto --dataset tree --geometry hyperbolic --experiment all_off --n-samples 200
 
+# Analyse the sweeps: hypervolume (~12s for the whole table), then ΔH + the test
+cargo run --release -p fitting-analysis --bin hv -- stats --out hv_local.jsonl
+cargo run --release -p fitting-analysis --bin hv -- aggregate hv_local.jsonl --csv hv_delta.csv
+
+# Thesis result figures (local only — needs fontconfig, hence the feature gate)
+cargo run --release -p fitting-analysis --features plots --bin figures
+
 # Build WASM package
 wasm-pack build crates/web --target web --out-dir ../../www/pkg
 
@@ -40,11 +47,16 @@ No linter is configured. Rust edition 2024.
 
 ## Architecture
 
-**Workspace** with three crates:
+**Workspace** with four crates:
 - `crates/core` (`fitting-core`) — Pure Rust library, zero dependencies. All embedding algorithms live here.
 - `crates/web` (`fitting-web`) — WASM bindings via wasm-bindgen. Uses plotters + plotters-canvas for HTML5 canvas rendering and lol_alloc as WASM allocator.
 - `crates/optimizer` (`fitting-optimizer`) — Native-only CLI binary (bin name `optimizer`) that drives hyperparameter search over `fitting-core`. Has dependencies (clap, indicatif, serde) — the "zero dependencies" rule applies to `core` only.
+- `crates/analysis` (`fitting-analysis`) — Post-hoc analysis of the sweeps, all of it local: Pareto fronts, Monte-Carlo hypervolume and ΔH statistics (`hv` binary; the full table takes ~12s, so this needs no cluster job) plus the thesis figures (`figures` binary, gated behind the `plots` feature so plotters/fontconfig stay off the default dependency graph).
 
 **Web frontend** (`www/`): Vite + vite-plugin-wasm. JS imports WASM pkg as `"fitting-web": "file:./pkg"` with `await init()` pattern.
 
-Crate-specific detail lives in nested CLAUDE.md files and loads only when you work in that directory: `crates/core/CLAUDE.md` (data layout, manifold abstractions, curvature detection submodules, pipeline flow), `crates/optimizer/CLAUDE.md` (run modes, GP/qParEGO internals, resume semantics), `slurm/CLAUDE.md` (cluster job orchestration).
+**Python** is down to one file: `analyze_hyperparams.py`, the exploratory
+hyperparameter tool (sklearn/scipy/matplotlib, local only). The hypervolume and
+thesis-figure stages were ported to `crates/analysis`.
+
+Crate-specific detail lives in nested CLAUDE.md files and loads only when you work in that directory: `crates/core/CLAUDE.md` (data layout, manifold abstractions, curvature detection submodules, pipeline flow), `crates/optimizer/CLAUDE.md` (run modes, GP/qParEGO internals, resume semantics), `crates/analysis/CLAUDE.md` (orientation, HV determinism, the scipy ports), `slurm/CLAUDE.md` (cluster job orchestration).
