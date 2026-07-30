@@ -70,7 +70,7 @@ cells have no saved front but are recomputed exactly by `pareto_utils.front_entr
 ### C1. κ_data d_rms convention — **fixed**
 - **Thesis** (§gauge-fixing l.257): κ_data = |K_data|·d_rms² = (d_rms/r*)², with d_rms the *input RMS pairwise distance*.
 - **Was:** `--mode detect` first computed d_rms as RMS distance **from the centroid** (`√(S/2n²)`), a factor √(2n/(n-1)) ≈ √2 smaller, so κ_data was ~2× too small.
-- **Now:** `detect.rs` uses `rms_pairwise = √(S/n(n-1))` to match the thesis. The existing N=1000 `kappa_data.jsonl` was corrected in place by the exact algebraic factor `2n/(n-1)` (`fix_kappa_data_drms.py`, backup kept) — no re-run of the detector, since the curvatures are independent of d_rms. Exp 3 figures were regenerated. (E.g. `tree` κ_data 38.0 → 76.1.)
+- **Now:** `detect.rs` uses `rms_pairwise = √(S/n(n-1))` to match the thesis. The N=1000 `kappa_data.jsonl` was **re-run** with the corrected detector (`--mode detect --dataset all --n-samples 1000`, ~10 min locally on 16 cores), which also picked up the `grid` dataset the first run predated. The new values agree with the exact algebraic factor `2n/(n-1)` to ~1e-12, as expected since the curvatures are independent of d_rms. Exp 3 figures were regenerated. (E.g. `tree` κ_data 38.0 → 76.1.)
 
 ### C2. Geometry-inference text is stale re: the hyperbolic test
 - **Thesis** (§geometry-inference l.315–318, **commented out**) describes the *old* hyperbolic test: 90th-percentile scaled Gromov δ / median distance, threshold 0.18. Line 329 explicitly admits: *"my method/implementation for determining hyperbolic space from Euclidean Space … contained an error and is not properly theoretically backed. This needs to be revisited."*
@@ -90,7 +90,7 @@ data, surfaced by `--mode detect` at N=1000. They are not bugs in the export.
 
 - **Synthetic `sphere` → detected euclidean.** Spherical fit pins at the flat-ward bound (ρ≈0.56); the uniform S² sample does not cover enough of the sphere for the angular-extent gate. `antipodal_clusters` (spherical, κ_data≈3.2) is detected correctly, which is why it is the more useful spherical fixture.
 - **Synthetic `hyperbolic_shells` → detected euclidean.** δ(k) tail slope ≈0.22, just above the 0.15 saturation threshold, so the hyperbolic gate declines. `tree` (κ_data≈76) and `wordnet_mammals` are detected hyperbolic as expected.
-- **Verdicts at N=1000:** mnist→hyperbolic, fashion_mnist→euclidean, pbmc→hyperbolic, wordnet_mammals→hyperbolic, antipodal_clusters→spherical, tree→hyperbolic, sphere→euclidean, hyperbolic_shells→euclidean.
+- **Verdicts at N=1000:** mnist→hyperbolic, fashion_mnist→euclidean, pbmc→hyperbolic, wordnet_mammals→hyperbolic, antipodal_clusters→spherical, tree→hyperbolic, sphere→euclidean, hyperbolic_shells→euclidean, grid→euclidean (the flat control, as expected).
 - **Spherical embedding κ saturates ≈2.5** on the Pareto front regardless of dataset (Exp 3 figure), whereas hyperbolic embedding κ spreads and tracks κ_data (Spearman ρ≈+0.5). Worth a sentence in the Exp 3 discussion.
 
 ---
