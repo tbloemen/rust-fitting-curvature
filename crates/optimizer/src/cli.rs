@@ -25,12 +25,13 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) dataset: Option<String>,
 
-    /// Run mode: "random" (default), "bayes", "scan", or "pareto".
+    /// Run mode: "random" (default), "bayes", "scan", "pareto", or "detect".
     /// random: sample random configs with continuous curvature, compute all metrics.
     /// bayes:  Bayesian optimisation over all 7 hyperparameters (requires --metric).
     ///         Geometry sign is detected automatically unless --geometry is given.
     /// scan:   sweep each parameter individually from a base config (requires --metric).
     /// pareto: qParEGO multi-objective optimisation over 10 objectives (no --metric needed).
+    /// detect: run curvature detection on the data distances; one JSONL line per dataset.
     #[arg(long, default_value = "random")]
     pub(crate) mode: String,
 

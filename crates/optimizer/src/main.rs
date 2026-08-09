@@ -8,6 +8,7 @@ use std::thread;
 use crate::bayes::run_bayes;
 use crate::cli::Args;
 use crate::data::Dataset;
+use crate::detect::run_detect;
 use crate::evaluate::Evaluator;
 use crate::pareto::run_pareto;
 use crate::random::run_random;
@@ -17,6 +18,7 @@ mod bayes;
 mod cli;
 mod common;
 mod data;
+mod detect;
 mod evaluate;
 mod gp;
 mod metrics;
@@ -40,6 +42,7 @@ fn get_dataset_names(dataset_arg: &Option<String>) -> Vec<String> {
             "antipodal_clusters".to_string(),
             "tree".to_string(),
             "hyperbolic_shells".to_string(),
+            "grid".to_string(),
         ],
         Some(name) if name == "real" => vec![
             "mnist".to_string(),
@@ -103,9 +106,13 @@ fn main() {
             args.geometry.as_deref().unwrap_or("auto-detect"),
             args.n_seeds
         ),
+        "detect" => println!(
+            "Starting curvature detection: {} datasets, exporting κ_data diagnostics (no embedding fit).",
+            dataset_names.len(),
+        ),
         other => {
             eprintln!(
-                "Unknown --mode '{}'. Use 'random', 'scan', 'bayes', or 'pareto'.",
+                "Unknown --mode '{}'. Use 'random', 'scan', 'bayes', 'pareto', or 'detect'.",
                 other
             );
             std::process::exit(1);
@@ -178,6 +185,7 @@ fn main() {
                     "scan" => run_scan(&dataset_name, &args, evaluator, &mp),
                     "bayes" => run_bayes(&dataset_name, &args, evaluator, &mp, n_threads),
                     "pareto" => run_pareto(&dataset_name, &args, evaluator, &mp, n_threads),
+                    "detect" => run_detect(&dataset_name, &args, &evaluator),
                     _ => run_random(&dataset_name, &args, evaluator, &mp),
                 },
             }
