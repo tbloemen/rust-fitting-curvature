@@ -13,23 +13,23 @@ serde = { version = "1.0", features = ["derive"] }
 # a chain of exact `<=` comparisons: two trials whose metrics agree to 16 digits
 # are a real occurrence in these sweeps, and one ulp is enough to turn a tie into
 # a domination and silently drop a front point. Costs ~2x on float parsing, which
-# is nothing next to the Monte-Carlo integration.
+# is nothing next to the indicator pass.
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 
 # plotters is used solely by the `figures` binary, and it drags in
 # font-kit/fontconfig (a system library). Same treatment as `fitting-core`'s
-# plot examples: optional dep + `required-features`, so the library, the `hv`
-# binary, tests and clippy stay fontconfig-free. This is what lets the cluster
-# run `cargo build --release --locked` without any system font stack.
+# plot examples: optional dep + `required-features`, so the library, the `r2`
+# binary, tests and clippy stay fontconfig-free. This is what lets a plain
+# `cargo build --release --locked` work without any system font stack.
 plotters = { version = "0.3", optional = true }
 
 [features]
 plots = ["dep:plotters"]
 
-# The cluster-side binary: Monte-Carlo hypervolume + ΔH aggregation. No plotting.
+# R2 indicator + ΔR2 aggregation + the recommendation table. No plotting.
 [[bin]]
-name = "hv"
-path = "src/bin/hv.rs"
+name = "r2"
+path = "src/bin/r2.rs"
 
 # Local-only: renders the thesis result figures.
 [[bin]]

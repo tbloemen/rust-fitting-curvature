@@ -145,7 +145,7 @@ fn empty_input_gives_empty_front() {
 #[test]
 fn front_records_round_trip_through_orientation() {
     // 0.9 dominates 0.5 on every objective once stress is oriented, so only the
-    // better record survives — this is the path cell_hypervolume uses.
+    // better record survives — this is the path cell_summary uses.
     let records = vec![record_at(0.5), record_at(0.9), record_at(0.7)];
     let front = pareto_front_records(&records);
     assert_eq!(front.len(), 1);

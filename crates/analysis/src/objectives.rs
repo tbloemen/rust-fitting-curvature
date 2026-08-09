@@ -16,7 +16,7 @@ pub const OBJECTIVES: [&str; 10] = [
     "neighborhood_hit_manifold",
 ];
 
-/// Number of objectives; the dimension of the hypervolume box.
+/// Number of objectives; the dimension of the oriented objective space.
 pub const N_OBJECTIVES: usize = OBJECTIVES.len();
 
 /// Objectives where lower is better; oriented as `1 - value`.

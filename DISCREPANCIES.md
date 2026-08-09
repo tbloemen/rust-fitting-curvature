@@ -1,109 +1,125 @@
 # Thesis ↔ results discrepancy report
 
-Cross-check of the claims in `docs/thesis/sections/5results.typ` (and the
-methods it cites) against what is actually in `results/`, as of the analysis in
-the `figures` / `hv` binaries of `crates/analysis` and `--mode detect`. No thesis `.typ`
-files were edited. Each item says what the thesis asserts, what the data shows,
-and a suggested resolution.
+Cross-check of the claims in `docs/thesis/sections/5results.typ` (and the methods
+it cites) against what is actually in `results/`, as of the analysis in the
+`figures` / `r2` binaries of `crates/analysis` and `--mode detect`. No thesis
+`.typ` files were edited for this report. Each item says what the thesis asserts,
+what the data shows, and a suggested resolution.
 
-Verified data inventory (176 trial-results `.jsonl` cells):
+**Resolved items are deleted, not archived** — everything below is live.
 
-| setting | geometries present | datasets | N |
-|---|---|---|---|
-| `all_off` | euclidean, hyperbolic, **spherical** | all 8 | 1000 & 5000 |
-| `centering_only` | euclidean, hyperbolic | all 8 | 1000 & 5000 |
-| `global_only` | euclidean, hyperbolic | all 8 | 1000 & 5000 |
-| `norm_only` | euclidean, hyperbolic | all 8 | 1000 & 5000 |
-| `all_free` | euclidean, hyperbolic | all 8 | 1000 & 5000 |
-| `rms_anchored` | — (no runs) | — | — |
+Verified data inventory — **269 trial-results `.jsonl` cells**:
 
-Datasets present: `mnist`, `fashion_mnist`, `pbmc`, `wordnet_mammals`,
-`sphere`, `antipodal_clusters`, `tree`, `hyperbolic_shells`. (No `grid`.)
+| setting          | geometries present               | datasets      | N           |
+| ---------------- | -------------------------------- | ------------- | ----------- |
+| `all_off`        | euclidean, hyperbolic, spherical | all 9         | 1000 & 5000 |
+| `centering_only` | euclidean, hyperbolic, spherical | all 9         | 1000 & 5000 |
+| `global_only`    | euclidean, hyperbolic, spherical | all 9         | 1000 & 5000 |
+| `all_free`       | euclidean, hyperbolic, spherical | all 9         | 1000 & 5000 |
+| `norm_only`      | euclidean, hyperbolic            | all 9         | 1000 & 5000 |
+| `rms_anchored`   | hyperbolic                       | 8 (no `grid`) | 1000 & 5000 |
 
-128 saved `_pareto_*.json` fronts (40 at N=1000, 88 at N=5000); the other 49
-cells have no saved front but are recomputed exactly by `hv front`
-(validated to reproduce a saved front bit-for-bit).
+Datasets present: `mnist`, `fashion_mnist`, `pbmc`, `wordnet_mammals`, `sphere`,
+`antipodal_clusters`, `tree`, `hyperbolic_shells`, `grid`.
+
+252 saved `_pareto_*.json` fronts (118 at N=1000, 134 at N=5000); the remaining
+cells have no saved front but are recomputed exactly by `r2 front` (validated to
+reproduce a saved front bit-for-bit).
 
 ---
 
 ## A. Hard data gaps (a claimed result cannot be produced from current data)
 
-### A1. Spherical is missing for every non-baseline loss setting — **the "56 Pareto fronts" of Experiment 2 do not exist**
-- **Thesis** (§ablation-results, l.103): *"At each sample size this yields fifty-six Pareto fronts: the nominal 5×4×3 grid minus the four spherical `norm_only` cells."* This assumes spherical runs for `all_off`, `centering_only`, `global_only`, `all_free` on the 4 real datasets.
-- **Data:** spherical exists **only for `all_off`**. `centering_only`, `global_only`, `all_free` have **no spherical runs at all** (euclidean + hyperbolic only). Real-dataset Exp 2 fronts actually present per N: `all_off` 4×3=12, `{centering,global,all_free}` 4×2×3=24, `norm_only` 4×2=8 → **44 fronts, not 56**. The 12 missing are the spherical `centering_only`/`global_only`/`all_free` × 4-real-dataset cells.
-- **Resolution:** either (a) run the 12 missing spherical cells per N (24 total), or (b) restate Exp 2 as a **44-front** design and note spherical is only compared under `all_off` (which is what Exp 5 already does). The ΔH figure/table and `hv aggregate` already handle the reduced grid gracefully (spherical simply has no non-baseline ΔH row).
+### A1. N=5000 κ_data not computed
 
-### A2. `rms_anchored` is specified but never run — **Experiment 3's reproducibility test cannot be done**
-- **Thesis** (§tab:loss-ablations l.218 lists it as the 6th setting; §gauge-fixing l.252; §curvature-magnitude-results l.126, l.131): the `rms_anchored` setting fixes R_rms=1 so the search runs over κ directly, and Exp 3 overlays unanchored vs `rms_anchored` κ distributions per hyperbolic dataset.
-- **Data:** zero `rms_anchored_*` files. The `TrialConfig::rms_anchored()` code path exists (`common.rs`) but was never executed.
-- **Resolution:** run `--experiment rms_anchored --geometry hyperbolic` on the 4 real datasets (+ synthetics if wanted) at N=1000/5000, or drop the reproducibility sub-claim. `figures::exp3::RmsAnchored` already detects the absence and skips with a notice, and will produce the overlay automatically once the runs exist.
-
-### A3. N=5000 κ_data not yet computed
 - **Thesis** (§curvature-magnitude-results, §manifold-projection-gap): Exp 3 and Exp 4 are reported at both N=1000 and N=5000.
-- **Data:** `results/kappa_data.jsonl` exists for **N=1000 only** (produced locally via `--mode detect`). The Exp 3 scatter needs `kappa_data_n5000.jsonl`.
-- **Resolution:** run `slurm/submit_detect.sh` (writes `kappa_data_n5000.jsonl`). `figures::load_kappa_data` already looks for the `_n5000` file and the Exp 3 N=5000 panel will render once it lands. (Exp 4 needs no κ_data file — it derives κ per trial — so it is already produced at both N.)
+- **Data:** `results/kappa_data.jsonl` covers **N=1000 only** (9 datasets). There is no `kappa_data_n5000.jsonl`.
+- **Resolution:** run `slurm/submit_detect.sh`, or `--mode detect --dataset all --n-samples 5000` locally. `figures::load_kappa_data` already looks for the `_n5000` file and the Exp 3 N=5000 panel renders once it lands. Exp 4 needs no κ_data file (it derives κ per trial) and is already produced at both N.
 
-### A4. No Euclidean synthetic ("Grid") dataset
-- **Thesis** (§datasets l.23; Exp 1 figure grid, l.76–79): lists *Grid (Euclidean): a lattice in R²* as one of four synthetic datasets, and the Exp 1 curvature-grid figure has a "Euclidean Grid" row.
-- **Data:** no `grid` results. The optimizer's `load_synthetic` (`data.rs`) wires only `sphere`, `antipodal_clusters`, `tree`, `hyperbolic_shells`; `uniform_grid` exists in `synthetic_data.rs` but is not selectable from the sweep binary.
-- **Resolution:** add a `"grid" => generate_uniform_grid(...)` arm to `data.rs::load_synthetic` and run it, or remove Grid from §datasets and the Exp 1 figure.
+### A2. Experiment 1's curvature grid is not a sweep product
+
+- **Thesis** (§synthetic-grid-results): the 4×3 figure of representative embeddings, currently commented out in `5results.typ` l.57–93 with two TODOs.
+- **Data:** `docs/thesis/assets/experiment_1/` holds 9 `uniform_*_k{-1,0,1}.svg` panels from the old Python pipeline: hyperbolic shells, grid and sphere, but **no tree row**, which the caption itself admits.
+- **Resolution:** this figure needs an embedding-image pipeline (render an embedding at fixed hyperparameters), not the sweep JSONL. The `figures` binary does not produce it. Either regenerate all twelve panels under the Rust pipeline or restate the figure as three rows.
 
 ---
 
 ## B. Naming / count mismatches (data exists but labels or numbers differ)
 
 ### B1. `antipodal_clusters` is used but undocumented
-- **Data:** `antipodal_clusters` appears in all sweeps (it is a spherical-class synthetic — clusters at antipodes). Detected geometry at N=1000: **spherical**, κ_data≈3.2.
-- **Thesis** (§datasets) documents only `Sphere` as the spherical synthetic; `antipodal_clusters` is never introduced.
-- **Resolution:** add it to §datasets (it is arguably a *better* spherical stress-test than the uniform sphere, which the detector under-calls — see C1), or exclude it from the synthetic-data figures. It currently appears in Exp 3/Exp 4 (all-dataset experiments).
 
-### B2. "Six settings" vs "five settings"
-- **Thesis** is internally consistent here: methods (l.200, tab:loss-ablations) define **six** settings; the results chapter's Exp 2 uses **five** of them (`all_off` + the four non-baseline) and Exp 3 uses the sixth (`rms_anchored`). This is only a discrepancy against the *data* via A2 (the sixth was never run). No text change needed beyond A2.
+- **Data:** `antipodal_clusters` appears in every setting (a spherical-class synthetic: clusters at antipodes). Detected geometry at N=1000: **spherical**, κ_data ≈ 3.21, angular extent 3.04.
+- **Thesis** (§datasets) documents only `Sphere` as the spherical synthetic; `antipodal_clusters` is never introduced, yet it carries the all-dataset experiments (3 and 4).
+- **Resolution:** add it to §datasets — it is a better spherical fixture than the uniform sphere, which the detector under-calls (see D) — or exclude it from the synthetic-data figures.
 
-### B3. 128 saved fronts, not 56/112
-- The "56 fronts" is the intended per-N Exp 2 design (real datasets), not the file count. The 128 saved `_pareto_*.json` span all 8 datasets × 3-or-2 geometries and both N, and 49 further cells have recomputable fronts. Not a contradiction — just note that the saved-front count is not the Exp 2 headline number, and that fronts for figures are recomputed uniformly from the `.jsonl` (so the 40-vs-88 saved split between N=1000 and N=5000 does not bias anything).
+### B2. "72 Pareto runs" is a nominal count
 
----
-
-## C. Method/definition mismatches (fixed in code where the thesis is the spec)
-
-### C1. κ_data d_rms convention — **fixed**
-- **Thesis** (§gauge-fixing l.257): κ_data = |K_data|·d_rms² = (d_rms/r*)², with d_rms the *input RMS pairwise distance*.
-- **Was:** `--mode detect` first computed d_rms as RMS distance **from the centroid** (`√(S/2n²)`), a factor √(2n/(n-1)) ≈ √2 smaller, so κ_data was ~2× too small.
-- **Now:** `detect.rs` uses `rms_pairwise = √(S/n(n-1))` to match the thesis. The N=1000 `kappa_data.jsonl` was **re-run** with the corrected detector (`--mode detect --dataset all --n-samples 1000`, ~10 min locally on 16 cores), which also picked up the `grid` dataset the first run predated. The new values agree with the exact algebraic factor `2n/(n-1)` to ~1e-12, as expected since the curvatures are independent of d_rms. Exp 3 figures were regenerated. (E.g. `tree` κ_data 38.0 → 76.1.)
-
-### C2. Geometry-inference text is stale re: the hyperbolic test
-- **Thesis** (§geometry-inference l.315–318, **commented out**) describes the *old* hyperbolic test: 90th-percentile scaled Gromov δ / median distance, threshold 0.18. Line 329 explicitly admits: *"my method/implementation for determining hyperbolic space from Euclidean Space … contained an error and is not properly theoretically backed. This needs to be revisited."*
-- **Code (merged branch):** the hyperbolic gate is now the **growing-ball δ(k) saturation test** (`gromov_ball_curve::detect_hyperbolic`, log–log tail slope < `SATURATION_SLOPE_THRESHOLD = 0.15`), curvature via δ = ln(1+√2)/√(−K). The spherical angular-extent test (l.312–313, d_max/r* ≥ 2.5) **does** match current code.
-- **Resolution:** rewrite §geometry-inference to describe the growing-ball saturation method and delete the l.329 admission. `--mode detect` now exports the exact diagnostics the new method uses (`delta_tail_slope`, `delta_saturated`, `delta_saturated_normalised`, `delta_curvature`, `delta_is_hyperbolic`) so the text can quote real numbers.
-
-### C3. κ uses R_rms, not R_max — **fixed in analysis**
-- **Thesis** (§gauge-fixing l.240, l.246): κ = |K|·R_rms².
-- The earlier `analyze_hyperparams.py` used `|K|·r_max²`. The `figures` binary uses `r_rms` throughout (both the per-trial κ and the median-front κ). No data change — both `r_rms` and `r_max` are already logged per trial.
+- **Thesis** (§loss-ablations l.224): _"The full grid is therefore 6 settings × 4 real datasets × 3 geometries = 72 Pareto runs"_, immediately followed by l.225–226 excluding spherical `norm_only` and restricting `rms_anchored` to hyperbolic.
+- **Data:** 60 real-dataset runs per N (48 + 8 + 4), not 72. The two sentences that follow already carve out the difference, so the arithmetic is stated before it is corrected.
+- **Resolution:** one-line fix — say 60 and cite the exclusions inline, or label 72 explicitly as the nominal grid.
 
 ---
 
-## D. Detector-quality caveats (correct code, but worth stating in the results text)
+## C. Method/definition mismatches
 
-These are behaviours of the (now theoretically-backed) detector on the actual
-data, surfaced by `--mode detect` at N=1000. They are not bugs in the export.
+### C1. Geometry-inference text is stale re: the hyperbolic test
 
-- **Synthetic `sphere` → detected euclidean.** Spherical fit pins at the flat-ward bound (ρ≈0.56); the uniform S² sample does not cover enough of the sphere for the angular-extent gate. `antipodal_clusters` (spherical, κ_data≈3.2) is detected correctly, which is why it is the more useful spherical fixture.
-- **Synthetic `hyperbolic_shells` → detected euclidean.** δ(k) tail slope ≈0.22, just above the 0.15 saturation threshold, so the hyperbolic gate declines. `tree` (κ_data≈76) and `wordnet_mammals` are detected hyperbolic as expected.
-- **Verdicts at N=1000:** mnist→hyperbolic, fashion_mnist→euclidean, pbmc→hyperbolic, wordnet_mammals→hyperbolic, antipodal_clusters→spherical, tree→hyperbolic, sphere→euclidean, hyperbolic_shells→euclidean, grid→euclidean (the flat control, as expected).
-- **Spherical embedding κ saturates ≈2.5** on the Pareto front regardless of dataset (Exp 3 figure), whereas hyperbolic embedding κ spreads and tracks κ_data (Spearman ρ≈+0.5). Worth a sentence in the Exp 3 discussion.
+- **Thesis** (§geometry-inference l.315–318, **commented out**) describes the _old_ hyperbolic test: 90th-percentile scaled Gromov δ over median distance, threshold 0.18. Line 329 admits the method _"contained an error and is not properly theoretically backed."_
+- **Code:** the hyperbolic gate is the **growing-ball δ(k) saturation test** (`gromov_ball_curve::detect_hyperbolic`, log–log tail slope < `SATURATION_SLOPE_THRESHOLD = 0.15`), curvature via δ = ln(1+√2)/√(−K). The spherical angular-extent test (d_max/r* ≥ 2.5) does match the current code.
+- **Resolution:** rewrite §geometry-inference around the growing-ball method and delete the l.329 admission. `--mode detect` exports the exact diagnostics the new method uses (`delta_tail_slope`, `delta_saturated`, `delta_saturated_normalised`, `delta_curvature`, `delta_is_hyperbolic`), so the text can quote real numbers.
+
+### C2. The stated Friedman design silently excludes spherical
+
+- **Thesis** (§front-quality): _"the five loss-weight settings are ranked within each (dataset, geometry, sample size) block, a Friedman test is applied to the resulting ranks."_
+- **Data:** Friedman needs complete blocks, and `norm_only` has no spherical runs because the depth-norm loss is undefined on the sphere (§norm-loss). Taking the five settings literally therefore yields **zero complete spherical blocks**: spherical disappears from the test entirely and the pooled row runs on 36 of 54 blocks. Dropping `norm_only` from the treatment list gives all 54 blocks and a spherical row — under which `centering_only` is significant on spherical (Holm p = 0.009), a result the five-setting run cannot produce at all.
+- **Resolution:** decide which test the results chapter quotes and say so. Either report the four-setting test as primary (full geometry coverage, `norm_only` handled separately as a hyperbolic/Euclidean-only comparison), or keep five settings and state that spherical is excluded by construction. `r2 aggregate --settings …` runs either, and reports `dropped_blocks` both ways.
+
+### C3. The ε-indicator and dominance ranking are specified but not implemented
+
+- **Thesis** (§front-quality): _"As a secondary summary we report the unary additive ε-indicator … and the dominance ranking of the merged front"_, with agreement between them and ΔR2 _"reported rather than assumed"_.
+- **Code:** neither exists. `crates/analysis` computes R2 only.
+- **Resolution:** both are short and use machinery already present (`oriented_matrix`, `pareto_front_mask`); add them to `r2.rs` and a column each to the `aggregate` output, or drop the sentence from the methods chapter.
+
+### C4. Per-objective best-attainable table is specified but not implemented
+
+- **Thesis** (§preference-regions): _"Alongside them we report, for each objective separately, the best value attained anywhere on the front and the values that same configuration attains on the other nine."_
+- **Code:** `r2 recommend` produces the per-preference recommendation table, but nothing produces the per-objective best-attainable table.
+- **Resolution:** a few lines over `CellSummary::front` and the oriented matrix; add a subcommand or a second CSV to `recommend`.
 
 ---
 
-## Summary of what each experiment can currently deliver
+## D. Detector-quality caveats (correct code, but the results text does not state them)
 
-| Exp | Figure | Status with current data |
-|---|---|---|
-| 1 | curvature grid (embeddings) | needs embedding-image pipeline + Grid dataset (A4); not from sweep JSONL |
-| 2 | stacked Pareto fronts | ✅ produced (N=1000/5000); spherical column is `all_off`-only (A1) |
-| 2 | ΔH table | ✅ `hv aggregate`; spherical has no non-baseline ΔH (A1) |
-| 3 | κ vs κ_data scatter | ✅ N=1000 (κ_data fixed, C1); N=5000 needs A3 |
-| 3 | rms_anchored κ overlay | ❌ blocked by A2 |
-| 4 | ρ_man-proj(κ) | ✅ produced (both N) |
-| 5 | trust-vs-stress front grid | ✅ produced (N=1000/5000) |
-| 5 | hyperparameter marginals | ✅ produced (N=1000/5000) |
+Behaviours of the detector on the actual data, from `--mode detect` at N=1000.
+Not bugs in the export, but each one is something a reader of Exp 3 would need.
+
+| dataset              | detected   | κ_data | δ tail slope | angular extent |
+| -------------------- | ---------- | ------ | ------------ | -------------- |
+| `tree`               | hyperbolic | 76.07  | 0.028        | —              |
+| `antipodal_clusters` | spherical  | 3.21   | 0.337        | 3.04           |
+| `mnist`              | hyperbolic | 0.47   | 0.053        | —              |
+| `wordnet_mammals`    | hyperbolic | 0.46   | 0.000        | —              |
+| `pbmc`               | hyperbolic | 0.07   | 0.105        | —              |
+| `fashion_mnist`      | euclidean  | 0.00   | 0.194        | 2.50           |
+| `sphere`             | euclidean  | 0.00   | 0.188        | 2.50           |
+| `hyperbolic_shells`  | euclidean  | 0.00   | 0.225        | 2.50           |
+| `grid`               | euclidean  | 0.00   | 0.531        | 2.50           |
+
+- **Synthetic `sphere` → detected euclidean.** The uniform S² sample does not cover enough of the sphere for the angular-extent gate, which pins at its 2.5 bound. `antipodal_clusters` is detected correctly, which is why it is the more useful spherical fixture (B1).
+- **Synthetic `hyperbolic_shells` → detected euclidean.** δ(k) tail slope 0.225, above the 0.15 saturation threshold, so the hyperbolic gate declines. `tree` and `wordnet_mammals` are detected hyperbolic as expected.
+- **`grid` behaves as the flat control**: the steepest tail slope in the table (0.531, nowhere near saturating) and κ_data = 0.
+- **Spherical embedding κ saturates ≈2.5** on the Pareto front regardless of dataset (Exp 3 figure), whereas hyperbolic embedding κ spreads and tracks κ_data (Spearman ρ ≈ +0.5).
+
+---
+
+## Blocked deliverables
+
+Everything not listed here is producible from the current data.
+
+| Exp | Figure / table                        | Blocked by                                               |
+| --- | ------------------------------------- | -------------------------------------------------------- |
+| 1   | curvature grid (embeddings)           | A2 — needs an embedding-image pipeline; tree row missing |
+| 2   | Friedman + Holm / critical-difference | C2 — spherical coverage depends on the treatment list    |
+| 2   | ε-indicator + dominance ranking       | C3 — not implemented                                     |
+| 3   | κ vs κ_data scatter at N=5000         | A1 — no `kappa_data_n5000.jsonl`                         |
+| 5   | per-objective best attainable         | C4 — not implemented                                     |
