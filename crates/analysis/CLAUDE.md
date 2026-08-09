@@ -40,7 +40,7 @@ cargo run --release -p fitting-analysis --features plots --bin figures
 
 ### Orientation and the indicator
 
-Everything works in an *oriented* space: each of the 10 qParEGO objectives
+Everything works in an _oriented_ space: each of the 10 qParEGO objectives
 (`objectives.rs`, same order as `pareto.rs::default_pareto_metrics`) is mapped
 into `[0, 1]` with higher = better — normalised stress becomes `1 − x`, and a
 missing/null/non-finite value becomes `0.0`, matching the optimizer's
@@ -77,12 +77,12 @@ would be a coin flip.
 
 Eight regions, in report order:
 
-| region | membership | size |
-|---|---|---|
-| `all` | everything | 2002 |
-| one per metric (`trustworthiness`, …) | `l_proj + l_man >= 3` for that metric's pair | 190 |
-| `manifold` | supported on the odd (manifold) objectives | 126 |
-| `projected` | supported on the even (2D) objectives | 126 |
+| region                                | membership                                   | size |
+| ------------------------------------- | -------------------------------------------- | ---- |
+| `all`                                 | everything                                   | 2002 |
+| one per metric (`trustworthiness`, …) | `l_proj + l_man >= 3` for that metric's pair | 190  |
+| `manifold`                            | supported on the odd (manifold) objectives   | 126  |
+| `projected`                           | supported on the even (2D) objectives        | 126  |
 
 `OBJECTIVES` interleaves the pair as `[metric, metric_manifold, …]`, so metric
 `i` owns objectives `2i` and `2i+1`. `metric_layout_matches_the_objective_order`
@@ -92,7 +92,7 @@ in `test_r2.rs` fails loudly if that array is ever reordered.
 
 `recommendation()` returns the front point most often chosen by a region's
 weight vectors, with the share that chose it. `front_index` indexes into
-`CellSummary::front`, which holds indices into the *records* — the `recommend`
+`CellSummary::front`, which holds indices into the _records_ — the `recommend`
 subcommand relies on that indirection to report hyperparameters, and a test
 covers it. Ties resolve to the lowest front index, so nothing depends on
 iteration order.
@@ -148,7 +148,7 @@ Two deliberate departures from the Python:
 
 - **Exp 2 fronts are actual fronts.** `_slice_front` in `analyze_experiments.py`
   had its domination test inverted (it dropped the points that dominate `i`
-  rather than the ones `i` dominates), so it drew the *worst-case* boundary.
+  rather than the ones `i` dominates), so it drew the _worst-case_ boundary.
   `pareto::slice_front_2d` computes the real front; `test_pareto.rs` guards it.
 - **Exp 5 marginals share bin edges across geometries** so the overlaid
   histograms compare like with like; matplotlib binned each series separately.
