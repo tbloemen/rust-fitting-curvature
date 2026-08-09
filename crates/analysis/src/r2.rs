@@ -128,7 +128,12 @@ fn enumerate_simplex() -> Vec<[u8; N_OBJECTIVES]> {
     out
 }
 
-fn fill(dim: usize, remaining: u8, counts: &mut [u8; N_OBJECTIVES], out: &mut Vec<[u8; N_OBJECTIVES]>) {
+fn fill(
+    dim: usize,
+    remaining: u8,
+    counts: &mut [u8; N_OBJECTIVES],
+    out: &mut Vec<[u8; N_OBJECTIVES]>,
+) {
     if dim == N_OBJECTIVES - 1 {
         counts[dim] = remaining;
         out.push(*counts);
@@ -204,7 +209,10 @@ pub struct FrontUtility {
 /// An empty front is scored as if it held the single worst point `(0, …, 0)`,
 /// giving `max_j λ_j`. That keeps the indicator total, and a cell whose front is
 /// empty is degenerate anyway.
-pub fn front_utilities(front: &[[f64; N_OBJECTIVES]], weights: &[[f64; N_OBJECTIVES]]) -> FrontUtility {
+pub fn front_utilities(
+    front: &[[f64; N_OBJECTIVES]],
+    weights: &[[f64; N_OBJECTIVES]],
+) -> FrontUtility {
     let mut utility = Vec::with_capacity(weights.len());
     let mut best = Vec::with_capacity(weights.len());
 

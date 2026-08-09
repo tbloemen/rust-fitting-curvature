@@ -197,7 +197,8 @@ pub fn rank_tests(rows: &[DeltaRow], settings: &[String]) -> Vec<RankTest> {
     // (region, geometry, block) → setting → ΔR2. The geometry is carried in the
     // key as well as the block so the pooled and per-geometry views share it.
     type BlockKey = (usize, String, String); // (n, geometry, dataset)
-    let mut by_region: BTreeMap<String, BTreeMap<BlockKey, BTreeMap<String, f64>>> = BTreeMap::new();
+    let mut by_region: BTreeMap<String, BTreeMap<BlockKey, BTreeMap<String, f64>>> =
+        BTreeMap::new();
     for r in rows {
         let Some(d) = r.delta_r2 else { continue };
         if !d.is_finite() || !settings.contains(&r.setting) {
@@ -267,12 +268,7 @@ pub fn summarise(rows: &[DeltaRow]) -> Vec<GroupSummary> {
     let mut groups: BTreeMap<(usize, String, String, String), Vec<f64>> = BTreeMap::new();
     for r in rows {
         let entry = groups
-            .entry((
-                r.n,
-                r.geometry.clone(),
-                r.setting.clone(),
-                r.region.clone(),
-            ))
+            .entry((r.n, r.geometry.clone(), r.setting.clone(), r.region.clone()))
             .or_default();
         if let Some(d) = r.delta_r2 {
             entry.push(d);
@@ -281,17 +277,15 @@ pub fn summarise(rows: &[DeltaRow]) -> Vec<GroupSummary> {
 
     groups
         .into_iter()
-        .map(|((n, geometry, setting, region), deltas)| {
-            GroupSummary {
-                n,
-                geometry,
-                setting,
-                region,
-                n_datasets: deltas.len(),
-                mean_delta: stats::mean(&deltas),
-                median_delta: stats::median(&deltas),
-                n_positive: deltas.iter().filter(|&&d| d > 0.0).count(),
-            }
+        .map(|((n, geometry, setting, region), deltas)| GroupSummary {
+            n,
+            geometry,
+            setting,
+            region,
+            n_datasets: deltas.len(),
+            mean_delta: stats::mean(&deltas),
+            median_delta: stats::median(&deltas),
+            n_positive: deltas.iter().filter(|&&d| d > 0.0).count(),
         })
         .collect()
 }
