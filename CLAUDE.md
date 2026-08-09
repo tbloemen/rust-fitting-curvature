@@ -28,8 +28,8 @@ cargo run --release -p fitting-optimizer -- \
 
 # Analyse the sweeps: R2 indicator (~1.3s for the whole table), then ΔR2 + the test
 cargo run --release -p fitting-analysis --bin r2 -- stats --out r2_local.jsonl
-cargo run --release -p fitting-analysis --bin r2 -- aggregate r2_local.jsonl --csv r2_delta.csv   # Friedman + Holm -> r2_tests.csv
-cargo run --release -p fitting-analysis --bin r2 -- recommend --csv recommendations.csv
+cargo run --release -p fitting-analysis --bin r2 -- aggregate r2_local.jsonl --deltas r2_delta.jsonl   # Friedman + Holm -> r2_tests.jsonl
+cargo run --release -p fitting-analysis --bin r2 -- recommend --out recommendations.jsonl
 
 # Thesis result figures (local only — needs fontconfig, hence the feature gate)
 cargo run --release -p fitting-analysis --features plots --bin figures

@@ -23,17 +23,17 @@ cargo run --release -p fitting-analysis --bin r2 -- \
   stats --results-dir results --out r2_local.jsonl
 
 # Stage 2: Friedman + Holm over the blocks, per preference region.
-# Writes the test table to --tests (default r2_tests.csv); --csv and
+# Writes the test table to --tests (default r2_tests.jsonl); --deltas and
 # --descriptive are the two optional extra tables.
 cargo run --release -p fitting-analysis --bin r2 -- \
-  aggregate r2_local.jsonl --csv r2_delta.csv          # --region all to filter
-#   --tests r2_tests.csv                                     Friedman + Holm, one row per setting
+  aggregate r2_local.jsonl --deltas r2_delta.jsonl     # --region all to filter
+#   --tests r2_tests.jsonl                                   Friedman + Holm, one object per test
 #   --settings all_off,centering_only,global_only,all_free   includes spherical
-#   --descriptive r2_descriptive.csv                         mean/median ΔR2 per group
+#   --descriptive r2_descriptive.jsonl                       mean/median ΔR2 per group
 
 # The per-preference recommendation table (hyperparameters + all 10 objectives)
 cargo run --release -p fitting-analysis --bin r2 -- \
-  recommend --results-dir results --csv recommendations.csv
+  recommend --results-dir results --out recommendations.jsonl
 
 # Recompute *_pareto_*.json fronts for cells whose sweep predates front writing
 cargo run --release -p fitting-analysis --bin r2 -- front --results-dir results
@@ -44,7 +44,7 @@ cargo run --release -p fitting-analysis --features plots --bin figures
 
 ### Output goes to files; failures go through `Result`
 
-Nothing here prints. Every subcommand's product is a file (`--out`, `--csv`,
+Nothing here prints. Every subcommand's product is a file (`--out`, `--deltas`,
 `--tests`, `--descriptive`, the SVG/PNG pairs), and the only thing that reaches
 the terminal is a failure, rendered once by `main` returning `Err`. `error.rs`
 holds the crate's `Error` — `Io`/`Parse` carry the path (and 1-based line),
@@ -54,6 +54,16 @@ to be an `eprintln!` followed by `process::exit(1)`. Its `Debug` forwards to
 derived form is unreadable. `Error::Plot` flattens plotters' backend-generic
 error to its message, which keeps `Error: Send + Sync` for the sweep workers
 and plotters out of the non-`plots` build.
+
+Every table is **JSONL**, written through `records::write_jsonl` — same format
+in as out, so a stage-2 table loads with the same one-line `serde_json::from_str`
+the sweeps do and `jq` works on all of it. These used to be CSV, hand-serialised
+with format strings in `bin/r2.rs`; nothing read them programmatically and the
+flattening it forced was pure loss — a `RankTest` is now one object with its
+`settings`/`mean_ranks`/`holm_p` arrays intact instead of one row per setting
+repeating the omnibus columns, and `recommend` writes name-keyed `params` /
+`objectives` objects instead of columns positional against `PARAMS`/`OBJECTIVES`.
+A value that does not exist is `null`, not an empty field.
 
 **Loading is strict.** `load_jsonl` errors on a file it cannot open and on any
 line that will not deserialise; only blank lines are skipped. A missing *field*

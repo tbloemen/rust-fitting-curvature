@@ -84,7 +84,7 @@ reproduce a saved front bit-for-bit).
 
 - **Thesis** (§preference-regions): _"Alongside them we report, for each objective separately, the best value attained anywhere on the front and the values that same configuration attains on the other nine."_
 - **Code:** `r2 recommend` produces the per-preference recommendation table, but nothing produces the per-objective best-attainable table.
-- **Resolution:** a few lines over `CellSummary::front` and the oriented matrix; add a subcommand or a second CSV to `recommend`.
+- **Resolution:** a few lines over `CellSummary::front` and the oriented matrix; add a subcommand or a second table to `recommend`.
 
 ---
 

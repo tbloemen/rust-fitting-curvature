@@ -1,4 +1,5 @@
-//! Loading trial records from the optimizer's JSONL output.
+//! Loading trial records from the optimizer's JSONL output, and writing this
+//! crate's own tables back out in the same format ([`write_jsonl`]).
 //!
 //! Every field is optional so that a missing column behaves like Python's
 //! `dict.get(...)` did: absent and `null` are the same thing, and a results file
@@ -9,10 +10,10 @@
 //! [`load_jsonl`].
 
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, IoContext, Result};
 
@@ -158,4 +159,34 @@ pub fn trial_records(path: impl AsRef<Path>) -> Result<Vec<TrialRecord>> {
     let mut recs = load_jsonl(path)?;
     recs.retain(|r| r.scan_param.is_none());
     Ok(recs)
+}
+
+/// Write *rows* to *path*, one JSON object per line.
+///
+/// Every table this crate produces goes through here, which is why the analysis
+/// output is the same format as its input: the optimizer writes JSONL, the
+/// figures read JSONL, and a stage-2 table is no different — one record per
+/// line, self-describing, `null` for a value that does not exist. A hand-rolled
+/// CSV writer used to sit in `bin/r2.rs` doing this job with format strings and
+/// an empty field for `None`.
+///
+/// Unlike the optimizer's per-trial writer (which appends, so a killed sweep
+/// leaves a valid prefix), this **truncates**: these tables are recomputed
+/// whole from the results directory every run.
+pub fn write_jsonl<T: Serialize>(
+    path: impl AsRef<Path>,
+    rows: impl IntoIterator<Item = T>,
+) -> Result<()> {
+    let path = path.as_ref();
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).at(parent)?;
+        }
+    }
+    let mut out = BufWriter::new(File::create(path).at(path)?);
+    for row in rows {
+        let line = serde_json::to_string(&row).map_err(Error::Serialize)?;
+        writeln!(out, "{line}").at(path)?;
+    }
+    out.flush().at(path)
 }

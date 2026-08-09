@@ -23,11 +23,12 @@
 //! * **`front`** — recompute a cell's Pareto front in the optimizer's
 //!   `*_pareto_*.json` schema, for the cells whose sweep predates front writing.
 //!
-//! Every subcommand's output is a **file**; nothing is written to stdout. The
+//! Every subcommand's output is a **file** — JSONL throughout, the same format
+//! the sweeps themselves are written in — and nothing is written to stdout. The
 //! one thing that reaches the terminal is a failure, rendered once by `main`
 //! returning `Err`.
 
-use std::io::Write;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
@@ -37,8 +38,8 @@ use fitting_analysis::aggregate::{self, CellRecord, DeltaRow, GroupSummary, Rank
 use fitting_analysis::objectives::OBJECTIVES;
 use fitting_analysis::r2::{cell_summary, oriented_objectives, Weights};
 use fitting_analysis::{
-    pareto_front_records, parse_cell_stem, trial_records, Cell, Error, IoContext, Result,
-    TrialRecord,
+    pareto_front_records, parse_cell_stem, trial_records, write_jsonl, Cell, Error, IoContext,
+    Result, TrialRecord,
 };
 
 /// Hyperparameters reported for a recommended configuration.
@@ -89,13 +90,13 @@ struct AggregateArgs {
     #[arg(required = true)]
     tables: Vec<PathBuf>,
 
-    /// Friedman + Holm results, one row per (region, geometry, setting).
-    #[arg(long, default_value = "r2_tests.csv")]
+    /// Friedman + Holm results, one JSON object per (region, geometry) test.
+    #[arg(long, default_value = "r2_tests.jsonl")]
     tests: PathBuf,
 
-    /// Optional path to write the per-dataset ΔR2 rows as CSV.
+    /// Optional path to write the per-dataset ΔR2 rows as JSONL.
     #[arg(long)]
-    csv: Option<PathBuf>,
+    deltas: Option<PathBuf>,
 
     /// Optional path for the descriptive per-(N, geometry, setting) ΔR2 table.
     #[arg(long)]
@@ -117,9 +118,9 @@ struct RecommendArgs {
     #[arg(long, default_value = "results")]
     results_dir: PathBuf,
 
-    /// Output CSV path.
+    /// Output JSONL path (one line per (cell, preference region)).
     #[arg(long)]
-    csv: PathBuf,
+    out: PathBuf,
 }
 
 #[derive(Parser, Debug)]
@@ -193,20 +194,13 @@ fn run_stats(args: StatsArgs) -> Result<()> {
 
     let weights = Weights::new();
 
-    if let Some(parent) = args.out.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).at(parent)?;
-        }
-    }
-
     // Cells are visited in `discover_cells` order, so the file is sorted by
     // stem and byte-identical across runs.
-    let mut out = std::io::BufWriter::new(std::fs::File::create(&args.out).at(&args.out)?);
-
+    let mut rows: Vec<CellRecord> = Vec::with_capacity(cells.len());
     for cf in &cells {
         let records = trial_records(&cf.path)?;
         let summary = cell_summary(&records, &weights);
-        let rec = CellRecord {
+        rows.push(CellRecord {
             stem: cf.stem.clone(),
             setting: cf.cell.setting.clone(),
             dataset: cf.cell.dataset.clone(),
@@ -215,12 +209,9 @@ fn run_stats(args: StatsArgs) -> Result<()> {
             n_trials: summary.n_trials,
             n_front: summary.n_front,
             r2: summary.r2.clone(),
-        };
-        let line = serde_json::to_string(&rec).map_err(Error::Serialize)?;
-        writeln!(out, "{line}").at(&args.out)?;
+        });
     }
-    out.flush().at(&args.out)?;
-    Ok(())
+    write_jsonl(&args.out, &rows)
 }
 
 // ─── Stage 2: ΔR2 + the rank test ─────────────────────────────────────────────
@@ -260,111 +251,39 @@ fn run_aggregate(args: AggregateArgs) -> Result<()> {
         });
     }
     let tests = aggregate::rank_tests(&rows, &settings);
-    write_tests_csv(&args.tests, &tests, &keep_region)?;
+    write_tests(&args.tests, &tests, &keep_region)?;
 
     if let Some(path) = &args.descriptive {
         let summaries = aggregate::summarise(&rows);
-        write_descriptive_csv(path, &summaries, &keep_region)?;
+        write_descriptive(path, &summaries, &keep_region)?;
     }
 
-    if let Some(path) = &args.csv {
-        write_delta_csv(path, rows, &keep_region)?;
+    if let Some(path) = &args.deltas {
+        write_deltas(path, rows, &keep_region)?;
     }
     Ok(())
 }
 
-/// A CSV writer over *path*, with the parent directory created.
-fn csv_writer(path: &Path) -> Result<std::io::BufWriter<std::fs::File>> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).at(parent)?;
-        }
-    }
-    Ok(std::io::BufWriter::new(
-        std::fs::File::create(path).at(path)?,
-    ))
-}
-
-/// An optional float as a CSV field: empty rather than `None`.
-fn num(v: Option<f64>) -> String {
-    v.map(|x| x.to_string()).unwrap_or_default()
-}
-
-/// The Friedman/Holm table: one row per (region, geometry, setting).
+/// The Friedman/Holm table: one JSON object per (region, geometry) test.
 ///
-/// Flattened per setting rather than per test because `mean_ranks` and `holm_p`
-/// are parallel to `settings`, and a CSV cell holding a list is no use to a
-/// spreadsheet. The omnibus columns repeat across a test's rows.
-fn write_tests_csv(
-    path: &Path,
-    tests: &[RankTest],
-    keep_region: &impl Fn(&str) -> bool,
-) -> Result<()> {
-    let mut f = csv_writer(path)?;
-    writeln!(
-        f,
-        "region,geometry,n_blocks,dropped_blocks,statistic,p,setting,mean_rank,holm_p"
-    )
-    .at(path)?;
-    for t in tests {
-        if !keep_region(&t.region) {
-            continue;
-        }
-        for (i, setting) in t.settings.iter().enumerate() {
-            writeln!(
-                f,
-                "{},{},{},{},{},{},{},{},{}",
-                t.region,
-                t.geometry,
-                t.n_blocks,
-                t.dropped_blocks,
-                t.statistic,
-                t.p,
-                setting,
-                num(t.mean_ranks.get(i).copied()),
-                num(t.holm_p.get(i).copied().flatten()),
-            )
-            .at(path)?;
-        }
-    }
-    f.flush().at(path)
+/// `settings`, `mean_ranks` and `holm_p` stay parallel arrays inside the object,
+/// which is the shape `rank_tests` produces. The CSV this replaced had to
+/// explode each test into one row per setting and repeat the omnibus columns.
+fn write_tests(path: &Path, tests: &[RankTest], keep_region: &impl Fn(&str) -> bool) -> Result<()> {
+    write_jsonl(path, tests.iter().filter(|t| keep_region(&t.region)))
 }
 
 /// The descriptive mean/median ΔR2 table per (N, geometry, setting, region).
-fn write_descriptive_csv(
+fn write_descriptive(
     path: &Path,
     summaries: &[GroupSummary],
     keep_region: &impl Fn(&str) -> bool,
 ) -> Result<()> {
-    let mut f = csv_writer(path)?;
-    writeln!(
-        f,
-        "n,geometry,setting,region,n_datasets,mean_delta_r2,median_delta_r2,n_positive"
-    )
-    .at(path)?;
-    for s in summaries {
-        if !keep_region(&s.region) {
-            continue;
-        }
-        writeln!(
-            f,
-            "{},{},{},{},{},{},{},{}",
-            s.n,
-            s.geometry,
-            s.setting,
-            s.region,
-            s.n_datasets,
-            num(s.mean_delta),
-            num(s.median_delta),
-            s.n_positive
-        )
-        .at(path)?;
-    }
-    f.flush().at(path)
+    write_jsonl(path, summaries.iter().filter(|s| keep_region(&s.region)))
 }
 
-/// The per-dataset ΔR2 rows the figures and the thesis tables read.
-fn write_delta_csv(
+/// The per-dataset ΔR2 rows the thesis tables read.
+fn write_deltas(
     path: &Path,
     mut rows: Vec<DeltaRow>,
     keep_region: &impl Fn(&str) -> bool,
@@ -378,36 +297,18 @@ fn write_delta_csv(
             &b.dataset,
         ))
     });
-    let mut f = csv_writer(path)?;
-    writeln!(
-        f,
-        "n,geometry,setting,region,dataset,r2,r2_baseline,delta_r2"
-    )
-    .at(path)?;
-    for r in &rows {
-        if !keep_region(&r.region) {
-            continue;
-        }
-        writeln!(
-            f,
-            "{},{},{},{},{},{},{},{}",
-            r.n,
-            r.geometry,
-            r.setting,
-            r.region,
-            r.dataset,
-            r.r2,
-            num(r.r2_baseline),
-            num(r.delta_r2)
-        )
-        .at(path)?;
-    }
-    f.flush().at(path)
+    write_jsonl(path, rows.iter().filter(|r| keep_region(&r.region)))
 }
 
 // ─── Recommended configurations ───────────────────────────────────────────────
 
 /// One row of the recommendation table.
+///
+/// `params` and `objectives` are name-keyed rather than positional against
+/// `PARAMS`/`OBJECTIVES`, the same way `CellRecord::r2` and `FrontEntry::metrics`
+/// carry their values. A param the trial does not have stays present as `null`,
+/// so every record has the same keys.
+#[derive(Serialize)]
 struct RecRow {
     stem: String,
     setting: String,
@@ -416,8 +317,8 @@ struct RecRow {
     geometry: String,
     region: String,
     share: f64,
-    params: Vec<Option<f64>>,
-    objectives: Vec<f64>,
+    params: BTreeMap<&'static str, Option<f64>>,
+    objectives: BTreeMap<&'static str, f64>,
 }
 
 fn run_recommend(args: RecommendArgs) -> Result<()> {
@@ -446,10 +347,10 @@ fn run_recommend(args: RecommendArgs) -> Result<()> {
                 geometry: cf.cell.geometry.clone(),
                 region: region.clone(),
                 share: rec.share,
-                params: PARAMS.iter().map(|p| record.param(p)).collect(),
+                params: PARAMS.iter().map(|p| (*p, record.param(p))).collect(),
                 objectives: OBJECTIVES
                     .iter()
-                    .map(|o| objectives.get(*o).copied().unwrap_or(0.0))
+                    .map(|o| (*o, objectives.get(*o).copied().unwrap_or(0.0)))
                     .collect(),
             });
         }
@@ -465,36 +366,7 @@ fn run_recommend(args: RecommendArgs) -> Result<()> {
         ))
     });
 
-    let path = &args.csv;
-    let mut f = csv_writer(path)?;
-    write!(f, "stem,setting,dataset,n,geometry,region,share").at(path)?;
-    for p in PARAMS {
-        write!(f, ",{p}").at(path)?;
-    }
-    for o in OBJECTIVES {
-        write!(f, ",{o}").at(path)?;
-    }
-    writeln!(f).at(path)?;
-
-    for r in &rows {
-        write!(
-            f,
-            "{},{},{},{},{},{},{}",
-            r.stem, r.setting, r.dataset, r.n, r.geometry, r.region, r.share
-        )
-        .at(path)?;
-        for v in &r.params {
-            match v {
-                Some(x) => write!(f, ",{x}").at(path)?,
-                None => write!(f, ",").at(path)?,
-            }
-        }
-        for v in &r.objectives {
-            write!(f, ",{v}").at(path)?;
-        }
-        writeln!(f).at(path)?;
-    }
-    f.flush().at(path)
+    write_jsonl(&args.out, &rows)
 }
 
 // ─── Front recomputation ──────────────────────────────────────────────────────

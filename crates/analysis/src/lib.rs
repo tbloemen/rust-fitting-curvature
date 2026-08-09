@@ -37,4 +37,4 @@ pub use error::{Error, IoContext, Result};
 pub use objectives::{oriented_matrix, oriented_value, OBJECTIVES};
 pub use pareto::{pareto_front_mask, pareto_front_records};
 pub use r2::{cell_summary, r2, CellSummary, Weights};
-pub use records::{load_jsonl, trial_records, TrialRecord};
+pub use records::{load_jsonl, trial_records, write_jsonl, TrialRecord};
