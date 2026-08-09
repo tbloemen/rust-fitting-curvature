@@ -1,4 +1,9 @@
-//! Cell identity: parsing a results-file stem into its experiment coordinates.
+//! Cell identity: parsing a results-file stem into its experiment coordinates,
+//! and finding every results file under a directory.
+
+use std::path::{Path, PathBuf};
+
+use crate::error::{IoContext, Result};
 
 /// The loss-weight settings a sweep can be run under.
 pub const SETTINGS: [&str; 6] = [
@@ -33,30 +38,18 @@ impl Cell {
     }
 }
 
-impl std::fmt::Display for Cell {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Cell({}/{}/N{}/{})",
-            self.setting, self.dataset, self.n, self.geometry
-        )
-    }
-}
-
 /// Parse a results file stem like `all_off_mnist_n5000_hyperbolic`.
 ///
 /// Returns `None` for names that are not a plain trial-results stem (e.g.
 /// `*_pareto_*` front files, which contain a second geometry token).
 ///
-/// Ports the Python regex `^(setting)_(.+?)(_n5000)?_(geometry)$`. The dataset
-/// group is non-greedy and the geometry is anchored at the end, so the split is
-/// unambiguous even though dataset names contain underscores.
+/// The setting is anchored at the start and the geometry at the end, so the
+/// split is unambiguous even though dataset names contain underscores.
 pub fn parse_cell_stem(stem: &str) -> Option<Cell> {
     if stem.contains("_pareto_") {
         return None;
     }
-    // Longest match first so `all_free` is never parsed as setting `all_off`-like
-    // prefix of something else; the settings list has no shared prefixes, but
+    // Longest match first: the settings list has no shared prefixes today, but
     // matching in descending length order keeps that robust to new settings.
     let mut settings: Vec<&str> = SETTINGS.to_vec();
     settings.sort_by_key(|s| std::cmp::Reverse(s.len()));
@@ -83,4 +76,39 @@ pub fn parse_cell_stem(stem: &str) -> Option<Cell> {
         return None;
     }
     Some(Cell::new(setting, dataset, n, geometry))
+}
+
+/// One results file and the experiment cell its name encodes.
+pub struct CellFile {
+    pub path: PathBuf,
+    /// The file stem, which every downstream table keys by. Carried along
+    /// because `parse_cell_stem` already proved it is valid UTF-8.
+    pub stem: String,
+    pub cell: Cell,
+}
+
+/// Every trial-results JSONL under *results_dir*, with its parsed cell.
+///
+/// Front files (`*_pareto_*.json`) and anything whose stem doesn't parse as a
+/// cell are skipped. Sorted by stem so the output order is stable.
+pub fn discover_cells(results_dir: &Path) -> Result<Vec<CellFile>> {
+    let mut out: Vec<CellFile> = Vec::new();
+    for entry in std::fs::read_dir(results_dir).at(results_dir)? {
+        let path = entry.at(results_dir)?.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if let Some(cell) = parse_cell_stem(stem) {
+            out.push(CellFile {
+                stem: stem.to_string(),
+                path: path.clone(),
+                cell,
+            });
+        }
+    }
+    out.sort_by(|a, b| a.stem.cmp(&b.stem));
+    Ok(out)
 }

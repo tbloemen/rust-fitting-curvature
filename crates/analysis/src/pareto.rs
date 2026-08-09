@@ -57,11 +57,6 @@ pub fn pareto_front_records(records: &[TrialRecord]) -> Vec<TrialRecord> {
 ///
 /// `x_up` / `y_up` say whether larger is better on each axis. Used for the
 /// per-cell front cross-sections in the Exp 2 figure.
-///
-/// Note: the Python `_slice_front` this replaces had its domination test
-/// inverted (it dropped the points that dominate `i` instead of the ones `i`
-/// dominates), so it plotted the *worst-case* boundary. This computes the
-/// actual front.
 pub fn slice_front_2d(x: &[f64], y: &[f64], x_up: bool, y_up: bool) -> Vec<usize> {
     let n = x.len().min(y.len());
     let sign = |up: bool, v: f64| if up { v } else { -v };

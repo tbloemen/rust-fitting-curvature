@@ -1,10 +1,10 @@
 //! Loading trial records from the optimizer's JSONL output, and writing this
 //! crate's own tables back out in the same format ([`write_jsonl`]).
 //!
-//! Every field is optional so that a missing column behaves like Python's
-//! `dict.get(...)` did: absent and `null` are the same thing, and a results file
-//! written by an older optimizer build still loads. The optimizer serialises
-//! non-finite metrics as `null`, so `Option<f64>` covers diverged trials too.
+//! Every field is optional: absent and `null` are the same thing, so a results
+//! file written by an older optimizer build still loads, and the optimizer
+//! serialises non-finite metrics as `null`, so `Option<f64>` covers diverged
+//! trials too.
 //!
 //! A *missing field* is therefore fine; a *malformed line* is not. See
 //! [`load_jsonl`].
@@ -13,6 +13,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, IoContext, Result};
@@ -97,7 +98,7 @@ impl TrialRecord {
         }
     }
 
-    /// One hyperparameter / geometry scalar by name (for the marginal figures).
+    /// One hyperparameter / geometry scalar by name.
     pub fn param(&self, name: &str) -> Option<f64> {
         match name {
             "learning_rate" => self.learning_rate,
@@ -132,12 +133,10 @@ impl TrialRecord {
 /// Load every JSON object from a JSONL file.
 ///
 /// Strict: a file that cannot be opened and a line that does not deserialise are
-/// both errors. The Python this replaced globbed optimistically and skipped
-/// whatever it could not read, which made a half-written results file from a
-/// killed sweep indistinguishable from a short one — the front would quietly be
-/// computed over fewer trials. Blank lines are still skipped; the optimizer's
-/// writer can leave a trailing newline.
-pub fn load_jsonl(path: impl AsRef<Path>) -> Result<Vec<TrialRecord>> {
+/// both errors, so a half-written results file from a killed sweep fails the run
+/// instead of quietly contributing a front computed over fewer trials. Blank
+/// lines are skipped; the optimizer's writer can leave a trailing newline.
+pub fn load_jsonl<T: DeserializeOwned>(path: impl AsRef<Path>) -> Result<Vec<T>> {
     let path = path.as_ref();
     let file = File::open(path).at(path)?;
     let mut out = Vec::new();
@@ -147,16 +146,14 @@ pub fn load_jsonl(path: impl AsRef<Path>) -> Result<Vec<TrialRecord>> {
         if line.is_empty() {
             continue;
         }
-        let rec: TrialRecord =
-            serde_json::from_str(line).map_err(|e| Error::parse(path, i + 1, e))?;
-        out.push(rec);
+        out.push(serde_json::from_str(line).map_err(|e| Error::parse(path, i + 1, e))?);
     }
     Ok(out)
 }
 
 /// Trial records from a results JSONL, excluding `--mode scan` sweeps.
 pub fn trial_records(path: impl AsRef<Path>) -> Result<Vec<TrialRecord>> {
-    let mut recs = load_jsonl(path)?;
+    let mut recs: Vec<TrialRecord> = load_jsonl(path)?;
     recs.retain(|r| r.scan_param.is_none());
     Ok(recs)
 }
@@ -164,11 +161,8 @@ pub fn trial_records(path: impl AsRef<Path>) -> Result<Vec<TrialRecord>> {
 /// Write *rows* to *path*, one JSON object per line.
 ///
 /// Every table this crate produces goes through here, which is why the analysis
-/// output is the same format as its input: the optimizer writes JSONL, the
-/// figures read JSONL, and a stage-2 table is no different — one record per
-/// line, self-describing, `null` for a value that does not exist. A hand-rolled
-/// CSV writer used to sit in `bin/r2.rs` doing this job with format strings and
-/// an empty field for `None`.
+/// output is the same format as its input — one record per line,
+/// self-describing, `null` for a value that does not exist.
 ///
 /// Unlike the optimizer's per-trial writer (which appends, so a killed sweep
 /// leaves a valid prefix), this **truncates**: these tables are recomputed

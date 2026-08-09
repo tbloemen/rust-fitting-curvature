@@ -113,11 +113,6 @@ impl Weights {
     pub fn region(&self, name: &str) -> Option<&Region> {
         self.regions.iter().find(|r| r.name == name)
     }
-
-    /// Region names in report order.
-    pub fn region_names(&self) -> Vec<&str> {
-        self.regions.iter().map(|r| r.name.as_str()).collect()
-    }
 }
 
 /// Every vector of `N_OBJECTIVES` non-negative integers summing to `S`.

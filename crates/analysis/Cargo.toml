@@ -2,10 +2,11 @@
 name = "fitting-analysis"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.81"
+# Local-only crate — it never runs on the cluster, so it is not pinned to the
+# 1.81 the other crates hold to.
+rust-version = "1.82"
 
 [dependencies]
-fitting-core = { path = "../core" }
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 # `float_roundtrip` makes float parsing correctly rounded. serde_json's default

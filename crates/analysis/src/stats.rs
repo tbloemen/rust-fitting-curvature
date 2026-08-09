@@ -1,10 +1,8 @@
-//! The handful of statistics the analysis needs, ported from scipy.
-//!
-//! Spearman's ρ with its t-approximation p-value (`scipy.stats.spearmanr`), the
-//! Wilcoxon signed-rank test (`scipy.stats.wilcoxon`), the Friedman test
+//! The handful of statistics the analysis needs, ported from scipy and matching
+//! its default options: Spearman's ρ with its t-approximation p-value
+//! (`scipy.stats.spearmanr`) and the Friedman test
 //! (`scipy.stats.friedmanchisquare`) with Holm's step-down correction for the
-//! post-hoc comparisons against a control, and medians. Each is reproduced to
-//! match scipy's default options.
+//! post-hoc comparisons against a control.
 //!
 //! The Friedman + Holm pair is the procedure Demšar (2006) §3.2.2 recommends for
 //! comparing several methods over several datasets, and is what `aggregate.rs`
@@ -109,70 +107,6 @@ pub fn spearman(x: &[f64], y: &[f64]) -> Option<(f64, f64)> {
     Some((rho, p))
 }
 
-/// Which distribution the Wilcoxon p-value came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WilcoxonMethod {
-    Exact,
-    Asymptotic,
-}
-
-/// Wilcoxon signed-rank test of `d ≠ 0`, two-sided.
-///
-/// Matches `scipy.stats.wilcoxon(d)` with its defaults: `zero_method="wilcox"`
-/// (zero differences are discarded), `alternative="two-sided"`, statistic
-/// `T = min(W⁺, W⁻)`, and `method="auto"` — the exact signed-rank distribution
-/// when at most 50 non-zero differences remain and no `|d|` ties are present,
-/// the tie-corrected normal approximation otherwise.
-///
-/// Returns `None` when every difference is zero, where the test is undefined
-/// (scipy raises `ValueError` there).
-pub fn wilcoxon(d: &[f64]) -> Option<(f64, f64, WilcoxonMethod)> {
-    let nonzero: Vec<f64> = d.iter().copied().filter(|v| *v != 0.0).collect();
-    let n = nonzero.len();
-    if n == 0 {
-        return None;
-    }
-
-    let abs: Vec<f64> = nonzero.iter().map(|v| v.abs()).collect();
-    let ranks = rankdata(&abs);
-    let mut r_plus = 0.0;
-    let mut r_minus = 0.0;
-    for (v, r) in nonzero.iter().zip(&ranks) {
-        if *v > 0.0 {
-            r_plus += r;
-        } else {
-            r_minus += r;
-        }
-    }
-    let t = r_plus.min(r_minus);
-
-    let tie_groups = tie_group_sizes(&abs);
-    let has_ties = tie_groups.iter().any(|&c| c > 1);
-
-    if n <= 50 && !has_ties {
-        // Exact: P(W⁺ ≤ t) by counting subsets of {1..n} whose rank sum is ≤ t.
-        let p = (2.0 * signed_rank_cdf(n, t)).min(1.0);
-        return Some((t, p, WilcoxonMethod::Exact));
-    }
-
-    let nf = n as f64;
-    let mn = nf * (nf + 1.0) * 0.25;
-    let tie_correction: f64 = tie_groups
-        .iter()
-        .map(|&c| {
-            let c = c as f64;
-            c * c * c - c
-        })
-        .sum();
-    let var = (nf * (nf + 1.0) * (2.0 * nf + 1.0) - 0.5 * tie_correction) / 24.0;
-    if var <= 0.0 {
-        return None;
-    }
-    let z = (t - mn) / var.sqrt();
-    let p = (2.0 * normal_sf(z.abs())).min(1.0);
-    Some((t, p, WilcoxonMethod::Asymptotic))
-}
-
 /// Sizes of runs of equal values (tie groups) in *xs*.
 fn tie_group_sizes(xs: &[f64]) -> Vec<usize> {
     let mut v = xs.to_vec();
@@ -188,29 +122,6 @@ fn tie_group_sizes(xs: &[f64]) -> Vec<usize> {
         i = j;
     }
     out
-}
-
-/// `P(W⁺ ≤ t)` under the null, for *n* untied non-zero differences.
-///
-/// W⁺ is the sum of a uniformly random subset of the ranks `1..n`, so the exact
-/// pmf is the subset-sum count divided by `2ⁿ`. The DP is over the `n(n+1)/2 + 1`
-/// attainable sums; `n ≤ 50` keeps the counts (at most `2⁵⁰`) exact in f64.
-fn signed_rank_cdf(n: usize, t: f64) -> f64 {
-    let max_sum = n * (n + 1) / 2;
-    let mut counts = vec![0.0f64; max_sum + 1];
-    counts[0] = 1.0;
-    for rank in 1..=n {
-        for s in (rank..=max_sum).rev() {
-            counts[s] += counts[s - rank];
-        }
-    }
-    let total: f64 = (2.0f64).powi(n as i32);
-    // t is an integer sum when there are no ties; floor guards float slop.
-    let cut = (t.floor() as isize).clamp(-1, max_sum as isize);
-    if cut < 0 {
-        return 0.0;
-    }
-    counts[..=cut as usize].iter().sum::<f64>() / total
 }
 
 // ─── Distribution tails ───────────────────────────────────────────────────────

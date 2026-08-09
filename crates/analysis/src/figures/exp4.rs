@@ -64,7 +64,7 @@ impl<'a> RhoManProj<'a> {
     }
 
     pub fn has_data(&self) -> bool {
-        PAIRED_METRICS.iter().any(|m| {
+        METRICS.iter().any(|m| {
             CURVED
                 .iter()
                 .any(|g| self.ns.iter().any(|n| !self.points(m, g, *n).is_empty()))
@@ -78,7 +78,7 @@ impl Figure for RhoManProj<'_> {
     }
 
     fn size(&self) -> (u32, u32) {
-        (400 * PAIRED_METRICS.len() as u32, 480)
+        (400 * METRICS.len() as u32, 480)
     }
 
     fn draw<DB: DrawingBackend>(&self, root: &DrawingArea<DB, Shift>) -> Res
@@ -100,8 +100,8 @@ impl Figure for RhoManProj<'_> {
         }
         draw_legend(&legend, &entries)?;
 
-        let panels = grid.split_evenly((1, PAIRED_METRICS.len()));
-        for (m_idx, metric) in PAIRED_METRICS.iter().enumerate() {
+        let panels = grid.split_evenly((1, METRICS.len()));
+        for (m_idx, metric) in METRICS.iter().enumerate() {
             // A shared x range across geometries keeps the panels comparable.
             let all_x: Vec<f64> = CURVED
                 .iter()
@@ -174,8 +174,7 @@ impl Figure for RhoManProj<'_> {
     }
 }
 
-/// Circle for the first sample size, triangle for the second — the marker
-/// distinction the Python figure used.
+/// Circle for the first sample size, triangle for the second.
 fn marker<DB: DrawingBackend>(
     x: f64,
     y: f64,

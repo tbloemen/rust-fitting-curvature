@@ -5,7 +5,10 @@
 //! set, so there is no sampling budget to trade against precision and no seed to
 //! carry around.
 //!
-//! Four subcommands:
+//! Four subcommands, each writing a **file** — JSONL throughout, the same format
+//! the sweeps themselves are written in. Nothing goes to stdout; the one thing
+//! that reaches the terminal is a failure, rendered once by `main` returning
+//! `Err`.
 //!
 //! * **`stats`** — stage 1. For every experiment cell (one results `.jsonl` file
 //!   = one (setting, dataset, N, geometry) run) compute the R2 indicator of its
@@ -22,24 +25,19 @@
 //!
 //! * **`front`** — recompute a cell's Pareto front in the optimizer's
 //!   `*_pareto_*.json` schema, for the cells whose sweep predates front writing.
-//!
-//! Every subcommand's output is a **file** — JSONL throughout, the same format
-//! the sweeps themselves are written in — and nothing is written to stdout. The
-//! one thing that reaches the terminal is a failure, rendered once by `main`
-//! returning `Err`.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
-use fitting_analysis::aggregate::{self, CellRecord, DeltaRow, GroupSummary, RankTest};
+use fitting_analysis::aggregate::{self, CellRecord};
+use fitting_analysis::cell::discover_cells;
 use fitting_analysis::objectives::OBJECTIVES;
 use fitting_analysis::r2::{cell_summary, oriented_objectives, Weights};
 use fitting_analysis::{
-    pareto_front_records, parse_cell_stem, trial_records, write_jsonl, Cell, Error, IoContext,
-    Result, TrialRecord,
+    pareto_front_records, trial_records, write_jsonl, Error, IoContext, Result, TrialRecord,
 };
 
 /// Hyperparameters reported for a recommended configuration.
@@ -134,7 +132,7 @@ struct FrontArgs {
     out_dir: Option<PathBuf>,
 
     /// Overwrite fronts the optimizer already wrote instead of skipping them.
-    #[arg(long, default_value = "false")]
+    #[arg(long)]
     force: bool,
 }
 
@@ -145,43 +143,6 @@ fn main() -> Result<()> {
         Command::Recommend(a) => run_recommend(a),
         Command::Front(a) => run_front(a),
     }
-}
-
-// ─── Cell discovery ───────────────────────────────────────────────────────────
-
-/// One results file and the experiment cell its name encodes.
-struct CellFile {
-    path: PathBuf,
-    /// The file stem, which every downstream table keys by. Carried along
-    /// because `parse_cell_stem` already proved it is valid UTF-8.
-    stem: String,
-    cell: Cell,
-}
-
-/// Every trial-results JSONL under *results_dir*, with its parsed cell.
-///
-/// Front files (`*_pareto_*.json`) and anything whose stem doesn't parse as a
-/// cell are skipped. Sorted by stem so the output order is stable.
-fn discover_cells(results_dir: &Path) -> Result<Vec<CellFile>> {
-    let mut out: Vec<CellFile> = Vec::new();
-    for entry in std::fs::read_dir(results_dir).at(results_dir)? {
-        let path = entry.at(results_dir)?.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-            continue;
-        }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if let Some(cell) = parse_cell_stem(stem) {
-            out.push(CellFile {
-                stem: stem.to_string(),
-                path: path.clone(),
-                cell,
-            });
-        }
-    }
-    out.sort_by(|a, b| a.stem.cmp(&b.stem));
-    Ok(out)
 }
 
 // ─── Stage 1: per-cell R2 ─────────────────────────────────────────────────────
@@ -196,7 +157,7 @@ fn run_stats(args: StatsArgs) -> Result<()> {
 
     // Cells are visited in `discover_cells` order, so the file is sorted by
     // stem and byte-identical across runs.
-    let mut rows: Vec<CellRecord> = Vec::with_capacity(cells.len());
+    let mut rows = Vec::with_capacity(cells.len());
     for cf in &cells {
         let records = trial_records(&cf.path)?;
         let summary = cell_summary(&records, &weights);
@@ -232,9 +193,8 @@ fn run_aggregate(args: AggregateArgs) -> Result<()> {
         }
     }
 
-    let rows = aggregate::compute_deltas(&table);
-    // `map_or(true, ..)` rather than `is_none_or`: the crate's MSRV is 1.81.
-    let keep_region = |region: &str| args.region.as_deref().map_or(true, |r| r == region);
+    let mut rows = aggregate::compute_deltas(&table);
+    let keep_region = |region: &str| args.region.as_deref().is_none_or(|r| r == region);
 
     // ── Friedman + Holm, the test the thesis reports ──────────────────────────
     let settings = args
@@ -250,64 +210,38 @@ fn run_aggregate(args: AggregateArgs) -> Result<()> {
             settings,
         });
     }
+    // One JSON object per (region, geometry) test: `settings`, `mean_ranks` and
+    // `holm_p` stay parallel arrays inside it, the shape `rank_tests` produces.
     let tests = aggregate::rank_tests(&rows, &settings);
-    write_tests(&args.tests, &tests, &keep_region)?;
+    write_jsonl(&args.tests, tests.iter().filter(|t| keep_region(&t.region)))?;
 
+    // Descriptive mean/median ΔR2 per (N, geometry, setting, region).
     if let Some(path) = &args.descriptive {
         let summaries = aggregate::summarise(&rows);
-        write_descriptive(path, &summaries, &keep_region)?;
+        write_jsonl(path, summaries.iter().filter(|s| keep_region(&s.region)))?;
     }
 
+    // The per-dataset ΔR2 rows the thesis tables read.
     if let Some(path) = &args.deltas {
-        write_deltas(path, rows, &keep_region)?;
+        rows.sort_by(|a, b| {
+            (a.n, &a.geometry, &a.setting, &a.region, &a.dataset).cmp(&(
+                b.n,
+                &b.geometry,
+                &b.setting,
+                &b.region,
+                &b.dataset,
+            ))
+        });
+        write_jsonl(path, rows.iter().filter(|r| keep_region(&r.region)))?;
     }
     Ok(())
 }
 
-/// The Friedman/Holm table: one JSON object per (region, geometry) test.
-///
-/// `settings`, `mean_ranks` and `holm_p` stay parallel arrays inside the object,
-/// which is the shape `rank_tests` produces. The CSV this replaced had to
-/// explode each test into one row per setting and repeat the omnibus columns.
-fn write_tests(path: &Path, tests: &[RankTest], keep_region: &impl Fn(&str) -> bool) -> Result<()> {
-    write_jsonl(path, tests.iter().filter(|t| keep_region(&t.region)))
-}
-
-/// The descriptive mean/median ΔR2 table per (N, geometry, setting, region).
-fn write_descriptive(
-    path: &Path,
-    summaries: &[GroupSummary],
-    keep_region: &impl Fn(&str) -> bool,
-) -> Result<()> {
-    write_jsonl(path, summaries.iter().filter(|s| keep_region(&s.region)))
-}
-
-/// The per-dataset ΔR2 rows the thesis tables read.
-fn write_deltas(
-    path: &Path,
-    mut rows: Vec<DeltaRow>,
-    keep_region: &impl Fn(&str) -> bool,
-) -> Result<()> {
-    rows.sort_by(|a, b| {
-        (a.n, &a.geometry, &a.setting, &a.region, &a.dataset).cmp(&(
-            b.n,
-            &b.geometry,
-            &b.setting,
-            &b.region,
-            &b.dataset,
-        ))
-    });
-    write_jsonl(path, rows.iter().filter(|r| keep_region(&r.region)))
-}
-
 // ─── Recommended configurations ───────────────────────────────────────────────
 
-/// One row of the recommendation table.
-///
-/// `params` and `objectives` are name-keyed rather than positional against
-/// `PARAMS`/`OBJECTIVES`, the same way `CellRecord::r2` and `FrontEntry::metrics`
-/// carry their values. A param the trial does not have stays present as `null`,
-/// so every record has the same keys.
+/// One row of the recommendation table. `params` and `objectives` are
+/// name-keyed; a param the trial does not have stays present as `null`, so every
+/// record has the same keys.
 #[derive(Serialize)]
 struct RecRow {
     stem: String,

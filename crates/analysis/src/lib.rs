@@ -1,12 +1,6 @@
 //! Post-hoc analysis of the qParEGO sweeps: Pareto fronts, the R2 indicator, and
 //! the statistics behind the thesis result figures.
 //!
-//! This is the Rust port of what used to be `pareto_utils.py` /
-//! `analyze_experiments.py`. It exists as its own crate so the numeric half
-//! stays dependency-light (no Python, no venv, no numpy — see `bin/r2.rs`),
-//! while the figure half is feature-gated behind `plots` because plotters needs
-//! a system font stack.
-//!
 //! The ten qParEGO objectives (see `crates/optimizer/src/pareto.rs` ::
 //! `default_pareto_metrics`) are, in canonical order, the 2D (post-projection)
 //! and manifold (pre-projection) variants of five DR-quality metrics. Two of
@@ -15,10 +9,10 @@
 //! `[0, 1]` with higher = better, so the ideal point is `(1, …, 1)` and the R2
 //! indicator of `r2.rs` measures distance to it under a stated set of weights.
 //!
-//! Nothing in this crate prints. Everything that can fail — reading a sweep
-//! file, a line that will not parse, a CLI argument naming a region the data
-//! does not have — returns [`Error`], and the two binaries render it in exactly
-//! one place, by returning it from `main`.
+//! Nothing in this crate prints: everything that can fail returns [`Error`], and
+//! the two binaries render it in one place, by returning it from `main`. The
+//! figure half is feature-gated behind `plots` because plotters needs a system
+//! font stack.
 
 pub mod aggregate;
 pub mod cell;
@@ -32,7 +26,7 @@ pub mod stats;
 #[cfg(feature = "plots")]
 pub mod figures;
 
-pub use cell::{parse_cell_stem, Cell};
+pub use cell::{discover_cells, parse_cell_stem, Cell, CellFile};
 pub use error::{Error, IoContext, Result};
 pub use objectives::{oriented_matrix, oriented_value, OBJECTIVES};
 pub use pareto::{pareto_front_mask, pareto_front_records};

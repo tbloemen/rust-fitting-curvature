@@ -27,7 +27,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, IoContext, Result};
+use crate::error::Result;
+use crate::records::load_jsonl;
 use crate::stats;
 
 /// The setting every other setting is compared against.
@@ -78,19 +79,9 @@ pub struct GroupSummary {
 /// A later file wins on a duplicate `stem`, so re-running a few cells at a
 /// different setting and concatenating keeps the newer values.
 pub fn load_table(paths: &[impl AsRef<Path>]) -> Result<Vec<CellRecord>> {
-    use std::io::BufRead;
     let mut by_stem: BTreeMap<String, CellRecord> = BTreeMap::new();
     for path in paths {
-        let path = path.as_ref();
-        let file = std::fs::File::open(path).at(path)?;
-        for (i, line) in std::io::BufReader::new(file).lines().enumerate() {
-            let line = line.at(path)?;
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let rec: CellRecord =
-                serde_json::from_str(line).map_err(|e| Error::parse(path, i + 1, e))?;
+        for rec in load_jsonl::<CellRecord>(path)? {
             by_stem.insert(rec.stem.clone(), rec);
         }
     }

@@ -32,17 +32,15 @@ use plotters::coord::Shift;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
 
-use crate::cell::Cell;
+use crate::cell::{discover_cells, Cell};
 use crate::error::{Error, IoContext, Result};
 use crate::pareto::pareto_front_records;
-use crate::records::{trial_records, TrialRecord};
+use crate::records::{load_jsonl, trial_records, TrialRecord};
 use crate::stats::median;
 
-/// What a `draw` implementation returns.
-///
-/// Boxed rather than [`crate::Error`] because plotters' error type is generic
-/// over the backend and every drawing call raises a different one; [`save`] is
-/// the single point where that becomes an [`Error::Plot`].
+/// What a `draw` implementation returns. Boxed rather than [`crate::Error`]
+/// because plotters' error type is generic over the backend; [`save`] is the
+/// single point where that becomes an [`Error::Plot`].
 pub type Res = std::result::Result<(), Box<dyn std::error::Error>>;
 
 /// Turn any backend error into [`Error::Plot`].
@@ -93,22 +91,16 @@ pub fn geometry_color(geometry: &str) -> RGBColor {
 
 pub const REAL_DATASETS: [&str; 4] = ["mnist", "fashion_mnist", "pbmc", "wordnet_mammals"];
 pub const SYNTH_DATASETS: [&str; 4] = ["sphere", "antipodal_clusters", "tree", "hyperbolic_shells"];
-pub const GEOMETRIES: [&str; 3] = ["euclidean", "hyperbolic", "spherical"];
 pub const CURVED: [&str; 2] = ["hyperbolic", "spherical"];
+
+pub use crate::cell::GEOMETRIES;
+/// The five paired metrics (2D vs manifold); Exp 4 plots one panel per metric.
+pub use crate::r2::METRICS;
 
 /// All datasets, real first — the order Exp 3 iterates in.
 pub fn all_datasets() -> Vec<&'static str> {
     REAL_DATASETS.into_iter().chain(SYNTH_DATASETS).collect()
 }
-
-/// The five paired metrics (2D vs manifold) used in Exp 4.
-pub const PAIRED_METRICS: [&str; 5] = [
-    "trustworthiness",
-    "continuity",
-    "normalized_stress",
-    "shepard_goodness",
-    "neighborhood_hit",
-];
 
 /// Trustworthiness (local, ↑) vs normalised stress (global, ↓): the local/global
 /// cross-section the thesis uses for the front cross-sections.
@@ -261,21 +253,8 @@ where
 /// Map every (setting, dataset, n, geometry) to its list of trial records.
 pub fn load_all_cells(results_dir: &Path) -> Result<CellMap> {
     let mut cells = CellMap::new();
-    let mut paths: Vec<_> = Vec::new();
-    for entry in std::fs::read_dir(results_dir).at(results_dir)? {
-        let path = entry.at(results_dir)?.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-            paths.push(path);
-        }
-    }
-    paths.sort();
-    for path in paths {
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if let Some(cell) = crate::parse_cell_stem(stem) {
-            cells.insert(cell, trial_records(&path)?);
-        }
+    for cf in discover_cells(results_dir)? {
+        cells.insert(cf.cell, trial_records(&cf.path)?);
     }
     Ok(cells)
 }
@@ -311,25 +290,20 @@ impl KappaData {
 /// when it has not been done — but a table that is there and will not parse is.
 pub fn load_kappa_data(results_dir: &Path, n: usize) -> Result<BTreeMap<String, KappaData>> {
     for name in [format!("kappa_data_n{n}.jsonl"), "kappa_data.jsonl".into()] {
-        let path = results_dir.join(&name);
-        let text = match std::fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(Error::io(path, e)),
+        let rows: Vec<KappaData> = match load_jsonl(results_dir.join(&name)) {
+            Ok(rows) => rows,
+            Err(Error::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+                continue
+            }
+            Err(e) => return Err(e),
         };
-        let mut rows: Vec<KappaData> = Vec::new();
-        for (i, line) in text.lines().enumerate() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let rec: KappaData =
-                serde_json::from_str(line).map_err(|e| Error::parse(&path, i + 1, e))?;
-            if rec.n_samples == n {
-                rows.push(rec);
-            }
-        }
+        let rows: BTreeMap<String, KappaData> = rows
+            .into_iter()
+            .filter(|r| r.n_samples == n)
+            .map(|r| (r.dataset.clone(), r))
+            .collect();
         if !rows.is_empty() {
-            return Ok(rows.into_iter().map(|r| (r.dataset.clone(), r)).collect());
+            return Ok(rows);
         }
     }
     Ok(BTreeMap::new())

@@ -57,18 +57,16 @@ and plotters out of the non-`plots` build.
 
 Every table is **JSONL**, written through `records::write_jsonl` — same format
 in as out, so a stage-2 table loads with the same one-line `serde_json::from_str`
-the sweeps do and `jq` works on all of it. These used to be CSV, hand-serialised
-with format strings in `bin/r2.rs`; nothing read them programmatically and the
-flattening it forced was pure loss — a `RankTest` is now one object with its
-`settings`/`mean_ranks`/`holm_p` arrays intact instead of one row per setting
-repeating the omnibus columns, and `recommend` writes name-keyed `params` /
-`objectives` objects instead of columns positional against `PARAMS`/`OBJECTIVES`.
-A value that does not exist is `null`, not an empty field.
+the sweeps do and `jq` works on all of it. Nested structure survives: a
+`RankTest` is one object with its `settings`/`mean_ranks`/`holm_p` arrays intact,
+and `recommend` writes name-keyed `params` / `objectives` objects. A value that
+does not exist is `null`, not an empty field.
 
-**Loading is strict.** `load_jsonl` errors on a file it cannot open and on any
-line that will not deserialise; only blank lines are skipped. A missing *field*
-is still fine — every `TrialRecord` column is `Option` — so old results files
-keep loading. The trade: a sweep killed mid-write leaves a truncated last line,
+**Loading is strict.** `records::load_jsonl` is generic over the record type
+(trial records, stage-1 cells, κ_data all go through it) and errors on a file it
+cannot open and on any line that will not deserialise; only blank lines are
+skipped. A missing *field* is still fine — every `TrialRecord` column is
+`Option` — so old results files keep loading. The trade: a sweep killed mid-write leaves a truncated last line,
 and that now fails the whole run instead of quietly computing a front over one
 trial fewer. Truncate the offending line (the error names the file and line) and
 re-run. The κ_data table is the one deliberate exception: *absent* is not an
@@ -79,13 +77,13 @@ Figures with no data behind them are skipped silently — the sweep grid is not
 rectangular, so that is the normal case, and what is missing is visible as an
 absent file in the output directory.
 
-`stats` and `recommend` walk the cells **serially**, in `discover_cells` order.
-There used to be a scoped worker pool here; it took the two stages from 1.3s to
-0.15s and cost a `Mutex`-guarded writer whose output order was completion order.
-Deleted on 2026-08-09 — a second of wall time is not worth nondeterministic
-stage-1 output in a pipeline whose tables get diffed between runs. If the sweep
-grid ever grows an order of magnitude, parallelise the *parse* (that is where
-the time goes), and keep writing in cell order.
+`stats`, `recommend` and the figures walk the cells **serially**, in
+`cell::discover_cells` order (sorted by stem), so every table is byte-identical
+across runs — they get diffed between runs, and a second of wall time is not
+worth losing that. A scoped worker pool got the two stages to 0.15s but made the
+output order completion order; it was deleted for that reason. If the sweep grid
+ever grows an order of magnitude, parallelise the *parse* (that is where the time
+goes) and keep writing in cell order.
 
 ### Orientation and the indicator
 
@@ -159,14 +157,15 @@ metrics back from JSONL on `--resume` without that feature.)
 ### Statistics
 
 `stats.rs` reimplements the scipy functions the analysis uses, matching scipy's
-defaults: Spearman ρ with the t-approximation p-value; the Wilcoxon signed-rank
-test (`zero_method="wilcox"`, two-sided, statistic `min(W⁺, W⁻)`, exact
-distribution for ≤50 untied non-zero differences and the tie-corrected normal
-approximation otherwise); and the Friedman test with the same tie correction
-scipy applies. `tests/test_stats.rs` pins the scipy ports to values from scipy
-1.17.1, and the Friedman/χ² additions to hand-computed statistics and the
-closed-form χ² tail for even degrees of freedom — those are checked against
-analysis rather than against the library they replace.
+defaults: Spearman ρ with the t-approximation p-value, and the Friedman test with
+the same tie correction scipy applies. `tests/test_stats.rs` pins the scipy ports
+to values from scipy 1.17.1, and the Friedman/χ²/Holm additions to hand-computed
+statistics and the closed-form χ² tail for even degrees of freedom — those are
+checked against analysis rather than against the library they replace.
+
+There is no Wilcoxon here. It was ported and tested, then deleted once
+`aggregate.rs` moved to Friedman + Holm and nothing called it; the two-method
+comparison it would serve is not a test this analysis runs.
 
 **Friedman + Holm is what the results tables use.** `aggregate::rank_tests` ranks
 settings within each (dataset, geometry, N) block, runs Friedman on the ranks per
@@ -181,9 +180,6 @@ preference region, and reports Holm-adjusted post-hoc p-values against the
   `dropped_blocks`. With `norm_only` in the list there are zero complete spherical
   blocks, so that geometry is simply absent from the table — pass
   `--settings all_off,centering_only,global_only,all_free` to get it back.
-
-`stats::wilcoxon` is retained (tested, and the right test for a two-method
-comparison) but is no longer used by `aggregate.rs`.
 
 ### Figures
 

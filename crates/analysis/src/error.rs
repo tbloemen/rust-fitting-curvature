@@ -2,15 +2,10 @@
 //!
 //! Everything fallible here is a file the sweeps wrote — a results JSONL, a
 //! stage-1 indicator table, a κ_data table — or a CLI argument that names
-//! something the data does not contain. Both are reported as an [`Error`] the
-//! caller can match on rather than a message printed on the way to
-//! `process::exit`, so the library half stays usable from tests and the
-//! binaries have exactly one place that renders a failure: `main`.
-//!
-//! Loading is **strict**: an unreadable file and an unparseable line are both
-//! errors, carrying the path (and line) that caused them. A sweep killed
-//! mid-write therefore fails the analysis instead of silently contributing a
-//! short cell — fix or truncate the file, don't let it skew a front.
+//! something the data does not contain. Loading is **strict**: an unreadable
+//! file and an unparseable line are both errors, carrying the path (and line)
+//! that caused them, so a sweep killed mid-write fails the analysis instead of
+//! silently contributing a short cell.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -124,11 +119,8 @@ impl std::error::Error for Error {
     }
 }
 
-/// Attach the path to an [`std::io::Result`].
-///
-/// `File::open(p).at(p)?` reads better than a `map_err` closure at every call
-/// site, and a bare `No such file or directory` without the path is useless
-/// when a run touches a few hundred files.
+/// Attach the path to an [`std::io::Result`]: `File::open(p).at(p)?`. A bare
+/// `No such file or directory` is useless when a run touches a few hundred files.
 pub trait IoContext<T> {
     fn at(self, path: impl Into<PathBuf>) -> Result<T>;
 }

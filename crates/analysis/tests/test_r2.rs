@@ -139,9 +139,12 @@ fn the_indicator_is_weakly_pareto_compliant() {
     let w = Weights::new();
     let worse = [0.3, 0.4, 0.5, 0.2, 0.6, 0.7, 0.1, 0.4, 0.5, 0.3];
     let better = [0.4, 0.5, 0.5, 0.3, 0.8, 0.7, 0.2, 0.6, 0.5, 0.9];
-    for region in Weights::new().region_names() {
-        let b = score(&[better], &w, region);
-        let a = score(&[worse], &w, region);
+    for region in &w.regions {
+        let (region, b, a) = (
+            region.name.as_str(),
+            score(&[better], &w, &region.name),
+            score(&[worse], &w, &region.name),
+        );
         assert!(b <= a, "region {region}: dominating front scored {b} > {a}");
     }
 }
@@ -252,7 +255,8 @@ fn cell_summary_indexes_the_front_back_into_the_records() {
 
     // Every region scores it and recommends it, and `front_index` is an index
     // into `front`, not into `records` — the recommendation table depends on it.
-    for region in w.region_names() {
+    for region in &w.regions {
+        let region = region.name.as_str();
         assert!(summary.r2.contains_key(region), "region {region} missing");
         let rec = &summary.recommended[region];
         assert_eq!(rec.front_index, 0);
