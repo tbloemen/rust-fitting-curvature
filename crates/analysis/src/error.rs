@@ -48,9 +48,8 @@ pub enum Error {
         settings: Vec<String>,
     },
     /// A figure failed to render. plotters' error type is generic over the
-    /// backend, so it is flattened to its message here — that keeps this enum
-    /// `Send + Sync` (the sweep workers return it across threads) and keeps
-    /// plotters out of the non-`plots` build.
+    /// backend, so it is flattened to its message here, which keeps plotters
+    /// out of the non-`plots` build.
     Plot(String),
 }
 

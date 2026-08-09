@@ -7,9 +7,10 @@ Post-hoc analysis of the qParEGO sweeps: Pareto fronts, the R2 indicator, the
 sklearn, and never runs on the cluster.)
 
 **Everything here runs locally — there is no cluster stage.** The full table is
-~0.2s on 16 cores: the indicator is an exact mean over an enumerated weight set,
-so unlike the Monte-Carlo hypervolume it replaced there is no sampling budget to
-trade against precision, no seed, and no standard error to report.
+~1.3s single-threaded over 269 cells / 350 MB of JSONL, nearly all of it parse
+time: the indicator is an exact mean over an enumerated weight set, so unlike
+the Monte-Carlo hypervolume it replaced there is no sampling budget to trade
+against precision, no seed, and no standard error to report.
 
 plotters is an optional dependency behind the `plots` feature, with the
 `figures` binary declaring `required-features = ["plots"]` — that keeps
@@ -68,9 +69,13 @@ Figures with no data behind them are skipped silently — the sweep grid is not
 rectangular, so that is the normal case, and what is missing is visible as an
 absent file in the output directory.
 
-`parallel_map` in `bin/r2.rs` is the shared worker pool: workers pull indices
-off an `AtomicUsize`, the first `Err` wins, and a panicking worker is re-raised
-on the caller rather than swallowed by the scope.
+`stats` and `recommend` walk the cells **serially**, in `discover_cells` order.
+There used to be a scoped worker pool here; it took the two stages from 1.3s to
+0.15s and cost a `Mutex`-guarded writer whose output order was completion order.
+Deleted on 2026-08-09 — a second of wall time is not worth nondeterministic
+stage-1 output in a pipeline whose tables get diffed between runs. If the sweep
+grid ever grows an order of magnitude, parallelise the *parse* (that is where
+the time goes), and keep writing in cell order.
 
 ### Orientation and the indicator
 

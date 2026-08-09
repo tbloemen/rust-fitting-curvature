@@ -29,8 +29,6 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
 
 use clap::{Parser, Subcommand};
 use serde::Serialize;
@@ -83,10 +81,6 @@ struct StatsArgs {
     /// Output JSONL path (one line per cell).
     #[arg(long)]
     out: PathBuf,
-
-    /// Worker threads. Defaults to the number of logical CPUs.
-    #[arg(long)]
-    jobs: Option<usize>,
 }
 
 #[derive(Parser, Debug)]
@@ -126,10 +120,6 @@ struct RecommendArgs {
     /// Output CSV path.
     #[arg(long)]
     csv: PathBuf,
-
-    /// Worker threads. Defaults to the number of logical CPUs.
-    #[arg(long)]
-    jobs: Option<usize>,
 }
 
 #[derive(Parser, Debug)]
@@ -193,63 +183,6 @@ fn discover_cells(results_dir: &Path) -> Result<Vec<CellFile>> {
     Ok(out)
 }
 
-fn worker_count(jobs: Option<usize>) -> usize {
-    jobs.or_else(|| std::thread::available_parallelism().ok().map(|n| n.get()))
-        .unwrap_or(1)
-        .max(1)
-}
-
-/// Run *f* over `0..len` on *jobs* scoped workers, concatenating what they
-/// return.
-///
-/// Workers pull indices off a shared counter, so a cell that takes longer than
-/// its neighbours doesn't stall a whole stripe. The first error a worker
-/// reports is the one returned (the others keep draining the queue — the whole
-/// table is sub-second, and stopping early would only complicate the shutdown);
-/// a worker that panics is re-raised on this thread rather than swallowed.
-fn parallel_map<T, F>(jobs: usize, len: usize, f: F) -> Result<Vec<T>>
-where
-    T: Send,
-    F: Fn(usize) -> Result<Vec<T>> + Sync,
-{
-    let next = AtomicUsize::new(0);
-    let f = &f;
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..jobs)
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut local = Vec::new();
-                    loop {
-                        let i = next.fetch_add(1, Ordering::Relaxed);
-                        if i >= len {
-                            return Ok(local);
-                        }
-                        local.extend(f(i)?);
-                    }
-                })
-            })
-            .collect();
-
-        let mut out = Vec::new();
-        let mut failure: Option<Error> = None;
-        for handle in handles {
-            match handle.join() {
-                Ok(Ok(part)) => out.extend(part),
-                Ok(Err(e)) => {
-                    if failure.is_none() {
-                        failure = Some(e);
-                    }
-                }
-                Err(panic) => std::panic::resume_unwind(panic),
-            }
-        }
-        match failure {
-            Some(e) => Err(e),
-            None => Ok(out),
-        }
-    })
-}
-
 // ─── Stage 1: per-cell R2 ─────────────────────────────────────────────────────
 
 fn run_stats(args: StatsArgs) -> Result<()> {
@@ -259,7 +192,6 @@ fn run_stats(args: StatsArgs) -> Result<()> {
     }
 
     let weights = Weights::new();
-    let jobs = worker_count(args.jobs);
 
     if let Some(parent) = args.out.parent() {
         if !parent.as_os_str().is_empty() {
@@ -267,15 +199,11 @@ fn run_stats(args: StatsArgs) -> Result<()> {
         }
     }
 
-    // Written as each cell finishes rather than at the end, so an interrupted
-    // run still leaves the cells it did complete on disk. Line order is
-    // therefore completion order; every consumer keys by `stem`.
-    let out = Mutex::new(std::io::BufWriter::new(
-        std::fs::File::create(&args.out).at(&args.out)?,
-    ));
+    // Cells are visited in `discover_cells` order, so the file is sorted by
+    // stem and byte-identical across runs.
+    let mut out = std::io::BufWriter::new(std::fs::File::create(&args.out).at(&args.out)?);
 
-    parallel_map(jobs, cells.len(), |i| {
-        let cf = &cells[i];
+    for cf in &cells {
         let records = trial_records(&cf.path)?;
         let summary = cell_summary(&records, &weights);
         let rec = CellRecord {
@@ -289,14 +217,10 @@ fn run_stats(args: StatsArgs) -> Result<()> {
             r2: summary.r2.clone(),
         };
         let line = serde_json::to_string(&rec).map_err(Error::Serialize)?;
-        // A poisoned lock means another worker panicked mid-write; the file is
-        // still a valid writer, and that panic is re-raised by `parallel_map`.
-        let mut w = out.lock().unwrap_or_else(|e| e.into_inner());
-        writeln!(w, "{line}").at(&args.out)?;
-        w.flush().at(&args.out)?;
-        Ok(Vec::new())
-    })
-    .map(|_: Vec<()>| ())
+        writeln!(out, "{line}").at(&args.out)?;
+    }
+    out.flush().at(&args.out)?;
+    Ok(())
 }
 
 // ─── Stage 2: ΔR2 + the rank test ─────────────────────────────────────────────
@@ -503,20 +427,18 @@ fn run_recommend(args: RecommendArgs) -> Result<()> {
     }
 
     let weights = Weights::new();
-    let jobs = worker_count(args.jobs);
 
-    let mut rows = parallel_map(jobs, cells.len(), |i| {
-        let cf = &cells[i];
+    let mut rows: Vec<RecRow> = Vec::new();
+    for cf in &cells {
         let records = trial_records(&cf.path)?;
         let summary = cell_summary(&records, &weights);
-        let mut local = Vec::new();
         for (region, rec) in &summary.recommended {
             let Some(&record_idx) = summary.front.get(rec.front_index) else {
                 continue;
             };
             let record = &records[record_idx];
             let objectives = oriented_objectives(record);
-            local.push(RecRow {
+            rows.push(RecRow {
                 stem: cf.stem.clone(),
                 setting: cf.cell.setting.clone(),
                 dataset: cf.cell.dataset.clone(),
@@ -531,8 +453,7 @@ fn run_recommend(args: RecommendArgs) -> Result<()> {
                     .collect(),
             });
         }
-        Ok(local)
-    })?;
+    }
 
     rows.sort_by(|a, b| {
         (a.n, &a.geometry, &a.dataset, &a.setting, &a.region).cmp(&(

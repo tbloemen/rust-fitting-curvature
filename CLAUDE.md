@@ -26,7 +26,7 @@ cargo build --release --locked
 cargo run --release -p fitting-optimizer -- \
   --mode pareto --dataset tree --geometry hyperbolic --experiment all_off --n-samples 200
 
-# Analyse the sweeps: R2 indicator (~0.2s for the whole table), then ΔR2 + the test
+# Analyse the sweeps: R2 indicator (~1.3s for the whole table), then ΔR2 + the test
 cargo run --release -p fitting-analysis --bin r2 -- stats --out r2_local.jsonl
 cargo run --release -p fitting-analysis --bin r2 -- aggregate r2_local.jsonl --csv r2_delta.csv   # Friedman + Holm -> r2_tests.csv
 cargo run --release -p fitting-analysis --bin r2 -- recommend --csv recommendations.csv
@@ -52,7 +52,7 @@ No linter is configured. Rust edition 2024.
 - `crates/core` (`fitting-core`) — Pure Rust library, zero dependencies. All embedding algorithms live here.
 - `crates/web` (`fitting-web`) — WASM bindings via wasm-bindgen. Uses plotters + plotters-canvas for HTML5 canvas rendering and lol_alloc as WASM allocator.
 - `crates/optimizer` (`fitting-optimizer`) — Native-only CLI binary (bin name `optimizer`) that drives hyperparameter search over `fitting-core`. Has dependencies (clap, indicatif, serde) — the "zero dependencies" rule applies to `core` only.
-- `crates/analysis` (`fitting-analysis`) — Post-hoc analysis of the sweeps, all of it local: Pareto fronts, the R2 indicator over preference regions and the ΔR2 statistics (`r2` binary; the full table takes ~0.2s, so this needs no cluster job) plus the thesis figures (`figures` binary, gated behind the `plots` feature so plotters/fontconfig stay off the default dependency graph).
+- `crates/analysis` (`fitting-analysis`) — Post-hoc analysis of the sweeps, all of it local: Pareto fronts, the R2 indicator over preference regions and the ΔR2 statistics (`r2` binary; the full table takes ~1.3s, so this needs no cluster job) plus the thesis figures (`figures` binary, gated behind the `plots` feature so plotters/fontconfig stay off the default dependency graph).
 
 **Web frontend** (`www/`): Vite + vite-plugin-wasm. JS imports WASM pkg as `"fitting-web": "file:./pkg"` with `await init()` pattern.
 
