@@ -21,11 +21,14 @@ of anything that only needs numbers.
 cargo run --release -p fitting-analysis --bin r2 -- \
   stats --results-dir results --out r2_local.jsonl
 
-# Stage 2: Friedman + Holm over the blocks, per preference region
+# Stage 2: Friedman + Holm over the blocks, per preference region.
+# Writes the test table to --tests (default r2_tests.csv); --csv and
+# --descriptive are the two optional extra tables.
 cargo run --release -p fitting-analysis --bin r2 -- \
   aggregate r2_local.jsonl --csv r2_delta.csv          # --region all to filter
+#   --tests r2_tests.csv                                     Friedman + Holm, one row per setting
 #   --settings all_off,centering_only,global_only,all_free   includes spherical
-#   --descriptive                                            adds the mean/median ΔR2 table
+#   --descriptive r2_descriptive.csv                         mean/median ΔR2 per group
 
 # The per-preference recommendation table (hyperparameters + all 10 objectives)
 cargo run --release -p fitting-analysis --bin r2 -- \
@@ -37,6 +40,37 @@ cargo run --release -p fitting-analysis --bin r2 -- front --results-dir results
 # Thesis figures (local only; needs fontconfig)
 cargo run --release -p fitting-analysis --features plots --bin figures
 ```
+
+### Output goes to files; failures go through `Result`
+
+Nothing here prints. Every subcommand's product is a file (`--out`, `--csv`,
+`--tests`, `--descriptive`, the SVG/PNG pairs), and the only thing that reaches
+the terminal is a failure, rendered once by `main` returning `Err`. `error.rs`
+holds the crate's `Error` — `Io`/`Parse` carry the path (and 1-based line),
+`NoCells`/`UnknownRegion`/`TooFewSettings`/`MissingBaseline` replace what used
+to be an `eprintln!` followed by `process::exit(1)`. Its `Debug` forwards to
+`Display`, because `Termination` renders a `main` error with `Debug` and the
+derived form is unreadable. `Error::Plot` flattens plotters' backend-generic
+error to its message, which keeps `Error: Send + Sync` for the sweep workers
+and plotters out of the non-`plots` build.
+
+**Loading is strict.** `load_jsonl` errors on a file it cannot open and on any
+line that will not deserialise; only blank lines are skipped. A missing *field*
+is still fine — every `TrialRecord` column is `Option` — so old results files
+keep loading. The trade: a sweep killed mid-write leaves a truncated last line,
+and that now fails the whole run instead of quietly computing a front over one
+trial fewer. Truncate the offending line (the error names the file and line) and
+re-run. The κ_data table is the one deliberate exception: *absent* is not an
+error (it is a separate optimizer run, and Exp 3 skips its scatter without it),
+*present but malformed* is.
+
+Figures with no data behind them are skipped silently — the sweep grid is not
+rectangular, so that is the normal case, and what is missing is visible as an
+absent file in the output directory.
+
+`parallel_map` in `bin/r2.rs` is the shared worker pool: workers pull indices
+off an `AtomicUsize`, the first `Err` wins, and a panicking worker is re-raised
+on the caller rather than swallowed by the scope.
 
 ### Orientation and the indicator
 

@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use fitting_analysis::figures::{self, exp2, exp3, exp4, exp5, save};
+use fitting_analysis::Result;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -40,76 +41,58 @@ struct Args {
     exp: Vec<usize>,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// A figure with no data behind it is skipped, not an error: the sweep grid is
+/// not rectangular (no spherical `norm_only`, hyperbolic-only `rms_anchored`)
+/// and Exp 3's scatter needs a κ_data export that is a separate run. What is
+/// missing is visible in `out_dir` — the figure simply isn't there.
+fn main() -> Result<()> {
     let args = Args::parse();
 
-    println!("Loading result cells...");
     let cells = figures::load_all_cells(&args.results_dir)?;
-    println!("  {} cells loaded", cells.len());
 
     if args.exp.contains(&2) {
-        println!("Experiment 2 — stacked Pareto fronts");
         for n in &args.n {
             let fig = exp2::StackedFronts::new(&cells, *n);
             if fig.has_data() {
                 save(&fig, &args.out_dir)?;
-            } else {
-                println!("  exp2 N={n}: no data, skipped");
             }
         }
     }
 
     if args.exp.contains(&3) {
-        println!("Experiment 3 — κ vs κ_data");
         for n in &args.n {
-            let fig = exp3::KappaScatter::new(&cells, &args.results_dir, *n);
-            if !fig.has_kappa_data() {
-                println!("  exp3 N={n}: no kappa_data file, skipped scatter");
-            } else {
+            let fig = exp3::KappaScatter::new(&cells, &args.results_dir, *n)?;
+            if fig.has_kappa_data() {
                 save(&fig, &args.out_dir)?;
             }
 
             let fig = exp3::RmsAnchored::new(&cells, *n);
             if fig.has_anchored() {
                 save(&fig, &args.out_dir)?;
-            } else {
-                println!(
-                    "  exp3 N={n}: no rms_anchored runs present — overlay figure skipped \
-                     (flagged in the discrepancy report)"
-                );
             }
         }
     }
 
     if args.exp.contains(&4) {
-        println!("Experiment 4 — ρ_man-proj(κ)");
         let fig = exp4::RhoManProj::new(&cells, &args.n);
         if fig.has_data() {
             save(&fig, &args.out_dir)?;
-        } else {
-            println!("  exp4: no data, skipped");
         }
     }
 
     if args.exp.contains(&5) {
-        println!("Experiment 5 — front grid + marginals");
         for n in &args.n {
             let fig = exp5::FrontGrid::new(&cells, *n);
             if fig.has_data() {
                 save(&fig, &args.out_dir)?;
-            } else {
-                println!("  exp5 grid N={n}: no data, skipped");
             }
 
             let fig = exp5::Marginals::new(&cells, *n);
             if fig.has_data() {
                 save(&fig, &args.out_dir)?;
-            } else {
-                println!("  exp5 marginals N={n}: no data, skipped");
             }
         }
     }
 
-    println!("Done.");
     Ok(())
 }

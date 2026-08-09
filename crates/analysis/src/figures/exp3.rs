@@ -9,6 +9,7 @@ use plotters::style::text_anchor::{HPos, Pos, VPos};
 
 use super::*;
 use crate::cell::Cell;
+use crate::error::Result;
 use crate::pareto::pareto_front_records;
 use crate::stats::spearman;
 use crate::style_mesh;
@@ -31,12 +32,12 @@ struct Point {
 }
 
 impl<'a> KappaScatter<'a> {
-    pub fn new(cells: &'a CellMap, results_dir: &std::path::Path, n: usize) -> Self {
-        Self {
+    pub fn new(cells: &'a CellMap, results_dir: &std::path::Path, n: usize) -> Result<Self> {
+        Ok(Self {
             cells,
-            kappa_data: load_kappa_data(results_dir, n),
+            kappa_data: load_kappa_data(results_dir, n)?,
             n,
-        }
+        })
     }
 
     /// True when a κ_data table for this N was found at all.

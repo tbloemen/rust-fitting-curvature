@@ -4,12 +4,17 @@
 //! `dict.get(...)` did: absent and `null` are the same thing, and a results file
 //! written by an older optimizer build still loads. The optimizer serialises
 //! non-finite metrics as `null`, so `Option<f64>` covers diverged trials too.
+//!
+//! A *missing field* is therefore fine; a *malformed line* is not. See
+//! [`load_jsonl`].
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use serde::Deserialize;
+
+use crate::error::{Error, IoContext, Result};
 
 /// One line of a results JSONL file. Unknown fields (extra metrics, timings) are
 /// ignored.
@@ -123,31 +128,34 @@ impl TrialRecord {
     }
 }
 
-/// Load every JSON object from a JSONL file; silently skip unparseable lines.
+/// Load every JSON object from a JSONL file.
 ///
-/// A missing file yields an empty vector, matching the Python behaviour that let
-/// callers glob optimistically.
-pub fn load_jsonl(path: impl AsRef<Path>) -> Vec<TrialRecord> {
-    let Ok(file) = File::open(path.as_ref()) else {
-        return Vec::new();
-    };
+/// Strict: a file that cannot be opened and a line that does not deserialise are
+/// both errors. The Python this replaced globbed optimistically and skipped
+/// whatever it could not read, which made a half-written results file from a
+/// killed sweep indistinguishable from a short one — the front would quietly be
+/// computed over fewer trials. Blank lines are still skipped; the optimizer's
+/// writer can leave a trailing newline.
+pub fn load_jsonl(path: impl AsRef<Path>) -> Result<Vec<TrialRecord>> {
+    let path = path.as_ref();
+    let file = File::open(path).at(path)?;
     let mut out = Vec::new();
-    for line in BufReader::new(file).lines() {
-        let Ok(line) = line else { continue };
+    for (i, line) in BufReader::new(file).lines().enumerate() {
+        let line = line.at(path)?;
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        if let Ok(rec) = serde_json::from_str::<TrialRecord>(line) {
-            out.push(rec);
-        }
+        let rec: TrialRecord =
+            serde_json::from_str(line).map_err(|e| Error::parse(path, i + 1, e))?;
+        out.push(rec);
     }
-    out
+    Ok(out)
 }
 
 /// Trial records from a results JSONL, excluding `--mode scan` sweeps.
-pub fn trial_records(path: impl AsRef<Path>) -> Vec<TrialRecord> {
-    let mut recs = load_jsonl(path);
+pub fn trial_records(path: impl AsRef<Path>) -> Result<Vec<TrialRecord>> {
+    let mut recs = load_jsonl(path)?;
     recs.retain(|r| r.scan_param.is_none());
-    recs
+    Ok(recs)
 }

@@ -26,7 +26,6 @@ pub mod exp4;
 pub mod exp5;
 
 use std::collections::BTreeMap;
-use std::error::Error;
 use std::path::Path;
 
 use plotters::coord::Shift;
@@ -34,11 +33,22 @@ use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
 
 use crate::cell::Cell;
+use crate::error::{Error, IoContext, Result};
 use crate::pareto::pareto_front_records;
 use crate::records::{trial_records, TrialRecord};
 use crate::stats::median;
 
-pub type Res = Result<(), Box<dyn Error>>;
+/// What a `draw` implementation returns.
+///
+/// Boxed rather than [`crate::Error`] because plotters' error type is generic
+/// over the backend and every drawing call raises a different one; [`save`] is
+/// the single point where that becomes an [`Error::Plot`].
+pub type Res = std::result::Result<(), Box<dyn std::error::Error>>;
+
+/// Turn any backend error into [`Error::Plot`].
+fn plot_err<T, E: std::fmt::Display>(r: std::result::Result<T, E>) -> Result<T> {
+    r.map_err(|e| Error::Plot(e.to_string()))
+}
 
 /// Every (setting, dataset, N, geometry) cell mapped to its trial records.
 pub type CellMap = BTreeMap<Cell, Vec<TrialRecord>>;
@@ -125,26 +135,25 @@ pub trait Figure {
 }
 
 /// Render *fig* to `<out_dir>/<name>.svg` and `.png`.
-pub fn save<F: Figure>(fig: &F, out_dir: &Path) -> Res {
-    std::fs::create_dir_all(out_dir)?;
+pub fn save<F: Figure>(fig: &F, out_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(out_dir).at(out_dir)?;
     let name = fig.name();
     let size = fig.size();
 
     let svg_path = out_dir.join(format!("{name}.svg"));
     {
         let root = SVGBackend::new(&svg_path, size).into_drawing_area();
-        root.fill(&WHITE)?;
-        fig.draw(&root)?;
-        root.present()?;
+        plot_err(root.fill(&WHITE))?;
+        plot_err(fig.draw(&root))?;
+        plot_err(root.present())?;
     }
     let png_path = out_dir.join(format!("{name}.png"));
     {
         let root = BitMapBackend::new(&png_path, size).into_drawing_area();
-        root.fill(&WHITE)?;
-        fig.draw(&root)?;
-        root.present()?;
+        plot_err(root.fill(&WHITE))?;
+        plot_err(fig.draw(&root))?;
+        plot_err(root.present())?;
     }
-    println!("  wrote {}/{name}.svg (+.png)", out_dir.display());
     Ok(())
 }
 
@@ -250,19 +259,22 @@ where
 // ─── Loading & shared data helpers ────────────────────────────────────────────
 
 /// Map every (setting, dataset, n, geometry) to its list of trial records.
-pub fn load_all_cells(results_dir: &Path) -> std::io::Result<CellMap> {
+pub fn load_all_cells(results_dir: &Path) -> Result<CellMap> {
     let mut cells = CellMap::new();
-    let mut paths: Vec<_> = std::fs::read_dir(results_dir)?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("jsonl"))
-        .collect();
+    let mut paths: Vec<_> = Vec::new();
+    for entry in std::fs::read_dir(results_dir).at(results_dir)? {
+        let path = entry.at(results_dir)?.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+            paths.push(path);
+        }
+    }
     paths.sort();
     for path in paths {
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
         if let Some(cell) = crate::parse_cell_stem(stem) {
-            cells.insert(cell, trial_records(&path));
+            cells.insert(cell, trial_records(&path)?);
         }
     }
     Ok(cells)
@@ -294,24 +306,33 @@ impl KappaData {
 ///
 /// Prefers `kappa_data_n{n}.jsonl` and falls back to the unsuffixed
 /// `kappa_data.jsonl` (which the local n=1000 run writes), trusting the latter
-/// only for the N it was actually run at.
-pub fn load_kappa_data(results_dir: &Path, n: usize) -> BTreeMap<String, KappaData> {
+/// only for the N it was actually run at. An **absent** table is not an error —
+/// the κ_data export is a separate optimizer run, and Exp 3 skips its scatter
+/// when it has not been done — but a table that is there and will not parse is.
+pub fn load_kappa_data(results_dir: &Path, n: usize) -> Result<BTreeMap<String, KappaData>> {
     for name in [format!("kappa_data_n{n}.jsonl"), "kappa_data.jsonl".into()] {
         let path = results_dir.join(&name);
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(Error::io(path, e)),
         };
-        let rows: Vec<KappaData> = text
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .filter_map(|l| serde_json::from_str::<KappaData>(l).ok())
-            .filter(|r| r.n_samples == n)
-            .collect();
+        let mut rows: Vec<KappaData> = Vec::new();
+        for (i, line) in text.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let rec: KappaData =
+                serde_json::from_str(line).map_err(|e| Error::parse(&path, i + 1, e))?;
+            if rec.n_samples == n {
+                rows.push(rec);
+            }
+        }
         if !rows.is_empty() {
-            return rows.into_iter().map(|r| (r.dataset.clone(), r)).collect();
+            return Ok(rows.into_iter().map(|r| (r.dataset.clone(), r)).collect());
         }
     }
-    BTreeMap::new()
+    Ok(BTreeMap::new())
 }
 
 /// Median κ over the 10-objective Pareto front of *records*.
@@ -363,9 +384,11 @@ pub fn binned_median(x: &[f64], y: &[f64], n_bins: usize) -> (Vec<f64>, Vec<f64>
             .filter(|(xv, _)| **xv >= a && **xv <= b)
             .map(|(_, yv)| *yv)
             .collect();
-        if vals.len() >= 2 {
+        // `median` is None only on an empty slice, which the length test rules
+        // out; `if let` keeps that a fact of the code rather than an unwrap.
+        if let (true, Some(m)) = (vals.len() >= 2, median(&vals)) {
             centres.push((a * b).sqrt());
-            meds.push(median(&vals).unwrap());
+            meds.push(m);
         }
     }
     (centres, meds)

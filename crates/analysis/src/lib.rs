@@ -14,9 +14,15 @@
 //! here works in an *oriented* space where every objective is mapped into
 //! `[0, 1]` with higher = better, so the ideal point is `(1, …, 1)` and the R2
 //! indicator of `r2.rs` measures distance to it under a stated set of weights.
+//!
+//! Nothing in this crate prints. Everything that can fail — reading a sweep
+//! file, a line that will not parse, a CLI argument naming a region the data
+//! does not have — returns [`Error`], and the two binaries render it in exactly
+//! one place, by returning it from `main`.
 
 pub mod aggregate;
 pub mod cell;
+pub mod error;
 pub mod objectives;
 pub mod pareto;
 pub mod r2;
@@ -27,6 +33,7 @@ pub mod stats;
 pub mod figures;
 
 pub use cell::{parse_cell_stem, Cell};
+pub use error::{Error, IoContext, Result};
 pub use objectives::{oriented_matrix, oriented_value, OBJECTIVES};
 pub use pareto::{pareto_front_mask, pareto_front_records};
 pub use r2::{cell_summary, r2, CellSummary, Weights};
