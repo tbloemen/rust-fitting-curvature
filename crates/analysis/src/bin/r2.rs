@@ -276,89 +276,20 @@ fn run_aggregate(args: AggregateArgs) -> std::io::Result<()> {
     }
     let tests = aggregate::rank_tests(&rows, &settings);
 
-    println!(
-        "Friedman over (dataset, geometry, N) blocks; Holm-adjusted post-hoc vs {}.",
-        aggregate::BASELINE
-    );
-    println!("treatments: {}\n", settings.join(", "));
-
-    let hdr = format!(
-        "{:<18} {:<11} {:>7} {:>5} {:>9} {:>9}   {}",
-        "region",
-        "geometry",
-        "#blocks",
-        "#drop",
-        "chi2",
-        "p",
-        settings
-            .iter()
-            .map(|s| format!("{s:>16}"))
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
-    let width = hdr.chars().count();
-    println!("{hdr}");
-    println!("{}", "-".repeat(width));
     for t in &tests {
         if !keep_region(&t.region) {
             continue;
         }
-        let cells: Vec<String> = t
-            .mean_ranks
-            .iter()
-            .zip(&t.holm_p)
-            .map(|(rank, p)| match p {
-                // The control has no p against itself; show its rank alone.
-                None => format!("{rank:>10.2}      "),
-                Some(p) => {
-                    let star = if *p < 0.05 { "*" } else { " " };
-                    format!("{rank:>7.2} {p:>7.4}{star}")
-                }
-            })
-            .collect();
-        println!(
-            "{:<18} {:<11} {:>7} {:>5} {:>9.3} {:>9.4}   {}",
-            t.region,
-            t.geometry,
-            t.n_blocks,
-            t.dropped_blocks,
-            t.statistic,
-            t.p,
-            cells.join(" ")
-        );
     }
-    println!("\nper cell: mean rank (1 = best) and Holm-adjusted p vs the control; * is p < 0.05.");
 
     // ── Descriptive ΔR2, opt-in ───────────────────────────────────────────────
     if args.descriptive {
         let summaries = aggregate::summarise(&rows);
-        let hdr = format!(
-            "{:>5} {:<11} {:<15} {:<18} {:>4} {:>11} {:>11} {:>5}",
-            "N", "geometry", "setting", "region", "#ds", "mean ΔR2", "median ΔR2", "#pos"
-        );
         // Dashes must match the *display* width, and the header has multi-byte ΔR2.
-        let width = hdr.chars().count();
-        println!("\n{hdr}");
-        println!("{}", "-".repeat(width));
         for s in &summaries {
             if !keep_region(&s.region) {
                 continue;
             }
-            let fmt = |v: Option<f64>| match v {
-                None => "n/a".to_string(),
-                Some(x) => format!("{x:+.5}"),
-            };
-            println!(
-                "{:>5} {:<11} {:<15} {:<18} {:>4} {:>11} {:>11} {:>5}",
-                s.n,
-                s.geometry,
-                s.setting,
-                s.region,
-                s.n_datasets,
-                fmt(s.mean_delta),
-                fmt(s.median_delta),
-                s.n_positive,
-            );
         }
     }
 
@@ -374,7 +305,10 @@ fn run_aggregate(args: AggregateArgs) -> std::io::Result<()> {
             ))
         });
         let mut f = std::io::BufWriter::new(std::fs::File::create(&csv_path)?);
-        writeln!(f, "n,geometry,setting,region,dataset,r2,r2_baseline,delta_r2")?;
+        writeln!(
+            f,
+            "n,geometry,setting,region,dataset,r2,r2_baseline,delta_r2"
+        )?;
         let num = |v: Option<f64>| v.map(|x| x.to_string()).unwrap_or_default();
         for r in &rows {
             writeln!(
@@ -576,7 +510,6 @@ fn run_front(args: FrontArgs) -> std::io::Result<()> {
         let front = pareto_front_records(&records);
         let entries: Vec<FrontEntry> = front.iter().map(front_entry).collect();
         std::fs::write(&front_path, serde_json::to_string_pretty(&entries)?)?;
-        println!("wrote {} ({} entries)", front_path.display(), entries.len());
         written += 1;
     }
     eprintln!("{written} fronts written, {skipped} already present");
