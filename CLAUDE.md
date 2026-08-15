@@ -6,6 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Rust/WASM port of a Python+JS thesis project implementing t-SNE embedding in constant curvature spaces (hyperbolic, Euclidean, spherical). The original Python project is at `../fitting-curvature`.
 
+## Terminology
+
+The thesis (`../docs/thesis`) is the reference vocabulary. Three concepts are easy to confuse, and **"experiment" means two different things depending on where you read it**:
+
+| concept | thesis | code |
+| --- | --- | --- |
+| One sweep run: `(setting, dataset, N, geometry)`. One `results/*.jsonl`, ~1000 trials, one Pareto front. | "grid cell" / "cell" (`4methods.typ:143`, `5results.typ:103`) | `cell::Cell` in `crates/analysis`; `$cell` in `run_5000_local_*.sh` |
+| The loss-weight variant: `all_off`, `centering_only`, `global_only`, `norm_only`, `all_free`, `rms_anchored`. | "loss-weight setting" / "setting" (`5results.typ:102,105`) | `Cell.setting` in `crates/analysis`; **`--experiment` / `$EXPERIMENT`** in `crates/optimizer` and `slurm/` |
+| A numbered research question of the results chapter, Experiments 1–5. | "Experiment N" (`5results.typ:51,101,120,136,148`) | `figures/exp2.rs` … `exp5.rs` |
+
+So the optimizer's `--experiment all_off` selects a *setting*, not an Experiment — Experiment 5 is a question *about* the `all_off` setting, which is why the two words cannot be merged. The flag is deliberately left as-is: renaming it would break every saved `sbatch` command and the `EXPERIMENT` env var the SLURM scripts export. Don't rename `Cell` to `Experiment` either; it would collide with both of the other rows.
+
+Note that `slurm/` and `crates/optimizer` say "experiment" for a setting, while `crates/analysis`, the local driver scripts and the thesis say "setting". Match whichever file you are editing.
+
 ## Build & Test Commands
 
 ```bash

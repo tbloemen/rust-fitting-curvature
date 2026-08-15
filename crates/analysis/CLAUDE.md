@@ -6,6 +6,15 @@ Post-hoc analysis of the qParEGO sweeps: Pareto fronts, the R2 indicator, the
 (`analyze_hyperparams.py` is still Python — it is the exploratory tool, uses
 sklearn, and never runs on the cluster.)
 
+**Terminology.** A `Cell` is one `(setting, dataset, N, geometry)` sweep run —
+one `results/*.jsonl`, ~1000 trials, one Pareto front — and `setting` is the
+loss-weight variant (`all_off`, `centering_only`, …). Both names come from the
+thesis. The optimizer and `slurm/` call that same variant `--experiment` /
+`$EXPERIMENT`, so translate at the boundary: **`cf.cell.setting` here is the
+value the optimizer was given as `--experiment`.** "Experiment N" means a
+numbered research question (`figures/exp2.rs` … `exp5.rs`), never a setting.
+Root `CLAUDE.md` has the full table.
+
 **Everything here runs locally — there is no cluster stage.** The full table is
 ~1.3s single-threaded over 269 cells / 350 MB of JSONL, nearly all of it parse
 time: the indicator is an exact mean over an enumerated weight set, so unlike
