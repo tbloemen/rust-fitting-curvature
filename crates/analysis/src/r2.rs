@@ -115,6 +115,14 @@ impl Weights {
 }
 
 /// Every vector of `N_OBJECTIVES` non-negative integers summing to `s`.
+///
+/// Example: for s=2, N_OBJECTIVES = 3, it should return
+/// (0, 0, 2)
+/// (0, 1, 1)
+/// (0, 2, 0)
+/// (1, 0, 1)
+/// (1, 1, 0
+/// (2, 0, 0)
 fn enumerate_simplex(s: u8) -> Vec<[u8; N_OBJECTIVES]> {
     let mut out = Vec::new();
     let mut counts = [0u8; N_OBJECTIVES];
