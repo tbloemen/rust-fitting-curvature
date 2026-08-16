@@ -43,6 +43,7 @@ cargo run --release -p fitting-optimizer -- \
 # Analyse the sweeps: R2 indicator (~1.3s for the whole table), then ΔR2 + the test
 cargo run --release -p fitting-analysis --bin r2 -- stats --out r2_local.jsonl
 cargo run --release -p fitting-analysis --bin r2 -- aggregate r2_local.jsonl --deltas r2_delta.jsonl   # Friedman + Holm -> r2_tests.jsonl
+cargo run --release -p fitting-analysis --bin r2 -- compare --r2-table r2_local.jsonl --agreement r2_agreement.jsonl   # parameter-free ε cross-check -> r2_epsilon.jsonl
 cargo run --release -p fitting-analysis --bin r2 -- recommend --out recommendations.jsonl
 
 # Thesis result figures (local only — needs fontconfig, hence the feature gate)
@@ -66,7 +67,7 @@ No linter is configured. Rust edition 2024.
 - `crates/core` (`fitting-core`) — Pure Rust library, zero dependencies. All embedding algorithms live here.
 - `crates/web` (`fitting-web`) — WASM bindings via wasm-bindgen. Uses plotters + plotters-canvas for HTML5 canvas rendering and lol_alloc as WASM allocator.
 - `crates/optimizer` (`fitting-optimizer`) — Native-only CLI binary (bin name `optimizer`) that drives hyperparameter search over `fitting-core`. Has dependencies (clap, indicatif, serde) — the "zero dependencies" rule applies to `core` only.
-- `crates/analysis` (`fitting-analysis`) — Post-hoc analysis of the sweeps, all of it local: Pareto fronts, the R2 indicator over preference regions and the ΔR2 statistics (`r2` binary; the full table takes ~1.3s, so this needs no cluster job) plus the thesis figures (`figures` binary, gated behind the `plots` feature so plotters/fontconfig stay off the default dependency graph).
+- `crates/analysis` (`fitting-analysis`) — Post-hoc analysis of the sweeps, all of it local: Pareto fronts, the R2 indicator over preference regions, the ΔR2 statistics and the parameter-free ε-indicator cross-check (`r2` binary; the full table takes ~1.3s, so this needs no cluster job) plus the thesis figures (`figures` binary, gated behind the `plots` feature so plotters/fontconfig stay off the default dependency graph).
 
 **Web frontend** (`www/`): Vite + vite-plugin-wasm. JS imports WASM pkg as `"fitting-web": "file:./pkg"` with `await init()` pattern.
 

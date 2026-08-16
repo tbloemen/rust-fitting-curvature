@@ -42,6 +42,15 @@ pub enum Error {
         baseline: &'static str,
         settings: Vec<String>,
     },
+    /// A (N, geometry, dataset) block carries settings to compare but no
+    /// baseline cell to compare them against. The ε-indicator is only ever
+    /// formed against the control, so there is nothing sensible to emit.
+    NoBaselineCell {
+        baseline: &'static str,
+        n: usize,
+        geometry: String,
+        dataset: String,
+    },
     /// A figure failed to render. plotters' error type is generic over the
     /// backend, so it is flattened to its message here, which keeps plotters
     /// out of the non-`plots` build.
@@ -92,6 +101,15 @@ impl fmt::Display for Error {
                 f,
                 "--settings must include the {baseline} control; got {}",
                 settings.join(", ")
+            ),
+            Error::NoBaselineCell {
+                baseline,
+                n,
+                geometry,
+                dataset,
+            } => write!(
+                f,
+                "no {baseline} cell for ({dataset}, {geometry}, N={n}) to compare against"
             ),
             Error::Plot(msg) => write!(f, "rendering figure: {msg}"),
         }

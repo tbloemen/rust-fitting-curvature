@@ -1,7 +1,8 @@
 ## Analysis crate (`crates/analysis`)
 
 Post-hoc analysis of the qParEGO sweeps: Pareto fronts, the R2 indicator, the
-ΔR2 statistics, and the thesis result figures. Replaces what used to be
+ΔR2 statistics, the ε-indicator cross-check, and the thesis result figures.
+Replaces what used to be
 `pareto_utils.py` and `analyze_experiments.py` at the repo root.
 (`analyze_hyperparams.py` is still Python — it is the exploratory tool, uses
 sklearn, and never runs on the cluster.)
@@ -39,6 +40,13 @@ cargo run --release -p fitting-analysis --bin r2 -- \
 #   --tests r2_tests.jsonl                                   Friedman + Holm, one object per test
 #   --settings all_off,centering_only,global_only,all_free   includes spherical
 #   --descriptive r2_descriptive.jsonl                       mean/median ΔR2 per group
+
+# The parameter-free cross-check: binary additive ε-indicator vs the baseline,
+# plus how well its verdict agrees with the ΔR2 one (needs --r2-table)
+cargo run --release -p fitting-analysis --bin r2 -- \
+  compare --results-dir results --out r2_epsilon.jsonl \
+  --r2-table r2_local.jsonl --agreement r2_agreement.jsonl
+#   --settings centering_only,global_only,norm_only,all_free   the default
 
 # The per-preference recommendation table (hyperparameters + all 10 objectives)
 cargo run --release -p fitting-analysis --bin r2 -- \
@@ -86,7 +94,7 @@ Figures with no data behind them are skipped silently — the sweep grid is not
 rectangular, so that is the normal case, and what is missing is visible as an
 absent file in the output directory.
 
-`stats`, `recommend` and the figures walk the cells **serially**, in
+`stats`, `compare`, `recommend` and the figures walk the cells **serially**, in
 `cell::discover_cells` order (sorted by stem), so every table is byte-identical
 across runs — they get diffed between runs, and a second of wall time is not
 worth losing that. A scoped worker pool got the two stages to 0.15s but made the
@@ -121,6 +129,40 @@ Two facts keep it cheap:
 - Every preference region is a **subset of one enumeration** of the simplex, so
   `front_utilities` minimises once per weight vector and each region is a mean
   over its own slice. Eight regions cost barely more than one.
+
+### The ε-indicator, and why there are two indicators
+
+`indicators.rs` is the parameter-free cross-check on everything the section above
+depends on. `S = 5`, the region definitions and the `>= 3` mass threshold are all
+*choices*; the binary additive ε-indicator (Zitzler et al. 2003, already in
+`references.bib`) has none, so agreement between the two says the ΔR2 conclusions
+are not an artefact of the preference model.
+
+```
+I_ε+(A, B) = max over b ∈ B of  min over a ∈ A of  max_j (b_j − a_j)
+```
+
+in the same oriented space, so an ε reads directly as objective units and
+`I ≤ 0` means A covers B outright. Three rules the `compare` subcommand enforces:
+
+- **Both directions, always.** It is asymmetric, and when fronts cross neither
+  direction alone settles anything. `epsilon_pair` returns both plus
+  `Δε = I(baseline, setting) − I(setting, baseline)` — baseline minus setting, the
+  same way round as ΔR2, because both indicators are costs.
+- **No region dimension.** Carrying no parameters is the whole point; a
+  region-weighted ε would give that away. The agreement table is per region only
+  because ΔR2 is.
+- **Report the front sizes.** ε is blind to cardinality: a 12-point and a
+  230-point front can score identically, and the reader has to see which is which.
+
+Where R2 is only *weakly* Pareto compliant and averages over 2002 weight vectors,
+ε is fully compliant and is a worst case — it catches a regression confined to one
+corner of objective space that the mean buries. That is the reason for reporting
+both rather than picking one.
+
+The merged-front dominance ranking that `4methods.typ` used to promise alongside
+it was **deliberately dropped**, not forgotten: no citation for that specific
+statistic could be verified. Don't add it back without one.
 
 ### The weight simplex and preference regions
 
