@@ -1,10 +1,10 @@
 //! The R2 indicator: weight-simplex enumeration, the preference regions, the
 //! compliance property the ΔR2 claim rests on, and the recommendation.
 
-use fitting_analysis::objectives::{N_OBJECTIVES, OBJECTIVES};
+use fitting_analysis::objectives::{METRIC_PAIRS, N_OBJECTIVES, OBJECTIVES};
 use fitting_analysis::r2::{
-    cell_summary, front_utilities, metric_objectives, r2, recommendation, Weights, METRICS,
-    REGION_ALL, REGION_MANIFOLD, REGION_PROJECTED, S,
+    cell_summary, front_utilities, r2, recommendation, Weights, METRICS, REGION_ALL,
+    REGION_MANIFOLD, REGION_PROJECTED, S,
 };
 use fitting_analysis::TrialRecord;
 
@@ -48,13 +48,26 @@ fn simplex_vectors_are_distinct() {
 // ─── Preference regions ──────────────────────────────────────────────────────
 
 #[test]
-fn metric_layout_matches_the_objective_order() {
-    // The regions are built from index arithmetic on OBJECTIVES; if that array
-    // is ever reordered, this is the test that catches it.
-    for (i, metric) in METRICS.iter().enumerate() {
-        let (proj, man) = metric_objectives(i);
-        assert_eq!(OBJECTIVES[proj], *metric);
-        assert_eq!(OBJECTIVES[man], format!("{metric}_manifold"));
+fn every_pair_follows_the_manifold_naming_convention() {
+    // OBJECTIVES and METRICS are derived from METRIC_PAIRS, so the interleaving
+    // cannot desync. What is still hand-written is the names themselves, and
+    // `_manifold` is the suffix that ties them to the JSONL columns.
+    for (projected, manifold) in METRIC_PAIRS {
+        assert_eq!(manifold, format!("{projected}_manifold"));
+    }
+}
+
+#[test]
+fn every_objective_resolves_on_a_record() {
+    // The remaining way to break the layout is a typo in METRIC_PAIRS, or a
+    // metric added there but not to `TrialRecord::objective` — either one makes
+    // an objective read as permanently missing, i.e. silently worst-case.
+    let r = record(0.5);
+    for name in OBJECTIVES {
+        assert!(
+            r.objective(name).is_some(),
+            "{name} does not resolve on a fully-populated record"
+        );
     }
 }
 

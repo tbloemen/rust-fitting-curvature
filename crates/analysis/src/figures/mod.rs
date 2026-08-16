@@ -94,8 +94,9 @@ pub const SYNTH_DATASETS: [&str; 4] = ["sphere", "antipodal_clusters", "tree", "
 pub const CURVED: [&str; 2] = ["hyperbolic", "spherical"];
 
 pub use crate::cell::GEOMETRIES;
-/// The five paired metrics (2D vs manifold); Exp 4 plots one panel per metric.
-pub use crate::r2::METRICS;
+/// The five paired metrics (2D vs manifold); Exp 4 plots one panel per metric,
+/// in table order.
+pub use crate::objectives::METRIC_PAIRS;
 
 /// All datasets, real first — the order Exp 3 iterates in.
 pub fn all_datasets() -> Vec<&'static str> {

@@ -182,9 +182,24 @@ Eight regions, in report order:
 | `manifold`                            | supported on the odd (manifold) objectives   | 126  |
 | `projected`                           | supported on the even (2D) objectives        | 126  |
 
-`OBJECTIVES` interleaves the pair as `[metric, metric_manifold, …]`, so metric
-`i` owns objectives `2i` and `2i+1`. `metric_layout_matches_the_objective_order`
-in `test_r2.rs` fails loudly if that array is ever reordered.
+`objectives.rs` writes the projected/manifold pairing down **once**, in
+`METRIC_PAIRS`. `OBJECTIVES` (interleaved as `[metric, metric_manifold, …]`),
+`METRICS`, `N_OBJECTIVES`, `metric_objectives(i) = (2i, 2i+1)` and
+`is_manifold(j) = j % 2 == 1` are all derived from it — the first two by `const
+fn`, so the layout cannot desync and no test has to pin it. Add or reorder a
+metric there and everything downstream follows.
+
+Row order is a free choice: the indicators are invariant under a relabelling of
+the axes (the simplex is enumerated symmetrically), nothing on disk is
+positional (`oriented_row` resolves by name, every table is name-keyed), and the
+only visible effect is the left-to-right panel order of Exp 4. What order *does*
+have to match is the optimizer's `default_pareto_metrics`, which is what the
+`OBJECTIVES` doc comment means — that alignment is by hand across crates.
+
+Two things the compiler still cannot check, so `test_r2.rs` covers them: that
+every pair's second name is the first plus `_manifold`, and that every name in
+`OBJECTIVES` resolves through `TrialRecord::objective` (a typo there would read
+as permanently missing, i.e. silently worst-case).
 
 ### Recommendations
 

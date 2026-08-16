@@ -31,8 +31,11 @@ impl<'a> RhoManProj<'a> {
     }
 
     /// (median κ, ρ_man-proj) for every cell of one geometry and sample size.
-    fn points(&self, metric: &str, geometry: &str, n: usize) -> Vec<(f64, f64)> {
-        let manifold = format!("{metric}_manifold");
+    ///
+    /// *pair* is one row of [`METRIC_PAIRS`]: the projected and manifold
+    /// objective names whose ranks are correlated against each other.
+    fn points(&self, pair: (&str, &str), geometry: &str, n: usize) -> Vec<(f64, f64)> {
+        let (projected, manifold) = pair;
         let mut pts = Vec::new();
         for (key, recs) in self.cells {
             if key.geometry != geometry || key.n != n {
@@ -41,7 +44,7 @@ impl<'a> RhoManProj<'a> {
             let (mut proj, mut man, mut ks) = (Vec::new(), Vec::new(), Vec::new());
             for r in recs {
                 let (Some(pv), Some(mv), Some(kv)) =
-                    (r.objective(metric), r.objective(&manifold), r.kappa())
+                    (r.objective(projected), r.objective(manifold), r.kappa())
                 else {
                     continue;
                 };
@@ -64,10 +67,10 @@ impl<'a> RhoManProj<'a> {
     }
 
     pub fn has_data(&self) -> bool {
-        METRICS.iter().any(|m| {
+        METRIC_PAIRS.iter().any(|p| {
             CURVED
                 .iter()
-                .any(|g| self.ns.iter().any(|n| !self.points(m, g, *n).is_empty()))
+                .any(|g| self.ns.iter().any(|n| !self.points(*p, g, *n).is_empty()))
         })
     }
 }
@@ -78,7 +81,7 @@ impl Figure for RhoManProj<'_> {
     }
 
     fn size(&self) -> (u32, u32) {
-        (400 * METRICS.len() as u32, 480)
+        (400 * METRIC_PAIRS.len() as u32, 480)
     }
 
     fn draw<DB: DrawingBackend>(&self, root: &DrawingArea<DB, Shift>) -> Res
@@ -100,15 +103,15 @@ impl Figure for RhoManProj<'_> {
         }
         draw_legend(&legend, &entries)?;
 
-        let panels = grid.split_evenly((1, METRICS.len()));
-        for (m_idx, metric) in METRICS.iter().enumerate() {
+        let panels = grid.split_evenly((1, METRIC_PAIRS.len()));
+        for (m_idx, pair) in METRIC_PAIRS.iter().enumerate() {
             // A shared x range across geometries keeps the panels comparable.
             let all_x: Vec<f64> = CURVED
                 .iter()
                 .flat_map(|g| {
                     self.ns
                         .iter()
-                        .flat_map(move |n| self.points(metric, g, *n).into_iter().map(|p| p.0))
+                        .flat_map(move |n| self.points(*pair, g, *n).into_iter().map(|p| p.0))
                 })
                 .collect();
             let (x_lo, x_hi) =
@@ -116,7 +119,7 @@ impl Figure for RhoManProj<'_> {
 
             let mut chart = ChartBuilder::on(&panels[m_idx])
                 .margin(10)
-                .caption(*metric, ("sans-serif", 15).into_font())
+                .caption(pair.0, ("sans-serif", 15).into_font())
                 .x_label_area_size(52)
                 .y_label_area_size(if m_idx == 0 { 66 } else { 34 })
                 .build_cartesian_2d((x_lo..x_hi).log_scale(), -0.8f64..1.1f64)?;
@@ -136,7 +139,7 @@ impl Figure for RhoManProj<'_> {
             for geometry in CURVED {
                 let color = geometry_color(geometry);
                 for (k, n) in self.ns.iter().enumerate() {
-                    let pts = self.points(metric, geometry, *n);
+                    let pts = self.points(*pair, geometry, *n);
                     if pts.is_empty() {
                         continue;
                     }

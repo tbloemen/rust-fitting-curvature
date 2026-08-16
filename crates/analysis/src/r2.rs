@@ -23,7 +23,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::objectives::{oriented_matrix, N_OBJECTIVES, OBJECTIVES};
+use crate::objectives::{is_manifold, oriented_matrix, N_OBJECTIVES, OBJECTIVES};
+pub use crate::objectives::{metric_objectives, METRICS};
 use crate::pareto::pareto_front_mask;
 use crate::records::TrialRecord;
 
@@ -32,34 +33,12 @@ use crate::records::TrialRecord;
 /// so the indicator scores fronts under the preferences that generated them.
 pub const S: usize = 5;
 
-/// The five quality metrics, in the order their objective pairs appear in
-/// [`OBJECTIVES`]. Metric `i` owns objectives `2i` (projected) and `2i+1`
-/// (manifold); [`metric_objectives`] is the accessor, and a test pins the
-/// layout against `OBJECTIVES` so a reordering there cannot silently rot it.
-pub const METRICS: [&str; 5] = [
-    "trustworthiness",
-    "continuity",
-    "normalized_stress",
-    "shepard_goodness",
-    "neighborhood_hit",
-];
-
 /// Name of the region spanning the whole simplex.
 pub const REGION_ALL: &str = "all";
 /// Name of the region supported on the manifold objectives only.
 pub const REGION_MANIFOLD: &str = "manifold";
 /// Name of the region supported on the projected (2D) objectives only.
 pub const REGION_PROJECTED: &str = "projected";
-
-/// The `(projected, manifold)` objective indices of metric `i`.
-pub fn metric_objectives(i: usize) -> (usize, usize) {
-    (2 * i, 2 * i + 1)
-}
-
-/// True for objectives measured on the embedding manifold.
-fn is_manifold(j: usize) -> bool {
-    j % 2 == 1
-}
 
 // ─── The weight simplex and its preference regions ───────────────────────────
 
