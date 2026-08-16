@@ -80,8 +80,6 @@ pub struct TrialRecord {
 }
 
 impl TrialRecord {
-    /// One of the 10 objectives by name. Unknown names give `None`, so a caller
-    /// that mistypes gets the same "missing" treatment a null would produce.
     pub fn objective(&self, name: &str) -> Option<f64> {
         match name {
             "trustworthiness" => self.trustworthiness,
@@ -98,7 +96,6 @@ impl TrialRecord {
         }
     }
 
-    /// One hyperparameter / geometry scalar by name.
     pub fn param(&self, name: &str) -> Option<f64> {
         match name {
             "learning_rate" => self.learning_rate,
@@ -117,9 +114,6 @@ impl TrialRecord {
     }
 
     /// Dimensionless embedding curvature κ = |K|·R_rms² for one trial.
-    ///
-    /// `curvature_magnitude` is |K|; `r_rms` is the RMS geodesic radius. `None`
-    /// when either is missing or non-finite (diverged / Euclidean trials).
     pub fn kappa(&self) -> Option<f64> {
         let k = self.curvature_magnitude?;
         let r = self.r_rms?;

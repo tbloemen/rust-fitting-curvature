@@ -1,10 +1,5 @@
 //! R2-indicator analysis of the qParEGO sweeps.
 //!
-//! This runs **locally**; there is no cluster stage. The whole table is a few
-//! seconds of work: the indicator is an exact mean over an enumerated weight
-//! set, so there is no sampling budget to trade against precision and no seed to
-//! carry around.
-//!
 //! Five subcommands, each writing a **file** — JSONL throughout, the same format
 //! the sweeps themselves are written in. Nothing goes to stdout; the one thing
 //! that reaches the terminal is a failure, rendered once by `main` returning
@@ -194,8 +189,7 @@ fn run_stats(args: StatsArgs) -> Result<()> {
 
     let weights = Weights::new();
 
-    // Cells are visited in `discover_cells` order, so the file is sorted by
-    // stem and byte-identical across runs.
+    // Cells are visited in `discover_cells` order
     let mut rows = Vec::with_capacity(cells.len());
     for cf in &cells {
         let records = trial_records(&cf.path)?;
