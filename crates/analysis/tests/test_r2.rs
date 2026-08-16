@@ -4,7 +4,7 @@
 use fitting_analysis::objectives::{METRIC_PAIRS, N_OBJECTIVES, OBJECTIVES};
 use fitting_analysis::r2::{
     cell_summary, front_utilities, r2, recommendation, Weights, METRICS, REGION_ALL,
-    REGION_MANIFOLD, REGION_PROJECTED, S,
+    REGION_MANIFOLD, REGION_PROJECTED,
 };
 use fitting_analysis::TrialRecord;
 
@@ -24,16 +24,36 @@ fn score(front: &[[f64; N_OBJECTIVES]], w: &Weights, region: &str) -> f64 {
 #[test]
 fn simplex_has_the_expected_size_and_every_vector_sums_to_one() {
     let w = Weights::new();
-    // C(S + k - 1, k - 1) = C(14, 9) = 2002 for k = 10, S = 5.
+    // C(s + k - 1, k - 1) = C(14, 9) = 2002 for k = 10, s = 5.
+    assert_eq!(w.s, Weights::DEFAULT_S);
     assert_eq!(w.vectors.len(), 2002);
     assert_eq!(w.counts.len(), w.vectors.len());
 
     for (counts, lambda) in w.counts.iter().zip(&w.vectors) {
         let total: u32 = counts.iter().map(|&c| u32::from(c)).sum();
-        assert_eq!(total, S as u32, "counts {counts:?} must sum to S");
+        assert_eq!(total, w.s as u32, "counts {counts:?} must sum to s");
         let sum: f64 = lambda.iter().sum();
         assert!((sum - 1.0).abs() < 1e-9, "λ {lambda:?} sums to {sum}");
     }
+}
+
+#[test]
+fn resolution_flows_through_the_enumeration_and_the_regions() {
+    let w = Weights::with_resolution(2);
+    // C(2 + 9, 9) = 55, and "at least half the mass" is now a count of 1.
+    assert_eq!(w.s, 2);
+    assert_eq!(w.vectors.len(), 55);
+    for counts in &w.counts {
+        let total: u32 = counts.iter().map(|&c| u32::from(c)).sum();
+        assert_eq!(total, 2, "counts {counts:?} must sum to s");
+    }
+    // Every vector puts at least one of its two units on some metric pair, so
+    // the five metric regions have to cover the whole simplex.
+    let covered: std::collections::BTreeSet<usize> = METRICS
+        .iter()
+        .flat_map(|m| w.region(m).expect("metric region exists").indices.clone())
+        .collect();
+    assert_eq!(covered.len(), w.vectors.len());
 }
 
 #[test]

@@ -166,9 +166,14 @@ statistic could be verified. Don't add it back without one.
 
 ### The weight simplex and preference regions
 
-`Weights::new()` enumerates all vectors with `λ_j = l/S`, `Σλ_j = 1` at `S = 5`
-— `C(14, 9) = 2002` vectors for ten objectives, the same set
-`ParEgoOptimizer::sample_discrete_simplex` draws from. Vectors are stored as
+`Weights::new()` enumerates all vectors with `λ_j = l/s`, `Σλ_j = 1` at
+`Weights::DEFAULT_S = 5` — `C(14, 9) = 2002` vectors for ten objectives, the
+same set `ParEgoOptimizer::sample_discrete_simplex` draws from. The resolution
+is a property of the enumeration, not of the module, so it lives on the struct:
+`Weights::s` records what a given set was built at and `with_resolution(s)`
+builds another. Nothing in the analysis calls it — the whole point of `s = 5` is
+that it matches the optimizer — so it is there for tests and sensitivity checks.
+Vectors are stored as
 **integer counts**, and every region test is integer arithmetic: `l/5` is not
 representable in binary, so `0.2 + 0.4 > 0.6` and a float `λ_a + λ_b >= 0.5`
 would be a coin flip.

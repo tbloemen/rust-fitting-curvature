@@ -15,9 +15,10 @@
 //!   the per-weight-vector minimisation runs once and each region is a mean over
 //!   its own slice of the result. Eight regions cost barely more than one.
 //!
-//! Weight vectors are held as integer counts summing to [`S`], which keeps the
-//! region membership tests exact (`l/5` is not representable in binary, so
-//! `0.2 + 0.4 > 0.6` and a naive `λ_a + λ_b >= 0.5` would be a coin flip).
+//! Weight vectors are held as integer counts summing to [`Weights::s`], which
+//! keeps the region membership tests exact (`l/5` is not representable in
+//! binary, so `0.2 + 0.4 > 0.6` and a naive `λ_a + λ_b >= 0.5` would be a coin
+//! flip).
 
 use std::collections::BTreeMap;
 
@@ -27,11 +28,6 @@ use crate::objectives::{is_manifold, oriented_matrix, N_OBJECTIVES, OBJECTIVES};
 pub use crate::objectives::{metric_objectives, METRICS};
 use crate::pareto::pareto_front_mask;
 use crate::records::TrialRecord;
-
-/// Granularity of the weight simplex: `λ_j = l / S` for integer `l` (Knowles
-/// 2006, eq. 1). The same value the optimizer's `ParEgoOptimizer` samples with,
-/// so the indicator scores fronts under the preferences that generated them.
-pub const S: usize = 5;
 
 /// Name of the region spanning the whole simplex.
 pub const REGION_ALL: &str = "all";
@@ -56,9 +52,11 @@ pub struct Region {
 /// methods chapter.
 #[derive(Debug, Clone)]
 pub struct Weights {
-    /// Integer counts summing to `S`, one per weight vector.
+    /// Granularity of the enumeration: every `λ_j` is a multiple of `1 / s`.
+    pub s: usize,
+    /// Integer counts summing to `s`, one per weight vector.
     pub counts: Vec<[u8; N_OBJECTIVES]>,
-    /// The same vectors as `λ_j = l_j / S`.
+    /// The same vectors as `λ_j = l_j / s`.
     pub vectors: Vec<[f64; N_OBJECTIVES]>,
     /// `all`, one per metric, `manifold`, `projected` — in that order.
     pub regions: Vec<Region>,
@@ -71,17 +69,39 @@ impl Default for Weights {
 }
 
 impl Weights {
-    /// Enumerate the simplex and build every preference region.
+    /// Granularity of the weight simplex: `λ_j = l / s` for integer `l`
+    /// (Knowles 2006, eq. 1). The same value the optimizer's `ParEgoOptimizer`
+    /// samples with, so the indicator scores fronts under the preferences that
+    /// generated them — which is why the analysis never varies it, and why
+    /// [`Weights::with_resolution`] exists only for tests and sensitivity
+    /// checks.
+    pub const DEFAULT_S: usize = 5;
+
+    /// Enumerate the simplex at [`Self::DEFAULT_S`] and build every preference
+    /// region.
     ///
-    /// For ten objectives at `S = 5` this is `C(14, 9) = 2002` vectors.
+    /// For ten objectives at `s = 5` this is `C(14, 9) = 2002` vectors.
     pub fn new() -> Self {
-        let counts = enumerate_simplex();
+        Self::with_resolution(Self::DEFAULT_S)
+    }
+
+    /// Enumerate the simplex at an arbitrary granularity.
+    ///
+    /// Panics unless `1 <= s <= 255`: counts are `u8`, so a larger `s` would
+    /// wrap silently in release.
+    pub fn with_resolution(s: usize) -> Self {
+        assert!(
+            (1..=usize::from(u8::MAX)).contains(&s),
+            "simplex resolution {s} must be in 1..=255"
+        );
+        let counts = enumerate_simplex(s as u8);
         let vectors: Vec<[f64; N_OBJECTIVES]> = counts
             .iter()
-            .map(|c| c.map(|l| f64::from(l) / S as f64))
+            .map(|c| c.map(|l| f64::from(l) / s as f64))
             .collect();
-        let regions = build_regions(&counts);
+        let regions = build_regions(&counts, s);
         Self {
+            s,
             counts,
             vectors,
             regions,
@@ -94,11 +114,11 @@ impl Weights {
     }
 }
 
-/// Every vector of `N_OBJECTIVES` non-negative integers summing to `S`.
-fn enumerate_simplex() -> Vec<[u8; N_OBJECTIVES]> {
+/// Every vector of `N_OBJECTIVES` non-negative integers summing to `s`.
+fn enumerate_simplex(s: u8) -> Vec<[u8; N_OBJECTIVES]> {
     let mut out = Vec::new();
     let mut counts = [0u8; N_OBJECTIVES];
-    fill(0, S as u8, &mut counts, &mut out);
+    fill(0, s, &mut counts, &mut out);
     out
 }
 
@@ -124,11 +144,11 @@ fn fill(
 /// evaluation surface.
 ///
 /// A metric's region holds the vectors placing at least half their mass on that
-/// metric's two objectives, which at `S = 5` means an integer count of 3 or
+/// metric's two objectives, which at `s = 5` means an integer count of 3 or
 /// more. The surface regions hold the vectors supported entirely on the five
 /// manifold objectives, respectively the five projected ones.
-fn build_regions(counts: &[[u8; N_OBJECTIVES]]) -> Vec<Region> {
-    let half = S.div_ceil(2) as u8; // 3 of 5: "at least half the mass"
+fn build_regions(counts: &[[u8; N_OBJECTIVES]], s: usize) -> Vec<Region> {
+    let half = s.div_ceil(2) as u8; // 3 of 5: "at least half the mass"
     let mut regions = vec![Region {
         name: REGION_ALL.to_string(),
         indices: (0..counts.len()).collect(),
@@ -282,6 +302,19 @@ pub struct CellSummary {
     pub recommended: BTreeMap<String, Recommendation>,
 }
 
+/// The oriented objective values of one record, by objective name.
+///
+/// Used by the recommendation table, which reports what a recommended
+/// configuration attains on all ten objectives alongside its hyperparameters.
+pub fn oriented_objectives(record: &TrialRecord) -> BTreeMap<String, f64> {
+    let row = crate::objectives::oriented_row(record);
+    OBJECTIVES
+        .iter()
+        .zip(row)
+        .map(|(name, v)| ((*name).to_string(), v))
+        .collect()
+}
+
 /// Reduce a cell's trials to its front, then score it under every region.
 pub fn cell_summary(records: &[TrialRecord], weights: &Weights) -> CellSummary {
     let all = oriented_matrix(records);
@@ -311,17 +344,4 @@ pub fn cell_summary(records: &[TrialRecord], weights: &Weights) -> CellSummary {
         r2: r2_by_region,
         recommended: rec_by_region,
     }
-}
-
-/// The oriented objective values of one record, by objective name.
-///
-/// Used by the recommendation table, which reports what a recommended
-/// configuration attains on all ten objectives alongside its hyperparameters.
-pub fn oriented_objectives(record: &TrialRecord) -> BTreeMap<String, f64> {
-    let row = crate::objectives::oriented_row(record);
-    OBJECTIVES
-        .iter()
-        .zip(row)
-        .map(|(name, v)| ((*name).to_string(), v))
-        .collect()
 }
