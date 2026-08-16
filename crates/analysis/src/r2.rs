@@ -224,22 +224,22 @@ pub fn front_utilities(
             best.push(0);
             continue;
         }
-        let mut u_min = f64::INFINITY;
+        let mut utility_min = f64::INFINITY;
         let mut arg = 0usize;
-        for (i, a) in front.iter().enumerate() {
-            let mut u = 0.0f64;
-            for (l, x) in lambda.iter().zip(a.iter()) {
-                let t = l * (1.0 - x);
-                if t > u {
-                    u = t;
+        for (i, point) in front.iter().enumerate() {
+            let mut utility = 0.0f64;
+            for (lambda_j, point_j) in lambda.iter().zip(point.iter()) {
+                let new_utility = lambda_j * (1.0 - point_j);
+                if new_utility > utility {
+                    utility = new_utility;
                 }
             }
-            if u < u_min {
-                u_min = u;
+            if utility < utility_min {
+                utility_min = utility;
                 arg = i;
             }
         }
-        utility.push(u_min);
+        utility.push(utility_min);
         best.push(arg);
     }
 
