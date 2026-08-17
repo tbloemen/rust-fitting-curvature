@@ -197,13 +197,13 @@ fn select(counts: &[[u8; N_OBJECTIVES]], pred: impl Fn(&[u8; N_OBJECTIVES]) -> b
 // ─── The indicator ───────────────────────────────────────────────────────────
 
 /// Per-weight-vector result of the inner minimisation of the R2 indicator.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct FrontUtility {
-    /// `min_a max_j λ_j (1 − a_j)` for each weight vector.
-    pub utility: Vec<f64>,
+    /// `min_a max_j λ_j (1 − a_j)` for this weight vector.
+    pub utility: f64,
     /// The front point attaining it, as an index into the front. Ties resolve to
     /// the lowest index, so the result depends only on the front's own order.
-    pub best: Vec<usize>,
+    pub best: usize,
 }
 
 /// Run the inner minimisation once for every weight vector.
@@ -214,14 +214,15 @@ pub struct FrontUtility {
 pub fn front_utilities(
     front: &[[f64; N_OBJECTIVES]],
     weights: &[[f64; N_OBJECTIVES]],
-) -> FrontUtility {
-    let mut utility = Vec::with_capacity(weights.len());
-    let mut best = Vec::with_capacity(weights.len());
+) -> Vec<FrontUtility> {
+    let mut utilities = Vec::with_capacity(weights.len());
 
     for lambda in weights {
         if front.is_empty() {
-            utility.push(lambda.iter().copied().fold(0.0, f64::max));
-            best.push(0);
+            utilities.push(FrontUtility {
+                utility: lambda.iter().copied().fold(0.0, f64::max),
+                best: 0,
+            });
             continue;
         }
         let mut utility_min = f64::INFINITY;
@@ -239,21 +240,23 @@ pub fn front_utilities(
                 arg = i;
             }
         }
-        utility.push(utility_min);
-        best.push(arg);
+        utilities.push(FrontUtility {
+            utility: utility_min,
+            best: arg,
+        });
     }
 
-    FrontUtility { utility, best }
+    utilities
 }
 
 /// The R2 indicator of a front under one preference region. Smaller is better.
 ///
 /// `NaN` for an empty region, which [`Weights::new`] never produces.
-pub fn r2(u: &FrontUtility, region: &Region) -> f64 {
+pub fn r2(u: &[FrontUtility], region: &Region) -> f64 {
     if region.indices.is_empty() {
         return f64::NAN;
     }
-    let sum: f64 = region.indices.iter().map(|&i| u.utility[i]).sum();
+    let sum: f64 = region.indices.iter().map(|&i| u[i].utility).sum();
     sum / region.indices.len() as f64
 }
 
@@ -270,13 +273,13 @@ pub struct Recommendation {
 ///
 /// Ties resolve to the lowest front index, so the recommendation is a function
 /// of the front alone.
-pub fn recommendation(u: &FrontUtility, region: &Region) -> Option<Recommendation> {
+pub fn recommendation(u: &[FrontUtility], region: &Region) -> Option<Recommendation> {
     if region.indices.is_empty() {
         return None;
     }
     let mut votes: BTreeMap<usize, usize> = BTreeMap::new();
     for &i in &region.indices {
-        *votes.entry(u.best[i]).or_default() += 1;
+        *votes.entry(u[i].best).or_default() += 1;
     }
     // BTreeMap iterates by ascending key and the test is strict, so a tie goes
     // to the lowest front index.
