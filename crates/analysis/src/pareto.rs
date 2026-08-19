@@ -82,3 +82,22 @@ pub fn slice_front_2d(x: &[f64], y: &[f64], x_up: bool, y_up: bool) -> Vec<usize
     idx.sort_by(|&a, &b| x[a].partial_cmp(&x[b]).unwrap_or(std::cmp::Ordering::Equal));
     idx
 }
+
+/// The front's step (attainment) polyline, for drawing it as the staircase it
+/// is rather than as straight segments between its points.
+///
+/// Input is a front sorted by x ascending. Demanding any x beyond a point costs
+/// the *next* point's y immediately, so each segment is a riser at the earlier
+/// x followed by a tread at the later y:
+/// `[(x0,y0), (x1,y1)]` → `[(x0,y0), (x0,y1), (x1,y1)]`. Empty and single-point
+/// fronts pass through unchanged.
+pub fn step_polyline(points: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let mut out = Vec::with_capacity(points.len().saturating_mul(2).saturating_sub(1));
+    for (i, &(x, y)) in points.iter().enumerate() {
+        if i > 0 {
+            out.push((points[i - 1].0, y));
+        }
+        out.push((x, y));
+    }
+    out
+}

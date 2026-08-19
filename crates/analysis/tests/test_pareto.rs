@@ -1,7 +1,7 @@
 //! Cell parsing, objective orientation, and Pareto non-domination.
 
 use fitting_analysis::objectives::{oriented_row, oriented_value, N_OBJECTIVES, OBJECTIVES};
-use fitting_analysis::pareto::slice_front_2d;
+use fitting_analysis::pareto::{slice_front_2d, step_polyline};
 use fitting_analysis::{pareto_front_mask, pareto_front_records, parse_cell_stem, TrialRecord};
 
 /// A record whose 10 objectives are all *v* except normalised stress, which is
@@ -181,4 +181,29 @@ fn slice_front_2d_respects_axis_orientation() {
     let x = [0.9, 0.5];
     let y = [0.1, 0.5];
     assert_eq!(slice_front_2d(&x, &y, true, true), vec![1, 0]);
+}
+
+// ─── Attainment staircase ─────────────────────────────────────────────────────
+
+#[test]
+fn step_polyline_risers_come_before_treads() {
+    // Asking for more trustworthiness than (0.9, 0.30) gives costs the next
+    // point's stress immediately, so the riser sits at the earlier x.
+    let front = [(0.9, 0.30), (0.95, 0.35), (0.97, 0.40)];
+    assert_eq!(
+        step_polyline(&front),
+        vec![
+            (0.9, 0.30),
+            (0.9, 0.35),
+            (0.95, 0.35),
+            (0.95, 0.40),
+            (0.97, 0.40),
+        ]
+    );
+}
+
+#[test]
+fn step_polyline_passes_through_degenerate_fronts() {
+    assert!(step_polyline(&[]).is_empty());
+    assert_eq!(step_polyline(&[(0.9, 0.3)]), vec![(0.9, 0.3)]);
 }

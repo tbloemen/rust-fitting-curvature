@@ -32,6 +32,23 @@ pub fn median(xs: &[f64]) -> Option<f64> {
     })
 }
 
+/// The *q*-quantile of a slice by linear interpolation between order statistics
+/// (numpy's `quantile(method="linear")`, scipy's default). `None` when empty or
+/// when *q* is outside [0, 1]. Non-finite values are not filtered — callers do
+/// that.
+pub fn quantile(xs: &[f64], q: f64) -> Option<f64> {
+    if xs.is_empty() || !(0.0..=1.0).contains(&q) {
+        return None;
+    }
+    let mut v = xs.to_vec();
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    // Virtual index into the sorted values, then interpolate its neighbours.
+    let pos = q * (v.len() - 1) as f64;
+    let lo = pos.floor() as usize;
+    let hi = pos.ceil() as usize;
+    Some(v[lo] + (v[hi] - v[lo]) * (pos - lo as f64))
+}
+
 /// Fractional ranks with ties averaged (scipy's `rankdata(method="average")`).
 pub fn rankdata(xs: &[f64]) -> Vec<f64> {
     let n = xs.len();

@@ -36,7 +36,7 @@ use crate::cell::{discover_cells, Cell};
 use crate::error::{Error, IoContext, Result};
 use crate::pareto::pareto_front_records;
 use crate::records::{load_jsonl, trial_records, TrialRecord};
-use crate::stats::median;
+use crate::stats::{median, quantile};
 
 /// What a `draw` implementation returns. Boxed rather than [`crate::Error`]
 /// because plotters' error type is generic over the backend; [`save`] is the
@@ -181,7 +181,10 @@ macro_rules! style_mesh {
 pub struct LegendEntry {
     pub label: String,
     pub color: RGBColor,
-    pub dashed: bool,
+    /// `(dash, gap)` in pixels, or `None` for a solid line. Exp 2 gives every
+    /// setting its own pattern, so the swatch carries the pattern itself rather
+    /// than a dashed/not-dashed flag.
+    pub dash: Option<(i32, i32)>,
     pub triangle: bool,
 }
 
@@ -190,14 +193,20 @@ impl LegendEntry {
         Self {
             label: label.into(),
             color,
-            dashed: false,
+            dash: None,
             triangle: false,
         }
     }
 
-    /// Mark this entry as the dashed/triangle series.
+    /// Draw this entry's line with the given `(dash, gap)` pattern.
+    pub fn with_dash(mut self, dash: i32, gap: i32) -> Self {
+        self.dash = Some((dash, gap));
+        self
+    }
+
+    /// Mark this entry as the dashed/triangle series (Exp 4's second N).
     pub fn secondary(mut self) -> Self {
-        self.dashed = true;
+        self.dash = Some((8, 6));
         self.triangle = true;
         self
     }
@@ -221,19 +230,24 @@ where
     let y = h as i32 / 2;
     for (i, e) in entries.iter().enumerate() {
         let x0 = i as i32 * slot + 12;
-        if e.dashed {
-            for seg in 0..3 {
-                let a = x0 + seg * 10;
-                area.draw(&PathElement::new(
-                    vec![(a, y), (a + 6, y)],
-                    e.color.stroke_width(3),
-                ))?;
+        const SWATCH: i32 = 26;
+        match e.dash {
+            // Tile the pattern across the swatch, clipped to its width.
+            Some((dash, gap)) if dash > 0 && gap > 0 => {
+                let mut a = x0;
+                while a < x0 + SWATCH {
+                    let b = (a + dash).min(x0 + SWATCH);
+                    area.draw(&PathElement::new(
+                        vec![(a, y), (b, y)],
+                        e.color.stroke_width(3),
+                    ))?;
+                    a = b + gap;
+                }
             }
-        } else {
-            area.draw(&PathElement::new(
-                vec![(x0, y), (x0 + 26, y)],
+            _ => area.draw(&PathElement::new(
+                vec![(x0, y), (x0 + SWATCH, y)],
                 e.color.stroke_width(3),
-            ))?;
+            ))?,
         }
         if e.triangle {
             area.draw(&TriangleMarker::new((x0 + 13, y), 5, e.color.filled()))?;
@@ -409,6 +423,33 @@ pub fn padded_range(values: &[f64], frac: f64) -> Option<(f64, f64)> {
         lo.abs().max(1.0) * 0.05
     };
     Some((lo - pad, hi + pad))
+}
+
+/// A padded axis range that ignores outliers: [`padded_range`] over the values
+/// inside Tukey's fences, `[q1 − 1.5·IQR, q3 + 1.5·IQR]`.
+///
+/// A single diverged front point used to set a whole Exp 2 panel's scale and
+/// squash the informative knee into a sliver. The fence only bites when there
+/// really is a far tail, so a well-behaved panel comes out identical to
+/// [`padded_range`]; too few points (a 3-point front) or a degenerate IQR fall
+/// back to it outright. Callers must handle the points now outside the range —
+/// plotters clips them silently.
+pub fn robust_range(values: &[f64], frac: f64) -> Option<(f64, f64)> {
+    let finite: Vec<f64> = values.iter().copied().filter(|v| v.is_finite()).collect();
+    if finite.len() < 8 {
+        return padded_range(values, frac);
+    }
+    let (q1, q3) = (quantile(&finite, 0.25)?, quantile(&finite, 0.75)?);
+    let iqr = q3 - q1;
+    if iqr <= 0.0 {
+        return padded_range(values, frac);
+    }
+    let (lo, hi) = (q1 - 1.5 * iqr, q3 + 1.5 * iqr);
+    let kept: Vec<f64> = finite
+        .into_iter()
+        .filter(|v| *v >= lo && *v <= hi)
+        .collect();
+    padded_range(&kept, frac)
 }
 
 /// A padded *log* axis range: same idea, in decades, with non-positive values

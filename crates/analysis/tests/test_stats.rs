@@ -4,8 +4,8 @@
 //! Python analysis called with (`spearmanr(x, y)`).
 
 use fitting_analysis::stats::{
-    chi2_sf, friedman, holm_against_control, mean, median, normal_sf, pearson, rankdata, spearman,
-    student_t_sf,
+    chi2_sf, friedman, holm_against_control, mean, median, normal_sf, pearson, quantile, rankdata,
+    spearman, student_t_sf,
 };
 
 fn assert_close(a: f64, b: f64, tol: f64) {
@@ -96,6 +96,35 @@ fn mean_and_median() {
     assert_close(median(&[3.0, 1.0, 2.0]).unwrap(), 2.0, 1e-12);
     assert_close(median(&[4.0, 1.0, 3.0, 2.0]).unwrap(), 2.5, 1e-12);
     assert!(median(&[]).is_none());
+}
+
+/// Reference values from `numpy.quantile(..., method="linear")`, the default
+/// scipy and numpy both use.
+#[test]
+fn quantile_interpolates_like_numpy() {
+    let even = [1.0, 2.0, 3.0, 4.0];
+    assert_close(quantile(&even, 0.25).unwrap(), 1.75, 1e-12);
+    assert_close(quantile(&even, 0.5).unwrap(), 2.5, 1e-12);
+    assert_close(quantile(&even, 0.75).unwrap(), 3.25, 1e-12);
+
+    let odd = [1.0, 2.0, 3.0, 4.0, 5.0];
+    assert_close(quantile(&odd, 0.25).unwrap(), 2.0, 1e-12);
+    assert_close(quantile(&odd, 0.75).unwrap(), 4.0, 1e-12);
+
+    // Unsorted input, and a q that lands between two order statistics.
+    assert_close(
+        quantile(&[50.0, 10.0, 30.0, 20.0, 40.0], 0.1).unwrap(),
+        14.0,
+        1e-12,
+    );
+
+    // The endpoints are the extremes; one value is its own every quantile.
+    assert_close(quantile(&[3.0, 1.0, 2.0], 0.0).unwrap(), 1.0, 1e-12);
+    assert_close(quantile(&[3.0, 1.0, 2.0], 1.0).unwrap(), 3.0, 1e-12);
+    assert_close(quantile(&[7.0], 0.42).unwrap(), 7.0, 1e-12);
+
+    assert!(quantile(&[], 0.5).is_none());
+    assert!(quantile(&[1.0, 2.0], 1.5).is_none());
 }
 
 // ─── χ² tail ─────────────────────────────────────────────────────────────────
