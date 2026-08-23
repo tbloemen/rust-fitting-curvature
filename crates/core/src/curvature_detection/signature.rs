@@ -283,6 +283,46 @@ fn build_z_hyperbolic(d: &[f64], n: usize, r: f64) -> Vec<f64> {
     z
 }
 
+/// `B = −J D∘D J / 2` with `J = I − 11ᵀ/n` — the classical-MDS (PCoA) Gram
+/// matrix, i.e. the flat model's `Z`.  It takes no radius: Euclidean space
+/// has no curvature parameter, which is exactly what makes this arm the
+/// nested null model of the other two.
+///
+/// This is the `r → ∞` limit of *both* curved kernels.  `r² cos(d/r) →
+/// r²J − D²/2` and `−r² cosh(d/r) → −r²J − D²/2` (Wilson et al. 2014,
+/// eqs. 24–26); the `±r²J` term is rank 1 along `1`, which the double
+/// centring here removes outright and which the hyperbolic signature
+/// instead absorbs into its Lorentzian time slot.  That correspondence is
+/// what makes [`euclidean_residual`] directly comparable to the curved
+/// residuals rather than merely similar in spirit — see
+/// [`fit_euclidean`].
+///
+/// The centring arithmetic mirrors `matrices::pca_from_distances`, which
+/// builds the same `B` but then extracts only its top eigenpairs by power
+/// iteration; the signature criterion needs the whole spectrum, so the
+/// matrix is rebuilt here for [`eigenvalues_symmetric`].
+fn build_z_euclidean(d: &[f64], n: usize) -> Vec<f64> {
+    let mut d2 = vec![0.0; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            let v = d[i * n + j];
+            d2[i * n + j] = v * v;
+        }
+    }
+    let row_means: Vec<f64> = (0..n)
+        .map(|i| (0..n).map(|j| d2[i * n + j]).sum::<f64>() / n as f64)
+        .collect();
+    let grand_mean = row_means.iter().sum::<f64>() / n as f64;
+
+    let mut b = vec![0.0; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            b[i * n + j] = -0.5 * (d2[i * n + j] - row_means[i] - row_means[j] + grand_mean);
+        }
+    }
+    b
+}
+
 // ── Signature residuals ──────────────────────────────────────────────────────
 
 /// `Σ |λ|` over the residual eigenvalues, given the full ascending
@@ -325,6 +365,23 @@ fn spherical_residual(d: &[f64], n: usize, dim: usize, r: f64) -> f64 {
 fn hyperbolic_residual(d: &[f64], n: usize, dim: usize, r: f64) -> f64 {
     let z = build_z_hyperbolic(d, n, r);
     residual_from_spectrum(&eigenvalues_symmetric(&z, n), 1, dim)
+}
+
+/// Euclidean residual for a `dim`-dimensional embedding.  A
+/// `dim`-dimensional flat configuration spans only `dim` ambient
+/// dimensions — there is no extra ambient axis, because the centring in
+/// [`build_z_euclidean`] has already removed the `1` direction that the
+/// curved models spend their `(dim+1)`-th slot on.  So a conforming `B` is
+/// PSD of rank `dim`: retain the `dim` most-positive eigenvalues and sum
+/// `|λ|` over the remaining `n − dim`.
+///
+/// Retaining `dim` rather than `dim+1` is what makes this the exact `r →
+/// ∞` limit of [`hyperbolic_residual`]: there, `λ₁ ≈ −n r²` (the `1`
+/// direction) fills the time slot and the `dim` largest fill the spatial
+/// ones, leaving the same set of data directions in the residual as here.
+fn euclidean_residual(d: &[f64], n: usize, dim: usize) -> f64 {
+    let b = build_z_euclidean(d, n);
+    residual_from_spectrum(&eigenvalues_symmetric(&b, n), 0, dim)
 }
 
 // ── Search over r ───────────────────────────────────────────────────────────
@@ -577,6 +634,41 @@ pub fn fit_hyperbolic(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
     }
 }
 
+/// Fit the flat model: `Σ|λ|` over the eigenvalues of the classical-MDS
+/// Gram matrix `B` outside its rank-`dim` PSD signature block.
+///
+/// There is no search, because Euclidean space has no curvature parameter
+/// — which is the whole point of having this arm.  The result is reported
+/// as a [`WilsonFit`] so it lands on the same axis as the curved fits:
+/// `residual_normalised` uses the identical `n · d_max²` gauge, so the
+/// three numbers are directly comparable.  `radius` is `f64::INFINITY`
+/// (the flat limit is `r → ∞`) and `at_upper_bound` is `false` (there is
+/// no window to be pinned against).
+///
+/// # This is the curved arms' null model, not a sibling
+///
+/// The three models are **nested**: `B` is the `r → ∞` limit of both
+/// `Z_spherical` and `Z_hyperbolic`, so the curved arms can always match
+/// this residual by running flat-ward, and — having a free parameter `r`
+/// this one lacks — can only ever do better within their windows.  A
+/// comparison of the three residuals is therefore a nested-model test
+/// ("does allowing curvature fit strictly better than flat?"), not a
+/// symmetric contest, and any decision rule built on it needs a margin
+/// rather than a bare argmin.  In particular the hyperbolic arm's
+/// residual converges to this one as [`HYPERBOLIC_KAPPA_MIN`] is
+/// loosened, so that cap sets the minimum curvature the comparison can
+/// resolve.
+pub fn fit_euclidean(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
+    let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
+    let residual = euclidean_residual(distances, n, dim);
+    WilsonFit {
+        radius: f64::INFINITY,
+        residual,
+        residual_normalised: normalise_residual(residual, n, d_max),
+        at_upper_bound: false,
+    }
+}
+
 // ── Detection ───────────────────────────────────────────────────────────────
 
 /// The minimal geometry-detection result the embedding pipeline acts on:
@@ -605,6 +697,13 @@ pub fn spherical_residual_at(distances: &[f64], n: usize, dim: usize, r: f64) ->
 /// for a `dim`-dimensional model.
 pub fn hyperbolic_residual_at(distances: &[f64], n: usize, dim: usize, r: f64) -> f64 {
     hyperbolic_residual(distances, n, dim, r)
+}
+
+/// Diagnostic: raw Euclidean (classical-MDS) signature residual
+/// `Σ|λ_res|` for a `dim`-dimensional model.  Takes no radius — this is
+/// the flat limit the curved residuals converge to.
+pub fn euclidean_residual_at(distances: &[f64], n: usize, dim: usize) -> f64 {
+    euclidean_residual(distances, n, dim)
 }
 
 /// Minimum angular extent `d_max / r*` required for the spherical fit
