@@ -14,13 +14,14 @@
 //!   collapses to a rank-1-plus-`d²` form whose residual resembles a
 //!   Euclidean Gram residual.
 //!
-//! # Radius fitting (rank-`(d+1)` signature residual)
+//! # Radius fitting (residual-eigenvalue criterion)
 //!
 //! Given a pairwise distance matrix `D` and a target embedding
 //! dimension `d`, fit each constant-curvature model by minimising the
-//! Frobenius energy of the curvature-dependent Gram matrix `Z(r)` that
-//! falls *outside* the eigen-subspace a genuine `d`-dimensional
-//! constant-curvature configuration is allowed to occupy.
+//! magnitude of the eigenvalues of the curvature-dependent Gram matrix
+//! `Z(r)` that fall *outside* the eigen-subspace a genuine
+//! `d`-dimensional constant-curvature configuration is allowed to
+//! occupy.
 //!
 //! A set of points on `Sᵈ`/`Hᵈ` lives in a `(d+1)`-dimensional ambient
 //! space, so `Z(r) = X G Xᵀ` has rank `d+1` with a fixed signature
@@ -34,183 +35,224 @@
 //!   Retain the most-negative eigenvalue plus the `d` largest positive
 //!   ones.
 //!
-//! Everything outside that retained block *should* be zero, so the fit
-//! minimises the normalised residual
+//! Everything outside that retained block *should* be zero, which is
+//! exactly the paper's fitting criterion: with the spectrum ordered
+//! ascending `λ₁ ≤ … ≤ λₙ` and an ambient embedding dimension `m = d+1`,
 //!
 //! ```text
-//!     ρ(r) = 1 − (Σ_retained λᵢ²) / ‖Z(r)‖_F²,    r* = arg min_r ρ(r)
+//!     r* = arg min_r Σ_{i ≤ n−m} |λᵢ[Z(r)]|
 //! ```
 //!
-//! `ρ ∈ [0, 1]` is the fraction of `‖Z‖_F²` lying outside the signature
-//! subspace; `ρ = 0` iff the data lies exactly on a `d`-dimensional
-//! constant-curvature manifold of radius `r`.  Normalising by `‖Z‖_F²`
-//! removes the `r⁴` scale of the raw energy, which would otherwise bias
-//! the search toward small `r`.  Wilson's original single-eigenvalue
-//! criterion (`|λ₁|` spherical, `|λ₂|` hyperbolic) is the `d = n−2`
-//! special case, where exactly one eigenvalue is left over.
+//! (Wilson et al. 2014, Section V.B — "if we wish to find an embedding
+//! space of dimension `m`, then we can try to minimise the remaining
+//! `n − m` eigenvalues").  The `m = n−1` case in the paper's derivation
+//! is the single leftover eigenvalue `|λ₁|`; general `m` sums the `n−m`
+//! smallest.
+//!
+//! For the hyperbolic model one eigenvalue is reserved for the negative
+//! (time) axis of the Lorentzian ambient space, so the sum runs over
+//! `λ₂ … λ_{n−d}` — `λ₁` (the most negative) is retained as the time
+//! direction, the `d` largest are the spatial directions, and everything
+//! between them is residual.  The paper only states the hyperbolic
+//! criterion for `m = n−1` (minimise `|λ₂|`); the `n−m` generalisation
+//! here is the natural reading of it.
+//!
+//! The objective is the **raw** sum of absolute residual eigenvalues, in
+//! the units of `Z` (i.e. squared distance).  It is not normalised by
+//! anything that depends on `r`: the earlier normalised variant
+//! (`1 − Σ_retained λᵢ² / ‖Z‖_F²`) divided by a denominator that grows
+//! like `n²r⁴`, which drove the residual to 0 for *any* geometry at large
+//! `r`.  The raw sum has no such attractor — at large `r` both kernels
+//! tend to `±r²J ∓ D²/2`, whose leftover eigenvalues stay `O(d_max²)`
+//! unless the data really is flat.
+//!
+//! For *reporting*, and for the threshold in [`detect_geometry`], the raw
+//! sum is divided by the dataset constants `n · d_max²`
+//! ([`WilsonFit::residual_normalised`]).  `d_max²` carries the units of
+//! `Z`; `n` removes the extensivity of a kernel spectrum (`λᵢ(Z)/n`
+//! converges to the eigenvalues of the corresponding integral operator,
+//! and exactly `tr Z = ±n r²`).  Neither factor depends on `r`, so this is
+//! a fixed rescale: it leaves `r*` untouched while making residuals
+//! comparable across datasets of different diameter *and* sample size.
+//!
+//! An earlier version also carried the nuclear-norm fraction
+//! `Σ_res|λ| / Σ_all|λ|` and thresholded *that*.  It was removed because
+//! its denominator is a function of `r`.  `tr Z = ±n r²` exactly, and
+//! `‖Z‖_* = |tr Z|` iff `Z` is PSD — which is precisely the spherical
+//! model — so at a good spherical fit `Σ_all|λ| = n r*²` and the fraction
+//! is exactly `Σ|λ_res| / (n r*²)`: gauged by the *fitted radius* rather
+//! than by a property of the data.  A larger `r*` deflates the score,
+//! flattering exactly the flat-ward fits the gate exists to reject.  The
+//! two statistics differ by `(d_max/r*)²`, which stays bounded only
+//! because the spherical search window is narrow — see
+//! [`SPHERICAL_RESIDUAL_MAX`].
 //!
 //! # Eigenvalue extraction
 //!
-//! Following the paper's recommendation, we use power iteration plus
-//! shifting and deflation rather than a full eigendecomposition:
-//!
-//! - `power_max` — largest-*magnitude* eigenvalue via plain power
-//!   iteration; the Rayleigh quotient recovers its sign.
-//! - `power_top` / `power_bot` — largest / smallest *algebraic*
-//!   eigenvalue (handles indefinite matrices by checking the sign of
-//!   the magnitude winner and shifting if needed).
-//! - `top_k_algebraic` — the `k` largest algebraic eigenvalues via
-//!   repeated `power_top` with rank-1 deflation.
-//! - `frob_sq` — `‖Z‖_F² = Σ λᵢ²`, the normaliser.
-//!
-//! For an n × n matrix, each call is O(n²) per iteration and converges
-//! geometrically with rate set by the eigenvalue gap.
+//! The criterion needs the *whole* spectrum (every residual eigenvalue,
+//! not just a few extremal ones), so partial power iteration is not
+//! enough.  [`eigenvalues_symmetric`] does a full symmetric
+//! eigenvalue-only decomposition: Householder reduction to tridiagonal
+//! form followed by the implicit-shift QL iteration.  Both are the
+//! standard EISPACK/Numerical-Recipes formulations, written out here
+//! because `fitting-core` carries no dependencies.  Cost is `O(n³)`
+//! (dominated by the `(2/3)n³` tridiagonalisation) per candidate radius.
 
 use std::f64::consts::PI;
 
 use super::gromov_ball_curve::detect_hyperbolic;
 
-const POWER_MAX_ITER: usize = 500;
-const POWER_TOL: f64 = 1e-10;
+/// Max implicit-QL sweeps per eigenvalue before giving up on that one.
+/// The classic bound is 30; convergence is cubic, so hitting this means
+/// the matrix is pathological rather than merely slow.
+const QL_MAX_ITER: usize = 50;
 
-// ── Linear algebra primitives ──────────────────────────────────────────────
+// ── Symmetric eigenvalue decomposition ─────────────────────────────────────
 
-/// `y ← A x` for symmetric `A` stored row-major flat.
-fn matvec(a: &[f64], n: usize, x: &[f64], y: &mut [f64]) {
-    for i in 0..n {
-        let row = &a[i * n..(i + 1) * n];
-        let mut s = 0.0;
-        for j in 0..n {
-            s += row[j] * x[j];
-        }
-        y[i] = s;
-    }
-}
-
-fn dot(a: &[f64], b: &[f64]) -> f64 {
-    a.iter().zip(b).map(|(x, y)| x * y).sum()
-}
-
-fn normalize(v: &mut [f64]) {
-    let nm = dot(v, v).sqrt();
-    if nm > 1e-20 {
-        for x in v.iter_mut() {
-            *x /= nm;
-        }
-    }
-}
-
-/// Power iteration: largest-magnitude eigenvalue of symmetric `A`.
-/// Returns `(λ, v)` with `‖v‖₂ = 1`.
-fn power_max(a: &[f64], n: usize) -> (f64, Vec<f64>) {
-    // Deterministic, well-mixed start (sin sequence has no special
-    // alignment with typical eigenvectors).
-    let mut v: Vec<f64> = (0..n).map(|i| ((i + 1) as f64).sin()).collect();
-    normalize(&mut v);
-
-    let mut w = vec![0.0; n];
-    let mut lambda = 0.0;
-
-    for _ in 0..POWER_MAX_ITER {
-        matvec(a, n, &v, &mut w);
-        let new_lambda = dot(&v, &w);
-        normalize(&mut w);
-        if (new_lambda - lambda).abs() < POWER_TOL * (lambda.abs().max(1.0)) {
-            return (new_lambda, w);
-        }
-        lambda = new_lambda;
-        std::mem::swap(&mut v, &mut w);
-    }
-    (lambda, v)
-}
-
-/// Largest *algebraic* eigenvalue (most positive) of symmetric `A`.
+/// All eigenvalues of the symmetric matrix `a` (row-major, `n × n`),
+/// returned in **ascending** order.
 ///
-/// `power_max` converges to the largest-*magnitude* eigenvalue, which is
-/// not necessarily the largest algebraic value: an indefinite matrix
-/// like Z_hyperbolic has its most-negative eigenvalue dominating in
-/// magnitude.  We check the sign and shift if needed.
-fn power_top(a: &[f64], n: usize) -> (f64, Vec<f64>) {
-    let (lambda_mag, v_mag) = power_max(a, n);
-    if lambda_mag >= 0.0 {
-        return (lambda_mag, v_mag);
+/// Householder reduction to tridiagonal form + implicit-shift QL.  Only
+/// the lower triangle of `a` is read; eigenvectors are not accumulated.
+pub fn eigenvalues_symmetric(a: &[f64], n: usize) -> Vec<f64> {
+    if n == 0 {
+        return Vec::new();
     }
-    // Largest magnitude is negative ⇒ subtract it to make all
-    // eigenvalues non-negative; the new largest is the original
-    // algebraic max.
-    let mut b = a.to_vec();
-    for i in 0..n {
-        b[i * n + i] -= lambda_mag;
-    }
-    let (_, v) = power_max(&b, n);
-    let mut av = vec![0.0; n];
-    matvec(a, n, &v, &mut av);
-    (dot(&v, &av), v)
+    let mut z = a.to_vec();
+    let mut d = vec![0.0; n];
+    let mut e = vec![0.0; n];
+    tridiagonalise(&mut z, n, &mut d, &mut e);
+    ql_implicit(&mut d, &mut e, n);
+    d.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+    d
 }
 
-/// Smallest *algebraic* eigenvalue (most negative) of symmetric `A`.
+/// Householder reduction of a symmetric matrix to tridiagonal form
+/// (Numerical Recipes `tred2`, eigenvector accumulation dropped).
 ///
-/// Returns `(λ_min, v_min)` where `λ_min` is recovered via the Rayleigh
-/// quotient on `A` directly, avoiding cancellation when shifting.
-fn power_bot(a: &[f64], n: usize) -> (f64, Vec<f64>) {
-    let (lambda_mag, v_mag) = power_max(a, n);
-
-    if lambda_mag <= 0.0 {
-        // Largest magnitude is non-positive ⇒ it *is* the smallest
-        // algebraic.  Recompute via Rayleigh on A for precision.
-        let mut av = vec![0.0; n];
-        matvec(a, n, &v_mag, &mut av);
-        return (dot(&v_mag, &av), v_mag);
-    }
-
-    // Largest magnitude is positive ⇒ shift B = λ_mag · I − A; B has
-    // largest eigenvalue λ_mag − λ_min.  Find its eigenvector and take
-    // Rayleigh on the original A.
-    let mut b = vec![0.0; n * n];
-    for i in 0..n {
-        for j in 0..n {
-            b[i * n + j] = -a[i * n + j];
-        }
-        b[i * n + i] += lambda_mag;
-    }
-    let (_, v) = power_max(&b, n);
-    let mut av = vec![0.0; n];
-    matvec(a, n, &v, &mut av);
-    (dot(&v, &av), v)
-}
-
-/// The `k` largest *algebraic* eigenvalues of symmetric `A`, descending.
-///
-/// Repeated power iteration with rank-1 deflation: after locating each
-/// eigenpair `(λᵢ, vᵢ)` we subtract `C · vᵢ vᵢᵀ` with `C > λ_top − λ_bot`,
-/// which drives that direction below the rest of the spectrum so the
-/// next `power_top` skips it.  Deflation preserves eigenvectors, so each
-/// λ is recovered via the Rayleigh quotient on the *original* `A` (the
-/// shift never leaks into the reported value).
-fn top_k_algebraic(a: &[f64], n: usize, k: usize) -> Vec<f64> {
-    let (lt, _) = power_top(a, n);
-    let (lb, _) = power_bot(a, n);
-    let c = 2.0 * (lt - lb).abs() + 1.0;
-
-    let mut deflated = a.to_vec();
-    let mut av = vec![0.0; n];
-    let mut out = Vec::with_capacity(k.min(n));
-    for _ in 0..k.min(n) {
-        let (_, v) = power_top(&deflated, n);
-        matvec(a, n, &v, &mut av);
-        out.push(dot(&v, &av));
-        for i in 0..n {
-            for j in 0..n {
-                deflated[i * n + j] -= c * v[i] * v[j];
+/// On return `d` holds the diagonal and `e[1..]` the sub-diagonal of the
+/// tridiagonal matrix; `z` is destroyed.
+fn tridiagonalise(z: &mut [f64], n: usize, d: &mut [f64], e: &mut [f64]) {
+    for i in (1..n).rev() {
+        let l = i - 1;
+        let mut h = 0.0;
+        if l > 0 {
+            let mut scale = 0.0;
+            for k in 0..i {
+                scale += z[i * n + k].abs();
             }
+            if scale == 0.0 {
+                e[i] = z[i * n + l];
+            } else {
+                for k in 0..i {
+                    z[i * n + k] /= scale;
+                    h += z[i * n + k] * z[i * n + k];
+                }
+                let mut f = z[i * n + l];
+                let g = if f >= 0.0 { -h.sqrt() } else { h.sqrt() };
+                e[i] = scale * g;
+                h -= f * g;
+                z[i * n + l] = f - g;
+                f = 0.0;
+                for j in 0..i {
+                    let mut g = 0.0;
+                    for k in 0..=j {
+                        g += z[j * n + k] * z[i * n + k];
+                    }
+                    for k in (j + 1)..i {
+                        g += z[k * n + j] * z[i * n + k];
+                    }
+                    e[j] = g / h;
+                    f += e[j] * z[i * n + j];
+                }
+                let hh = f / (h + h);
+                for j in 0..i {
+                    let f = z[i * n + j];
+                    let g = e[j] - hh * f;
+                    e[j] = g;
+                    for k in 0..=j {
+                        z[j * n + k] -= f * e[k] + g * z[i * n + k];
+                    }
+                }
+            }
+        } else {
+            e[i] = z[i * n + l];
         }
+        d[i] = h;
     }
-    out
+    e[0] = 0.0;
+    for i in 0..n {
+        d[i] = z[i * n + i];
+    }
 }
 
-/// `‖A‖_F² = Σᵢⱼ Aᵢⱼ² = Σᵢ λᵢ²` — the normaliser for the signature residual.
-fn frob_sq(a: &[f64]) -> f64 {
-    a.iter().map(|x| x * x).sum()
+/// Eigenvalues of a symmetric tridiagonal matrix by the QL algorithm
+/// with implicit shifts (Numerical Recipes `tqli`, eigenvector
+/// accumulation dropped).  `d` is the diagonal (overwritten with the
+/// eigenvalues, unordered), `e[1..]` the sub-diagonal (destroyed).
+fn ql_implicit(d: &mut [f64], e: &mut [f64], n: usize) {
+    for i in 1..n {
+        e[i - 1] = e[i];
+    }
+    e[n - 1] = 0.0;
+
+    for l in 0..n {
+        let mut iter = 0;
+        loop {
+            // Look for a single small sub-diagonal element to split the
+            // matrix; `m == l` means d[l] has converged.
+            let mut m = l;
+            while m + 1 < n {
+                let dd = d[m].abs() + d[m + 1].abs();
+                if e[m].abs() <= f64::EPSILON * dd {
+                    break;
+                }
+                m += 1;
+            }
+            if m == l {
+                break;
+            }
+            iter += 1;
+            if iter > QL_MAX_ITER {
+                break;
+            }
+
+            let mut g = (d[l + 1] - d[l]) / (2.0 * e[l]);
+            let mut r = g.hypot(1.0);
+            g = d[m] - d[l] + e[l] / (g + r.abs().copysign(g));
+            let mut s = 1.0;
+            let mut c = 1.0;
+            let mut p = 0.0;
+            // Plane rotations chased down the sub-diagonal from m−1 to l.
+            let mut underflowed = false;
+            for i in (l..m).rev() {
+                let f = s * e[i];
+                let b = c * e[i];
+                r = f.hypot(g);
+                e[i + 1] = r;
+                if r == 0.0 {
+                    // Recover from underflow: drop the element and restart.
+                    d[i + 1] -= p;
+                    e[m] = 0.0;
+                    underflowed = true;
+                    break;
+                }
+                s = f / r;
+                c = g / r;
+                g = d[i + 1] - p;
+                r = (d[i] - g) * s + 2.0 * c * b;
+                p = s * r;
+                d[i + 1] = g + p;
+                g = c * r - b;
+            }
+            if underflowed {
+                continue;
+            }
+            d[l] -= p;
+            e[l] = g;
+            e[m] = 0.0;
+        }
+    }
 }
 
 // ── Gram matrices ───────────────────────────────────────────────────────────
@@ -243,37 +285,46 @@ fn build_z_hyperbolic(d: &[f64], n: usize, r: f64) -> Vec<f64> {
 
 // ── Signature residuals ──────────────────────────────────────────────────────
 
-/// Fraction of `‖Z‖_F²` outside the best signature-respecting rank-`r`
-/// approximation, given the squared norms of the eigenvalues that model
-/// keeps.  `1` minus the captured energy, clamped to `[0, 1]`.
-fn signature_residual(total: f64, retained_sq: f64) -> f64 {
-    if total < 1e-300 {
+/// `Σ |λ|` over the residual eigenvalues, given the full ascending
+/// spectrum and which entries the signature retains.  `retain_low` is 1
+/// for the Lorentzian time axis (hyperbolic) and 0 for a PSD model
+/// (spherical); `retain_high` is the number of largest eigenvalues the
+/// model keeps.
+///
+/// This is the quantity Wilson et al. minimise over `r`.  It carries the
+/// units of `Z` (squared distance) and is extensive in `n`, so it is
+/// comparable across radii on one dataset but not across datasets — for
+/// that, divide by `n · d_max²` as [`WilsonFit::residual_normalised`] does.
+fn residual_from_spectrum(lambda: &[f64], retain_low: usize, retain_high: usize) -> f64 {
+    let n = lambda.len();
+    if n <= retain_low + retain_high {
         return 0.0;
     }
-    (1.0 - retained_sq / total).clamp(0.0, 1.0)
+    lambda[retain_low..n - retain_high]
+        .iter()
+        .map(|l| l.abs())
+        .sum()
 }
 
-/// Spherical residual `ρ(r)` for a `dim`-dimensional embedding.  A
-/// `dim`-sphere lives in Euclidean `R^{dim+1}`, so a conforming
-/// `Z_spherical` is PSD of rank `dim+1`: retain the `dim+1` most-positive
-/// eigenvalues.  Any negative eigenvalue violates the PSD model and so
-/// counts fully toward the residual.
+/// Spherical residual for a `dim`-dimensional embedding.  A `dim`-sphere
+/// lives in Euclidean `R^{dim+1}`, so a conforming `Z_spherical` is PSD
+/// of rank `dim+1`: retain the `dim+1` most-positive eigenvalues and sum
+/// `|λ|` over the remaining `n − (dim+1)` smallest.  Negative eigenvalues
+/// violate the PSD model and are exactly the ones this sum penalises.
 fn spherical_residual(d: &[f64], n: usize, dim: usize, r: f64) -> f64 {
     let z = build_z_spherical(d, n, r);
-    let retained: f64 = top_k_algebraic(&z, n, dim + 1).iter().map(|l| l * l).sum();
-    signature_residual(frob_sq(&z), retained)
+    residual_from_spectrum(&eigenvalues_symmetric(&z, n), 0, dim + 1)
 }
 
-/// Hyperbolic residual `ρ(r)` for a `dim`-dimensional embedding.  A
+/// Hyperbolic residual for a `dim`-dimensional embedding.  A
 /// `dim`-dimensional hyperbolic configuration lives in Lorentzian
 /// `R^{dim,1}`, so a conforming `Z_hyperbolic` has signature
-/// `(1 negative, dim positive)`: retain the most-negative eigenvalue
-/// plus the `dim` most-positive ones.
+/// `(1 negative, dim positive)`: retain `λ₁` (the most negative — the
+/// time axis) plus the `dim` most-positive, and sum `|λ|` over the
+/// `n − (dim+1)` eigenvalues sandwiched between them.
 fn hyperbolic_residual(d: &[f64], n: usize, dim: usize, r: f64) -> f64 {
     let z = build_z_hyperbolic(d, n, r);
-    let (lmin, _) = power_bot(&z, n);
-    let pos: f64 = top_k_algebraic(&z, n, dim).iter().map(|l| l * l).sum();
-    signature_residual(frob_sq(&z), lmin * lmin + pos)
+    residual_from_spectrum(&eigenvalues_symmetric(&z, n), 1, dim)
 }
 
 // ── Search over r ───────────────────────────────────────────────────────────
@@ -284,10 +335,21 @@ pub struct WilsonFit {
     /// Best-fit radius of curvature.  Sectional curvature is +1/r²
     /// (spherical) or −1/r² (hyperbolic).
     pub radius: f64,
-    /// Normalised signature residual `ρ ∈ [0, 1]` at `radius` — the
-    /// fraction of `‖Z‖_F²` outside the rank-`(dim+1)` signature
-    /// subspace.  Small ⇒ data conforms well to the model.
+    /// `Σ |λᵢ|` over the residual (non-signature) eigenvalues of
+    /// `Z(radius)` — the objective minimised to find `radius`.  Small ⇒
+    /// data conforms well to the model.  Carries the units of `Z`
+    /// (squared distance) and is extensive in `n`; use
+    /// [`WilsonFit::residual_normalised`] to compare across datasets.
     pub residual: f64,
+    /// `residual / (n · d_max²)` — the same misfit divided by two
+    /// constants of the dataset.  `d_max²` cancels the units of `Z` and
+    /// `n` cancels the extensivity of its spectrum, so this is comparable
+    /// across datasets of different diameter and sample size, and it is
+    /// what [`detect_geometry`] thresholds against
+    /// [`SPHERICAL_RESIDUAL_MAX`].  Neither factor depends on `r`, so
+    /// dividing by them cannot move `radius`.  `0` iff the data lies
+    /// exactly on the model manifold.
+    pub residual_normalised: f64,
     /// True if `radius` is pinned at the upper bound of the search range.
     /// For the spherical fit this is the flat-ward edge of the coverage
     /// window (`d_max/`[`SPHERICAL_ANGULAR_MIN`]): being pinned there
@@ -295,6 +357,20 @@ pub struct WilsonFit {
     /// data prefers a flatter model than a well-covered sphere — the
     /// signal [`detect_geometry`] uses to reject a spherical verdict.
     pub at_upper_bound: bool,
+}
+
+/// Divide a raw residual by the dataset constants `n · d_max²`, giving
+/// [`WilsonFit::residual_normalised`].  Degenerate input (`n = 0`, or all
+/// points coincident so `d_max = 0`) has no meaningful scale to divide by,
+/// and reporting an infinite misfit makes every threshold comparison reject
+/// — the safe direction.
+fn normalise_residual(residual: f64, n: usize, d_max: f64) -> f64 {
+    let scale = n as f64 * d_max * d_max;
+    if scale > 0.0 {
+        residual / scale
+    } else {
+        f64::INFINITY
+    }
 }
 
 /// Golden-section minimisation on `[a, b]`.  Returns `(r*, f(r*))`.
@@ -407,9 +483,9 @@ fn minimise_log_spaced(
     (best_r, best_res, at_upper)
 }
 
-/// Fit a `dim`-dimensional spherical model: find `r*` minimising the
-/// signature residual `ρ(r)` (energy outside the rank-`(dim+1)` PSD
-/// subspace of `Z_spherical(r)`).
+/// Fit a `dim`-dimensional spherical model: find `r*` minimising
+/// `Σ|λ|` over the eigenvalues of `Z_spherical(r)` outside its
+/// rank-`(dim+1)` PSD signature block.
 ///
 /// Search bounds — the **angular-coverage window**:
 ///
@@ -425,50 +501,78 @@ fn minimise_log_spaced(
 ///   labelled spherical anyway.
 ///
 /// The window is narrow — `[d_max/π, d_max/2.5]` ≈ `[0.318, 0.400]·d_max`
-/// — which sharpens the radius estimate *and* keeps the fit out of the
-/// large-`r` regime where the `‖Z‖_F²` normalisation drives ρ → 0 for
-/// *any* geometry (the identifiability artifact).  A fit pinned at the
-/// upper edge ([`WilsonFit::at_upper_bound`]) therefore means the data
-/// prefers a flatter sphere than the coverage threshold allows ⇒ not
-/// spherical; that flag, not a post-hoc angular comparison, is what
-/// [`detect_geometry`] reads.
+/// — which sharpens the radius estimate.  A fit pinned at the upper edge
+/// ([`WilsonFit::at_upper_bound`]) means the data prefers a flatter
+/// sphere than the coverage threshold allows ⇒ not spherical; that flag,
+/// not a post-hoc angular comparison, is what [`detect_geometry`] reads.
 pub fn fit_spherical(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
     let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
     let r_lower = d_max / PI;
     let r_upper = d_max / SPHERICAL_ANGULAR_MIN;
 
-    let mut residual_at = |r: f64| -> f64 { spherical_residual(distances, n, dim, r) };
+    let mut objective = |r: f64| -> f64 { spherical_residual(distances, n, dim, r) };
 
-    let (r_star, residual, at_upper) = minimise_log_spaced(r_lower, r_upper, 30, &mut residual_at);
+    let (r_star, _, at_upper) = minimise_log_spaced(r_lower, r_upper, 30, &mut objective);
+    let residual = spherical_residual(distances, n, dim, r_star);
     WilsonFit {
         radius: r_star,
         residual,
+        residual_normalised: normalise_residual(residual, n, d_max),
         at_upper_bound: at_upper,
     }
 }
 
-/// Fit a `dim`-dimensional hyperbolic model: find `r*` minimising the
-/// signature residual `ρ(r)` (energy outside the
-/// `(1 negative, dim positive)` subspace of `Z_hyperbolic(r)`).
+/// Smallest dimensionless curvature `κ = |K|·d_rms²` the hyperbolic search
+/// is asked to resolve; it sets the flat-ward edge of the window via
+/// `r_upper = d_rms/√κ_min` (see [`fit_hyperbolic`]).
+///
+/// A hyperbolic metric departs from the Euclidean one by a *relative*
+/// `κ/6` over the extent of the data — the circumference of a geodesic
+/// circle of radius `s` in `H²(r)` is
+/// `2πr·sinh(s/r) = 2πs(1 + (s/r)²/6 + …)`, and `(d_rms/r)² = κ`.  At
+/// `κ = 0.01` that is 0.17%: beyond this radius the model is flat to
+/// within a fifth of a percent across the whole sample, so searching
+/// further only fits Euclidean structure.
+pub const HYPERBOLIC_KAPPA_MIN: f64 = 0.01;
+
+/// Root-mean-square of the `n(n−1)` off-diagonal pairwise distances — the
+/// scale statistic the thesis's `κ = |K|·d_rms²` gauge is written in.
+fn rms_distance(distances: &[f64], n: usize) -> f64 {
+    if n < 2 {
+        return 0.0;
+    }
+    let sum_sq: f64 = distances.iter().map(|d| d * d).sum();
+    (sum_sq / (n as f64 * (n as f64 - 1.0))).sqrt()
+}
+
+/// Fit a `dim`-dimensional hyperbolic model: find `r*` minimising
+/// `Σ|λ|` over the eigenvalues of `Z_hyperbolic(r)` outside its
+/// `(1 negative, dim positive)` signature block.
 ///
 /// Search bounds: r ≥ d_max/20 (keeps `cosh(d_max/r) ≤ cosh(20) ≈ 2.4·10⁸`,
-/// safe from overflow) and r ≤ d_max.  Hyperbolic space is non-compact,
-/// so the geodesic-fits-on-space lower bound from the spherical case
-/// does not apply — but for r ≫ d_max, cosh(d/r) ≈ 1 and Z becomes
-/// rank-1 dominated, producing a deep but artifactual "Euclidean limit"
-/// minimum.  Capping at d_max excludes that regime and lets the genuine
-/// hyperbolic minimum (at r comparable to the curvature radius) win.
+/// safe from overflow) and `r ≤ d_rms/√`[`HYPERBOLIC_KAPPA_MIN`], i.e.
+/// `10·d_rms`.  Hyperbolic space is non-compact, so the
+/// geodesic-fits-on-space lower bound from the spherical case does not
+/// apply — but for r ≫ d_rms, `cosh(d/r) ≈ 1 + d²/2r²` and `Z` degenerates
+/// to the flat-limit kernel `−r²J − D²/2`, which no longer carries
+/// curvature information.  The cap is stated as a floor on the
+/// dimensionless curvature rather than as a multiple of `d_max` so that it
+/// makes the same demand of every dataset: `d_max` is an extreme order
+/// statistic that drifts with `n` and varies 30× across the thesis
+/// datasets, so `r ≤ d_max` silently imposes a `κ_min` that ranges over 7×.
 pub fn fit_hyperbolic(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
     let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
     let r_lower = d_max / 20.0;
-    let r_upper = d_max;
+    let r_upper = (rms_distance(distances, n) / HYPERBOLIC_KAPPA_MIN.sqrt()).max(r_lower);
 
-    let mut residual_at = |r: f64| -> f64 { hyperbolic_residual(distances, n, dim, r) };
+    let mut objective = |r: f64| -> f64 { hyperbolic_residual(distances, n, dim, r) };
 
-    let (r_star, residual, at_upper) = minimise_log_spaced(r_lower, r_upper, 30, &mut residual_at);
+    let (r_star, _, at_upper) = minimise_log_spaced(r_lower, r_upper, 30, &mut objective);
+    let residual = hyperbolic_residual(distances, n, dim, r_star);
     WilsonFit {
         radius: r_star,
         residual,
+        residual_normalised: normalise_residual(residual, n, d_max),
         at_upper_bound: at_upper,
     }
 }
@@ -490,14 +594,15 @@ pub struct GeometryVerdict {
     pub curvature: f64,
 }
 
-/// Diagnostic: spherical signature residual `ρ` at a single r for a
-/// `dim`-dimensional model.  Exposed so tests can plot the residual curve.
+/// Diagnostic: raw spherical signature residual `Σ|λ_res|` at a single r
+/// for a `dim`-dimensional model.  Exposed so tests can plot the residual
+/// curve; divide by `n · d_max²` to compare across datasets.
 pub fn spherical_residual_at(distances: &[f64], n: usize, dim: usize, r: f64) -> f64 {
     spherical_residual(distances, n, dim, r)
 }
 
-/// Diagnostic: hyperbolic signature residual `ρ` at a single r for a
-/// `dim`-dimensional model.
+/// Diagnostic: raw hyperbolic signature residual `Σ|λ_res|` at a single r
+/// for a `dim`-dimensional model.
 pub fn hyperbolic_residual_at(distances: &[f64], n: usize, dim: usize, r: f64) -> f64 {
     hyperbolic_residual(distances, n, dim, r)
 }
@@ -514,17 +619,90 @@ pub fn hyperbolic_residual_at(distances: &[f64], n: usize, dim: usize, r: f64) -
 /// after the fact.
 pub const SPHERICAL_ANGULAR_MIN: f64 = 2.5;
 
+/// Largest [`WilsonFit::residual_normalised`] a spherical fit may have and
+/// still be believed.  Wilson et al.: "a small residual indicates the
+/// data is close to spherical" — this is the threshold on that.
+///
+/// The angular-coverage window alone is not enough under the
+/// residual-eigenvalue criterion.  `Σ|λ_res|` is nearly flat across the
+/// window for data that is not spherical at all (the window spans only
+/// `r ∈ [d_max/π, d_max/2.5]`, a factor 1.26), so which edge the minimum
+/// lands on is decided by noise rather than by geometry — H² data can
+/// come to rest at the *lower* edge and pass an `at_upper_bound` test it
+/// should fail.  The residual is not flat at all, so it backstops that.
+///
+/// # Why this is gauged by `n · d_max²` and not by `‖Z‖_*`
+///
+/// The threshold used to sit on the nuclear-norm fraction, whose
+/// denominator moves with `r` (see the module docs).  That coupling makes
+/// the constant a function of [`SPHERICAL_ANGULAR_MIN`]: widening the
+/// window flat-ward admits larger `r*`, and a larger `r*` shrinks the
+/// fraction quadratically.  Measured on the three synthetic fixtures plus
+/// mnist / fashion_mnist / pbmc / wordnet_mammals, sweeping
+/// `SPHERICAL_ANGULAR_MIN` over `{2.5, 2.0, 1.5, 1.0, 0.5}`, the Euclidean
+/// fixture's fraction falls `8.0e-2 → 3.3e-2 → 1.1e-2 → 2.1e-3 → 1.3e-4`
+/// as its `r*` runs flat-ward — so at 2.0 it was already *under* the old
+/// 0.05 and the residual test had stopped rejecting flat data at all,
+/// silently handing the whole decision back to `at_upper_bound`.  Under
+/// `Σ|λ_res| / (n·d_max²)` the same fixture only falls
+/// `1.4e-2 → 8.5e-3 → 4.8e-3 → 2.1e-3 → 5.4e-4`, so the threshold and the
+/// window stay independent knobs.
+///
+/// # Choice of value
+///
+/// On that same sweep the genuinely spherical fixture scores `≤ 1e-5` at
+/// every window width and the nearest impostor is the Euclidean fixture,
+/// so any value in roughly `[1e-5, 2e-3]` gives identical verdicts on all
+/// seven datasets.  `1e-3` is the loose end of that band: ~100× above the
+/// true sphere's worst score, 13.5× below the nearest impostor at the
+/// current `SPHERICAL_ANGULAR_MIN = 2.5`, but only 2.1× below it if the
+/// window is widened to 1.0.
+///
+/// Being loose buys little, because the ordering forbids it: the closest
+/// real dataset (pbmc, `2.2e-2`) scores *worse* than the flat synthetic
+/// fixture, so no threshold admits a real dataset without also admitting
+/// Euclidean data.
+///
+/// # Noise tolerance (`examples/spherical_noise_sweep.rs`)
+///
+/// The exact `S²` fixture scores `~1e-7`, so the threshold's distance from
+/// it says nothing about slack on real data.  Sweeping noise gives the
+/// real answer, and it is severe.  Under multiplicative jitter on the
+/// geodesic distance matrix the residual is **linear in σ** with slope
+/// ≈ 2: `σ = 0.025% → 4.9e-4`, `0.05% → 9.9e-4`, `0.1% → 2.0e-3`,
+/// `0.5% → 1.1e-2`.  So the gate stops firing at about **0.05% distance
+/// noise**, and at ~0.7% the noisy sphere scores *worse than the flat
+/// fixture* — past which no threshold can separate them.
+///
+/// Worse, feeding **Euclidean (chordal) distances instead of geodesics**
+/// fails outright: perfect sphere, zero noise, ambient distances scores
+/// `4.8e-2`, already 3.3× worse than flat data, and the fit pins
+/// flat-ward.  `Z = r²cos(d/r)` genuinely requires geodesic `d`.
+///
+/// Two consequences.  First, this is a near-exact-manifold test, not a
+/// noisy-data test — the value of this constant is not what stops real
+/// datasets being labelled spherical.  Second, the ceiling on any
+/// loosening is the flat fixture's `1.5e-2`; raising `1e-3` to `1e-2`
+/// would buy roughly 10× noise tolerance (0.05% → 0.5%) but only while
+/// `SPHERICAL_ANGULAR_MIN` stays at 2.5, since the impostor floor is
+/// already `8.5e-3` at 2.0.
+pub const SPHERICAL_RESIDUAL_MAX: f64 = 1e-3;
+
 /// Detect curvature from a distance matrix.
 ///
 /// Decision rule:
 ///
-/// 1. **Spherical** if the spherical fit's minimum lies inside its
-///    angular-coverage window rather than pinned at the flat-ward upper
-///    edge (`!at_upper_bound`).  Because the window is exactly
-///    `[d_max/π, d_max/SPHERICAL_ANGULAR_MIN]`, this is still a literal
-///    coverage criterion (`d_max/r ≥ SPHERICAL_ANGULAR_MIN`) — but read
-///    off the fit's position, avoiding the large-`r` regime where ρ is a
-///    normalisation artifact rather than evidence of flatness.
+/// 1. **Spherical** if the spherical fit both *lands well* and *lands
+///    inside* its angular-coverage window:
+///    - its scale-free residual [`WilsonFit::residual_normalised`] is
+///      below [`SPHERICAL_RESIDUAL_MAX`] — the data really does collapse
+///      onto a rank-`(dim+1)` PSD Gram matrix at `r*`; and
+///    - the minimum is not pinned at the flat-ward upper edge
+///      (`!at_upper_bound`).  Because the window is exactly
+///      `[d_max/π, d_max/SPHERICAL_ANGULAR_MIN]`, this is a literal
+///      coverage criterion (`d_max/r ≥ SPHERICAL_ANGULAR_MIN`) read off
+///      the fit's position, rejecting data that prefers a small cap on a
+///      very large sphere.
 /// 2. **Hyperbolic** if the Gromov δ(k) growing-ball curve **saturates**
 ///    (its log–log tail slope is below
 ///    [`super::gromov_ball_curve::SATURATION_SLOPE_THRESHOLD`]).  This is the
@@ -546,7 +724,10 @@ pub fn detect_geometry(distances: &[f64], n: usize, dim: usize) -> GeometryVerdi
     // (or at the feasibility floor) means the data genuinely prefers a
     // well-covered sphere; a minimum pinned at the flat-ward upper edge
     // means it prefers a flatter model than the coverage threshold allows.
-    if !spherical.at_upper_bound {
+    // Landing in the window is necessary but not sufficient: the fit must
+    // also *be good there*, or non-spherical data merely settles on
+    // whichever edge of a flat objective happens to be lower.
+    if spherical.residual_normalised < SPHERICAL_RESIDUAL_MAX && !spherical.at_upper_bound {
         return GeometryVerdict {
             best_geometry: "spherical",
             curvature: 1.0 / (spherical.radius * spherical.radius),

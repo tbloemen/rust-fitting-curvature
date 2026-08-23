@@ -1,7 +1,7 @@
-//! Plot the Wilson signature residual against the radius of curvature
-//! `r` for the **real** datasets — the same normalised/unnormalised
-//! residual sweep used by `wilson_residual_curve.rs` for the synthetic
-//! fixtures (see that example for the method description and the theory).
+//! Plot the Wilson residual-eigenvalue misfit against the radius of
+//! curvature `r` for the **real** datasets — the same sweep used by
+//! `wilson_residual_curve.rs` for the synthetic fixtures (see that
+//! example for the method description and the theory).
 //!
 //! Datasets:
 //!   - `mnist` / `fashion_mnist` — 28×28 pixel vectors (Euclidean distances in pixel space).
@@ -9,9 +9,15 @@
 //!   - `wordnet_mammals` — the mammal subtree; distances are the graph shortest-path (BFS) matrix, already supplied by the loader.
 //!
 //! For each dataset we sweep `r` and record, for both the spherical
-//! (`r² cos(d/r)`) and hyperbolic (`−r² cosh(d/r)`) Gram models:
-//!   - the normalised residual `ρ(r) = E(r)/‖Z‖_F² ∈ [0,1]` the fitter minimises, and
-//!   - the raw energy `E(r) = ρ·‖Z‖_F²` (scaled by `d_max⁴` so datasets of different diameter overlay).
+//! (`r² cos(d/r)`) and hyperbolic (`−r² cosh(d/r)`) Gram models, the residual
+//! `Σ|λ_res|(r)` the fitter minimises (Wilson et al. 2014 §V.B), scaled by the
+//! dataset constants `n · d_max²` so datasets of different diameter and sample
+//! size overlay.  That is also the gauge `detect_geometry` thresholds, so a
+//! point read off the y-axis compares directly against `SPHERICAL_RESIDUAL_MAX`.
+//!
+//! Unlike the synthetic fixtures, none of these are exact constant-curvature
+//! manifolds, so the interesting question is not whether the residual reaches
+//! zero but how *deep* the notch at `r*` is relative to the flat-limit plateau.
 //!
 //! Vertical black lines mark the search windows each fit actually uses (spherical `[d_max/π, d_max/SPHERICAL_ANGULAR_MIN]`, hyperbolic `[d_max/20, d_max]`);
 //! a bold cross marks the fitted `r*`. The x-axis is `log₁₀(r/d_max)` so all datasets share a scale.
@@ -25,13 +31,13 @@
 //!     --example wilson_residual_curve_real -- path/to/data
 //! ```
 //!
-//! Writes four PNGs to `plots/` (normalised + raw, spherical + hyperbolic).
+//! Writes two PNGs to `plots/` (spherical + hyperbolic).
 
 use std::error::Error;
 
 use fitting_core::curvature_detection::{
     fit_hyperbolic, fit_spherical, hyperbolic_residual_at, spherical_residual_at, WilsonFit,
-    SPHERICAL_ANGULAR_MIN,
+    SPHERICAL_ANGULAR_MIN, SPHERICAL_RESIDUAL_MAX,
 };
 use fitting_core::data::{load_fashion_mnist, load_mnist, load_pbmc, load_wordnet_mammals};
 use fitting_core::matrices::compute_euclidean_distance_matrix;
@@ -46,8 +52,8 @@ const N_GRID: usize = 60;
 /// (`cosh(20) ≈ 2.4·10⁸`); upper bound reaches well into the flat limit.
 const R_LO_FRAC: f64 = 1.0 / 20.0;
 const R_HI_FRAC: f64 = 10.0;
-/// Floor for the raw-energy log axis, so exact-fit dips (ρ≈0) stay finite.
-const RAW_LOG_FLOOR: f64 = -6.0;
+/// Floor for the absolute-residual log axis, so near-exact fits stay finite.
+const ABS_LOG_FLOOR: f64 = -8.0;
 
 /// Search bounds as fractions of `d_max`, in `log₁₀(r/d_max)` units.
 fn spherical_bounds_x() -> (f64, f64) {
@@ -60,29 +66,33 @@ fn hyperbolic_bounds_x() -> (f64, f64) {
     ((1.0 / 20.0_f64).log10(), 1.0_f64.log10())
 }
 
-/// `‖Z(r)‖_F² = Σ_ij (kernel(d_ij, r))²` summed directly from the flat
-/// distance matrix (includes the diagonal, `cos(0)=cosh(0)=1`).
-fn frob_sq_z(distances: &[f64], r: f64, hyperbolic: bool) -> f64 {
-    let r2 = r * r;
-    let inv_r = 1.0 / r;
-    distances
-        .iter()
-        .map(|&d| {
-            let z = if hyperbolic {
-                r2 * (d * inv_r).cosh()
-            } else {
-                r2 * (d * inv_r).cos()
-            };
-            z * z
-        })
-        .sum()
+/// log₁₀ of the residual `Σ|λ_res|`, scaled by the dataset constants
+/// `n · d_max²`: `d_max²` carries the units of `Z` and `n` removes the
+/// extensivity of its spectrum (see `wilson_residual_curve.rs`).  Neither
+/// factor depends on `r`, so this is a pure vertical shift and leaves `r*`
+/// alone.  It matters more here than on the synthetic fixtures, since the
+/// loaders can return fewer than `N` points for some datasets.  Same gauge as
+/// [`WilsonFit::residual_normalised`], so the axis is directly comparable to
+/// [`SPHERICAL_RESIDUAL_MAX`].
+fn abs_log(absolute: f64, n: usize, d_max: f64) -> f64 {
+    (absolute / (n as f64 * d_max * d_max))
+        .max(10f64.powf(ABS_LOG_FLOOR))
+        .log10()
 }
 
-/// log₁₀ of raw misfit energy `E = ρ·‖Z‖_F²`, scaled by the constant
-/// `d_max⁴` so datasets of different diameter overlay.
-fn raw_log(rho: f64, distances: &[f64], r: f64, d_max: f64, hyperbolic: bool) -> f64 {
-    let energy = rho * frob_sq_z(distances, r, hyperbolic) / d_max.powi(4);
-    energy.max(10f64.powf(RAW_LOG_FLOOR)).log10()
+/// Why `detect_geometry` would or would not accept this spherical fit: it
+/// needs an interior `r*` (not pinned at the flat-ward bound) *and* a
+/// normalised residual below [`SPHERICAL_RESIDUAL_MAX`].  Both conditions
+/// matter — pbmc and wordnet_mammals land interior but miss the residual test.
+fn spherical_verdict(fit: &WilsonFit) -> &'static str {
+    match (
+        fit.at_upper_bound,
+        fit.residual_normalised < SPHERICAL_RESIDUAL_MAX,
+    ) {
+        (false, true) => "  [interior + low residual → spherical]",
+        (false, false) => "  [interior but residual too high → not spherical]",
+        (true, _) => "  [at upper bound → not spherical]",
+    }
 }
 
 /// Ensure a loaded dataset has a pairwise distance matrix: graph datasets
@@ -103,14 +113,12 @@ struct Case {
     d_max: f64,
     /// `log₁₀(r / d_max)` grid, shared shape across datasets.
     xs: Vec<f64>,
-    s_norm: Vec<f64>,
-    h_norm: Vec<f64>,
-    s_raw: Vec<f64>,
-    h_raw: Vec<f64>,
+    s_abs: Vec<f64>,
+    h_abs: Vec<f64>,
     fit_s: WilsonFit,
     fit_h: WilsonFit,
-    fit_s_raw: f64,
-    fit_h_raw: f64,
+    fit_s_abs: f64,
+    fit_h_abs: f64,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -145,25 +153,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         let step = (log_hi - log_lo) / (N_GRID - 1) as f64;
 
         let mut xs = Vec::with_capacity(N_GRID);
-        let (mut s_norm, mut h_norm) = (Vec::new(), Vec::new());
-        let (mut s_raw, mut h_raw) = (Vec::new(), Vec::new());
+        let (mut s_abs, mut h_abs) = (Vec::new(), Vec::new());
         for i in 0..N_GRID {
             let frac = (log_lo + i as f64 * step).exp(); // r / d_max
             let r = frac * d_max;
             xs.push(frac.log10());
 
-            let rs = spherical_residual_at(&d, n, DIM, r);
-            let rh = hyperbolic_residual_at(&d, n, DIM, r);
-            s_norm.push(rs);
-            h_norm.push(rh);
-            s_raw.push(raw_log(rs, &d, r, d_max, false));
-            h_raw.push(raw_log(rh, &d, r, d_max, true));
+            s_abs.push(abs_log(spherical_residual_at(&d, n, DIM, r), n, d_max));
+            h_abs.push(abs_log(hyperbolic_residual_at(&d, n, DIM, r), n, d_max));
         }
 
         let fit_s = fit_spherical(&d, n, DIM);
         let fit_h = fit_hyperbolic(&d, n, DIM);
-        let fit_s_raw = raw_log(fit_s.residual, &d, fit_s.radius, d_max, false);
-        let fit_h_raw = raw_log(fit_h.residual, &d, fit_h.radius, d_max, true);
+        let fit_s_abs = abs_log(fit_s.residual, n, d_max);
+        let fit_h_abs = abs_log(fit_h.residual, n, d_max);
 
         cases.push(Case {
             name,
@@ -171,14 +174,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             n,
             d_max,
             xs,
-            s_norm,
-            h_norm,
-            s_raw,
-            h_raw,
+            s_abs,
+            h_abs,
             fit_s,
             fit_h,
-            fit_s_raw,
-            fit_h_raw,
+            fit_s_abs,
+            fit_h_abs,
         });
     }
 
@@ -191,18 +192,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         let s = &case.fit_s;
         let h = &case.fit_h;
         println!(
-            "  spherical fit:  r* = {:.4}  (r*/d_max = {:.3}, angular d_max/r* = {:.3}),  ρ = {:.4}{}",
+            "  spherical fit:  r* = {:.4}  (r*/d_max = {:.3}, angular d_max/r* = {:.3}),  Σ|λ_res| = {:.4e}  (normalised {:.3e}){}",
             s.radius,
             s.radius / case.d_max,
             case.d_max / s.radius,
             s.residual,
-            if s.at_upper_bound { "  [at upper bound → not spherical]" } else { "  [interior → spherical]" },
+            s.residual_normalised,
+            spherical_verdict(s),
         );
         println!(
-            "  hyperbolic fit: r* = {:.4}  (r*/d_max = {:.3}),  ρ = {:.4}{}",
+            "  hyperbolic fit: r* = {:.4}  (r*/d_max = {:.3}),  Σ|λ_res| = {:.4e}  (normalised {:.3e}){}",
             h.radius,
             h.radius / case.d_max,
             h.residual,
+            h.residual_normalised,
             if h.at_upper_bound {
                 "  [at upper bound → flat]"
             } else {
@@ -217,50 +220,29 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     plot(
         "plots/wilson_residual_real_spherical.png",
-        "Wilson spherical residual ρ(r) — real datasets (normalised)",
-        "normalised residual ρ(r)",
-        (0.0, 1.05),
+        "Wilson spherical fit — residual eigenvalues, real datasets",
+        "log10( sum |lambda_res| / (n * d_max^2) )",
+        y_range_raw(&cases, |c| &c.s_abs),
         &cases,
-        |c| &c.s_norm,
-        |c| ((c.fit_s.radius / c.d_max).log10(), c.fit_s.residual),
+        |c| &c.s_abs,
+        |c| ((c.fit_s.radius / c.d_max).log10(), c.fit_s_abs),
         sph_b,
     )?;
     plot(
         "plots/wilson_residual_real_hyperbolic.png",
-        "Wilson hyperbolic residual ρ(r) — real datasets (normalised)",
-        "normalised residual ρ(r)",
-        (0.0, 1.05),
+        "Wilson hyperbolic fit — residual eigenvalues, real datasets",
+        "log10( sum |lambda_res| / (n * d_max^2) )",
+        y_range_raw(&cases, |c| &c.h_abs),
         &cases,
-        |c| &c.h_norm,
-        |c| ((c.fit_h.radius / c.d_max).log10(), c.fit_h.residual),
+        |c| &c.h_abs,
+        |c| ((c.fit_h.radius / c.d_max).log10(), c.fit_h_abs),
         hyp_b,
     )?;
-    plot(
-        "plots/wilson_residual_real_spherical_raw.png",
-        "Wilson spherical raw energy E(r) — real datasets (unnormalised)",
-        "log10( raw energy E(r) / d_max^4 )",
-        y_range_raw(&cases, |c| &c.s_raw),
-        &cases,
-        |c| &c.s_raw,
-        |c| ((c.fit_s.radius / c.d_max).log10(), c.fit_s_raw),
-        sph_b,
-    )?;
-    plot(
-        "plots/wilson_residual_real_hyperbolic_raw.png",
-        "Wilson hyperbolic raw energy E(r) — real datasets (unnormalised)",
-        "log10( raw energy E(r) / d_max^4 )",
-        y_range_raw(&cases, |c| &c.h_raw),
-        &cases,
-        |c| &c.h_raw,
-        |c| ((c.fit_h.radius / c.d_max).log10(), c.fit_h_raw),
-        hyp_b,
-    )?;
-
-    println!("\nWrote 4 plots to plots/ (real datasets: normalised + raw, spherical + hyperbolic)");
+    println!("\nWrote 2 plots to plots/ (real datasets: spherical + hyperbolic)");
     Ok(())
 }
 
-/// Padded [min, max] over a raw-energy series across all datasets.
+/// Padded [min, max] over a log-residual series across all datasets.
 fn y_range_raw(cases: &[Case], series: impl Fn(&Case) -> &Vec<f64>) -> (f64, f64) {
     let lo = cases
         .iter()

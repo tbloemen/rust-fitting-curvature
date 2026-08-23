@@ -58,7 +58,15 @@ struct DetectionRecord {
 
     // ── Wilson spherical fit ──
     sph_radius: f64,
+    /// `Σ|λ|` over the residual (non-signature) eigenvalues of `Z(r*)` — the
+    /// objective the fit minimises. Carries the units of `Z` (squared distance)
+    /// and is extensive in `n`, so compare `sph_residual_normalised` across
+    /// datasets, not this.
     sph_residual: f64,
+    /// `sph_residual / (n · d_max²)` — the same misfit divided by two constants
+    /// of the dataset, which is what makes it comparable across datasets. A
+    /// spherical verdict needs this below `SPHERICAL_RESIDUAL_MAX`.
+    sph_residual_normalised: f64,
     sph_at_upper_bound: bool,
     /// Angular extent `d_max / r*`; a spherical verdict needs this ≳ 2.5.
     sph_angular_extent: f64,
@@ -69,7 +77,15 @@ struct DetectionRecord {
 
     // ── Wilson hyperbolic fit ──
     hyp_radius: f64,
+    /// `Σ|λ|` over the residual eigenvalues of `Z(r*)`; see `sph_residual`.
     hyp_residual: f64,
+    /// `hyp_residual / (n · d_max²)`; see `sph_residual_normalised`. Nothing
+    /// thresholds this — the hyperbolic verdict comes from the δ(k) test — but
+    /// it is the field to compare across datasets.
+    hyp_residual_normalised: f64,
+    /// Whether `r*` sits at the flat-ward cap `d_rms/√HYPERBOLIC_KAPPA_MIN`.
+    /// When set, `hyp_kappa` is exactly `HYPERBOLIC_KAPPA_MIN` and carries no
+    /// information: the fit wanted a flatter model than the search allows.
     hyp_at_upper_bound: bool,
     /// `-1/r*²` — curvature implied by the hyperbolic radius.
     hyp_curvature: f64,
@@ -134,6 +150,7 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
 
         sph_radius: spherical.radius,
         sph_residual: spherical.residual,
+        sph_residual_normalised: spherical.residual_normalised,
         sph_at_upper_bound: spherical.at_upper_bound,
         sph_angular_extent: if spherical.radius > 0.0 {
             d_max / spherical.radius
@@ -145,6 +162,7 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
 
         hyp_radius: hyperbolic.radius,
         hyp_residual: hyperbolic.residual,
+        hyp_residual_normalised: hyperbolic.residual_normalised,
         hyp_at_upper_bound: hyperbolic.at_upper_bound,
         hyp_curvature,
         hyp_kappa: hyp_curvature.abs() * d_rms_sq,
@@ -158,17 +176,17 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
     };
 
     println!(
-        "detect '{}' (n={}): {} | K={:+.4} κ_data={:.4} | sph r*={:.3} ρ={:.3}{} | hyp r*={:.3} ρ={:.3} | δ-slope={:.3} sat_δ={:.3} hyp={}",
+        "detect '{}' (n={}): {} | K={:+.4} κ_data={:.4} | sph r*={:.3} res={:.3e}{} | hyp r*={:.3} res={:.3e} | δ-slope={:.3} sat_δ={:.3} hyp={}",
         dataset_name,
         n,
         record.geometry_detected,
         record.curvature,
         record.kappa_data,
         record.sph_radius,
-        record.sph_residual,
+        record.sph_residual_normalised,
         if record.sph_at_upper_bound { "(pinned)" } else { "" },
         record.hyp_radius,
-        record.hyp_residual,
+        record.hyp_residual_normalised,
         record.delta_tail_slope,
         record.delta_saturated,
         record.delta_is_hyperbolic,
