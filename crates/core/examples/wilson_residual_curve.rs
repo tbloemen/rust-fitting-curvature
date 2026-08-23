@@ -1,30 +1,39 @@
-//! Plot the Wilson signature residual against the radius of curvature
-//! `r`, both **normalised** and **unnormalised**, to visualise how the
-//! radius fit works and where it degenerates.
+//! Plot the Wilson residual-eigenvalue misfit against the radius of
+//! curvature `r`, to visualise how the radius fit works and where it
+//! degenerates.
 //!
 //! For each candidate radius `r` we build the constant-curvature Gram
 //! matrix `Z(r)` (spherical `r² cos(d/r)`, hyperbolic `−r² cosh(d/r)`)
-//! and measure the energy lying outside the rank-`(dim+1)` signature
-//! subspace a genuine `dim`-dimensional constant-curvature configuration
-//! is allowed to occupy.  Two objectives:
+//! and sum `|λ|` over the eigenvalues lying outside the signature block a
+//! genuine `dim`-dimensional constant-curvature configuration is allowed
+//! to occupy (Wilson et al. 2014, §V.B: `r* = arg min_r Σ_{i≤n−m} |λᵢ|`).
 //!
-//!   - **normalised** `ρ(r) = E(r) / ‖Z(r)‖_F² ∈ [0,1]` — what the fitter
-//!     minimises (`r* = arg min_r ρ`).
-//!   - **raw** `E(r) = ρ(r)·‖Z(r)‖_F²` — the unnormalised misfit energy.
+//! Plotted as `log₁₀(Σ|λ_res| / (n·d_max²))`: the residual spans many
+//! decades, `Z` carries units of squared distance, and its eigenvalues are
+//! extensive in `n`, so dividing by the dataset constants `n·d_max²`
+//! overlays datasets of different diameter *and* different sample size.
+//! Neither factor depends on `r`, so this is a pure vertical shift — the
+//! curve shape, and hence `r*`, is the paper's objective untouched.  It is
+//! also the quantity `detect_geometry` thresholds
+//! (`SPHERICAL_RESIDUAL_MAX`), so the plot and the gate read the same axis.
 //!
 //! Sweeping `r` exposes the theory:
 //!
 //!   - `r ≈ R` (true radius): `Z(R)` collapses to the geometry-mandated
-//!     rank+signature, so `ρ` dips toward 0 — the signal the fit locates.
-//!   - large `r`: `Z(r) ≈ r²J + K − K'` recovers the classical-MDS
-//!     kernel `K` (Wilson et al. 2014, eqs. 24–26), so the normalised
-//!     residual → 0 for *every* geometry because the `r²J` spike inflates
-//!     `‖Z‖_F² ∼ n²r⁴` — the identifiability boundary.
-//!   - the **raw** energy removes that denominator, so the spurious
-//!     large-`r` attractor disappears — but for the bounded `cos` kernel
-//!     it reintroduces the mirror artifact: `E(r) ∼ r⁴ → 0` as `r → 0`,
-//!     biasing the raw objective toward small `r` (high curvature).  This
-//!     `r⁴` bias is exactly why the fit normalises by `‖Z‖_F²`.
+//!     rank+signature, so both curves plunge toward 0 — a sharp, deep,
+//!     unmistakable notch, since on exact manifold data the residual
+//!     eigenvalues are pure numerical noise.  This is the signal the fit
+//!     locates.
+//!   - large `r`: `Z(r) → ±r²J ∓ D²/2` recovers the classical-MDS kernel
+//!     (Wilson et al. 2014, eqs. 24–26) and stops carrying curvature
+//!     information.  The residual **plateaus** at a finite value there
+//!     rather than vanishing — unlike the old `‖Z‖_F²`-normalised
+//!     objective, whose denominator grew like `n²r⁴` and so drove the
+//!     residual to 0 for *every* geometry, manufacturing a spurious
+//!     large-`r` attractor.
+//!   - small `r` (spherical only): `cos(d/r)` oscillates once distances
+//!     wrap past `πr`, so the residual climbs steeply — which is why the
+//!     search floor sits at the feasibility bound `d_max/π`.
 //!
 //! Vertical black lines mark the search bounds each fit actually uses
 //! (spherical `[d_max/π, d_max/SPHERICAL_ANGULAR_MIN]`, hyperbolic
@@ -40,7 +49,7 @@
 //!     --example wilson_residual_curve
 //! ```
 //!
-//! Writes four PNGs to `plots/` (normalised + raw, spherical + hyperbolic).
+//! Writes two PNGs to `plots/` (spherical + hyperbolic).
 
 use std::error::Error;
 
@@ -62,8 +71,9 @@ const N_GRID: usize = 70;
 /// (`cosh(20) ≈ 2.4·10⁸`); upper bound reaches well into the flat limit.
 const R_LO_FRAC: f64 = 1.0 / 20.0;
 const R_HI_FRAC: f64 = 10.0;
-/// Floor for the raw-energy log axis, so exact-fit dips (ρ≈0) stay finite.
-const RAW_LOG_FLOOR: f64 = -6.0;
+/// Floor for the absolute-residual log axis, so exact-fit dips
+/// (`Σ|λ_res|` ≈ 0 on manifold data) stay finite.
+const ABS_LOG_FLOOR: f64 = -8.0;
 
 /// Search bounds as fractions of `d_max`, in `log₁₀(r/d_max)` units.
 fn spherical_bounds_x() -> (f64, f64) {
@@ -76,30 +86,22 @@ fn hyperbolic_bounds_x() -> (f64, f64) {
     ((1.0 / 20.0_f64).log10(), 1.0_f64.log10())
 }
 
-/// `‖Z(r)‖_F² = Σ_ij (kernel(d_ij, r))²` summed directly from the flat
-/// distance matrix (includes the diagonal, `cos(0)=cosh(0)=1`).
-fn frob_sq_z(distances: &[f64], r: f64, hyperbolic: bool) -> f64 {
-    let r2 = r * r;
-    let inv_r = 1.0 / r;
-    distances
-        .iter()
-        .map(|&d| {
-            let z = if hyperbolic {
-                r2 * (d * inv_r).cosh()
-            } else {
-                r2 * (d * inv_r).cos()
-            };
-            z * z
-        })
-        .sum()
-}
-
-/// log₁₀ of raw misfit energy `E = ρ·‖Z‖_F²`, scaled by the constant
-/// `d_max⁴` so datasets of different diameter overlay (this is a fixed
-/// rescale — unlike `ρ` it does **not** divide out the r-dependent scale).
-fn raw_log(rho: f64, distances: &[f64], r: f64, d_max: f64, hyperbolic: bool) -> f64 {
-    let energy = rho * frob_sq_z(distances, r, hyperbolic) / d_max.powi(4);
-    energy.max(10f64.powf(RAW_LOG_FLOOR)).log10()
+/// log₁₀ of the residual `Σ|λ_res|`, scaled by the constant `n · d_max²` —
+/// the same gauge as [`WilsonFit::residual_normalised`], so a point read off
+/// this axis can be compared directly against `SPHERICAL_RESIDUAL_MAX`.
+///
+/// `d_max²` carries the units of `Z` (squared distance) and `n` removes the
+/// extensivity: `Z(r)` is a kernel matrix, so `λᵢ(Z)/n` converges to the
+/// eigenvalues of the corresponding integral operator and *every* eigenvalue
+/// grows like `n` (exactly: `tr Z = ±n r²`).  `Σ|λ_res| / n` is therefore the
+/// Monte-Carlo estimate of a population quantity, and the curves overlay
+/// across sample sizes as well as diameters.  Both factors are properties of
+/// the dataset, not of `r`, so this is a fixed vertical shift that leaves the
+/// paper's objective, and hence `r*`, untouched.
+fn abs_log(absolute: f64, n: usize, d_max: f64) -> f64 {
+    (absolute / (n as f64 * d_max * d_max))
+        .max(10f64.powf(ABS_LOG_FLOOR))
+        .log10()
 }
 
 struct Case {
@@ -108,14 +110,12 @@ struct Case {
     d_max: f64,
     /// `log₁₀(r / d_max)` grid, shared shape across datasets.
     xs: Vec<f64>,
-    s_norm: Vec<f64>,
-    h_norm: Vec<f64>,
-    s_raw: Vec<f64>,
-    h_raw: Vec<f64>,
+    s_abs: Vec<f64>,
+    h_abs: Vec<f64>,
     fit_s: WilsonFit,
     fit_h: WilsonFit,
-    fit_s_raw: f64,
-    fit_h_raw: f64,
+    fit_s_abs: f64,
+    fit_h_abs: f64,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -135,39 +135,32 @@ fn main() -> Result<(), Box<dyn Error>> {
         let step = (log_hi - log_lo) / (N_GRID - 1) as f64;
 
         let mut xs = Vec::with_capacity(N_GRID);
-        let (mut s_norm, mut h_norm) = (Vec::new(), Vec::new());
-        let (mut s_raw, mut h_raw) = (Vec::new(), Vec::new());
+        let (mut s_abs, mut h_abs) = (Vec::new(), Vec::new());
         for i in 0..N_GRID {
             let frac = (log_lo + i as f64 * step).exp(); // r / d_max
             let r = frac * d_max;
             xs.push(frac.log10());
 
-            let rs = spherical_residual_at(d, N, DIM, r);
-            let rh = hyperbolic_residual_at(d, N, DIM, r);
-            s_norm.push(rs);
-            h_norm.push(rh);
-            s_raw.push(raw_log(rs, d, r, d_max, false));
-            h_raw.push(raw_log(rh, d, r, d_max, true));
+            s_abs.push(abs_log(spherical_residual_at(d, N, DIM, r), N, d_max));
+            h_abs.push(abs_log(hyperbolic_residual_at(d, N, DIM, r), N, d_max));
         }
 
         let fit_s = fit_spherical(d, N, DIM);
         let fit_h = fit_hyperbolic(d, N, DIM);
-        let fit_s_raw = raw_log(fit_s.residual, d, fit_s.radius, d_max, false);
-        let fit_h_raw = raw_log(fit_h.residual, d, fit_h.radius, d_max, true);
+        let fit_s_abs = abs_log(fit_s.residual, N, d_max);
+        let fit_h_abs = abs_log(fit_h.residual, N, d_max);
 
         cases.push(Case {
             name,
             color: *color,
             d_max,
             xs,
-            s_norm,
-            h_norm,
-            s_raw,
-            h_raw,
+            s_abs,
+            h_abs,
             fit_s,
             fit_h,
-            fit_s_raw,
-            fit_h_raw,
+            fit_s_abs,
+            fit_h_abs,
         });
     }
 
@@ -177,18 +170,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         let s = &case.fit_s;
         let h = &case.fit_h;
         println!(
-            "  spherical fit:  r* = {:.4}  (r*/d_max = {:.3}, angular d_max/r* = {:.3}),  ρ = {:.4}{}",
+            "  spherical fit:  r* = {:.4}  (r*/d_max = {:.3}, angular d_max/r* = {:.3}),  Σ|λ_res| = {:.4e}  (normalised {:.3e}){}",
             s.radius,
             s.radius / case.d_max,
             case.d_max / s.radius,
             s.residual,
+            s.residual_normalised,
             if s.at_upper_bound { "  [at upper bound → flat]" } else { "" },
         );
         println!(
-            "  hyperbolic fit: r* = {:.4}  (r*/d_max = {:.3}),  ρ = {:.4}{}",
+            "  hyperbolic fit: r* = {:.4}  (r*/d_max = {:.3}),  Σ|λ_res| = {:.4e}  (normalised {:.3e}){}",
             h.radius,
             h.radius / case.d_max,
             h.residual,
+            h.residual_normalised,
             if h.at_upper_bound {
                 "  [at upper bound → flat]"
             } else {
@@ -203,50 +198,29 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     plot(
         "plots/wilson_residual_spherical.png",
-        "Wilson spherical residual ρ(r) — normalised",
-        "normalised residual ρ(r)",
-        (0.0, 1.05),
+        "Wilson spherical fit — residual eigenvalues (the fitted objective)",
+        "log10( sum |lambda_res| / (n * d_max^2) )",
+        y_range_raw(&cases, |c| &c.s_abs),
         &cases,
-        |c| &c.s_norm,
-        |c| ((c.fit_s.radius / c.d_max).log10(), c.fit_s.residual),
+        |c| &c.s_abs,
+        |c| ((c.fit_s.radius / c.d_max).log10(), c.fit_s_abs),
         sph_b,
     )?;
     plot(
         "plots/wilson_residual_hyperbolic.png",
-        "Wilson hyperbolic residual ρ(r) — normalised",
-        "normalised residual ρ(r)",
-        (0.0, 1.05),
+        "Wilson hyperbolic fit — residual eigenvalues (the fitted objective)",
+        "log10( sum |lambda_res| / (n * d_max^2) )",
+        y_range_raw(&cases, |c| &c.h_abs),
         &cases,
-        |c| &c.h_norm,
-        |c| ((c.fit_h.radius / c.d_max).log10(), c.fit_h.residual),
+        |c| &c.h_abs,
+        |c| ((c.fit_h.radius / c.d_max).log10(), c.fit_h_abs),
         hyp_b,
     )?;
-    plot(
-        "plots/wilson_residual_spherical_raw.png",
-        "Wilson spherical raw energy E(r) — unnormalised",
-        "log10( raw energy E(r) / d_max^4 )",
-        y_range_raw(&cases, |c| &c.s_raw),
-        &cases,
-        |c| &c.s_raw,
-        |c| ((c.fit_s.radius / c.d_max).log10(), c.fit_s_raw),
-        sph_b,
-    )?;
-    plot(
-        "plots/wilson_residual_hyperbolic_raw.png",
-        "Wilson hyperbolic raw energy E(r) — unnormalised",
-        "log10( raw energy E(r) / d_max^4 )",
-        y_range_raw(&cases, |c| &c.h_raw),
-        &cases,
-        |c| &c.h_raw,
-        |c| ((c.fit_h.radius / c.d_max).log10(), c.fit_h_raw),
-        hyp_b,
-    )?;
-
-    println!("\nWrote 4 plots to plots/ (normalised + raw, spherical + hyperbolic)");
+    println!("\nWrote 2 plots to plots/ (spherical + hyperbolic)");
     Ok(())
 }
 
-/// Padded [min, max] over a raw-energy series across all datasets.
+/// Padded [min, max] over a log-residual series across all datasets.
 fn y_range_raw(cases: &[Case], series: impl Fn(&Case) -> &Vec<f64>) -> (f64, f64) {
     let lo = cases
         .iter()

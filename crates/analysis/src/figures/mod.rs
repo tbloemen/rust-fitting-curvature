@@ -417,8 +417,15 @@ pub fn padded_range(values: &[f64], frac: f64) -> Option<(f64, f64)> {
     let lo = finite.iter().cloned().fold(f64::INFINITY, f64::min);
     let hi = finite.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     // A degenerate range still needs a non-zero span for the axis to build.
-    let pad = if hi > lo {
-        (hi - lo) * frac
+    //
+    // "Degenerate" has to be judged *relatively*: values that agree to all but
+    // the last ulp satisfy `hi > lo`, so an exact test leaves a span of ~1e-16
+    // and the panel magnifies float rounding noise to full width. Exp 3's
+    // hyperbolic κ_data hit exactly this once every dataset pinned at the
+    // Wilson cap and hyp_kappa became the constant HYPERBOLIC_KAPPA_MIN.
+    let span = hi - lo;
+    let pad = if span > 1e-12 * lo.abs().max(hi.abs()).max(1.0) {
+        span * frac
     } else {
         lo.abs().max(1.0) * 0.05
     };
