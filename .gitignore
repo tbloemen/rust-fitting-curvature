@@ -1,6 +1,7 @@
 target
 node_modules
 AGENTS.md
+CLAUDE.md
 plots
 results
 __pycache__
