@@ -495,6 +495,33 @@ pub fn generate_hyperbolic_shells(n_samples: usize, seed: u64) -> DataPoints {
 // reduce to the same manifolds as the generators above.
 // ---------------------------------------------------------------------------
 
+/// Uniform random samples in [-1,1]^dim (flat Euclidean reference dataset).
+/// Labels by quadrant of the first two coordinates (0-3), matching the 2D
+/// generator: using all 2^dim orthants would give one label per handful of
+/// points at dim=10 and make the label-based metrics meaningless.
+pub fn generate_hd_uniform_grid(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
+    assert!(dim >= 2, "dim must be at least 2");
+    let mut rng = Rng::new(seed);
+    let mut x = Vec::with_capacity(n_samples * dim);
+    let mut labels = Vec::with_capacity(n_samples);
+
+    for _ in 0..n_samples {
+        let coords: Vec<f64> = (0..dim).map(|_| rng.uniform() * 2.0 - 1.0).collect();
+        let label = if coords[0] >= 0.0 { 2 } else { 0 } + if coords[1] >= 0.0 { 1 } else { 0 };
+        x.extend_from_slice(&coords);
+        labels.push(label);
+    }
+
+    let distances = euclidean_distances(&x, n_samples, dim);
+    DataPoints {
+        x,
+        n_points: n_samples,
+        ambient_dim: dim,
+        labels,
+        distances,
+    }
+}
+
 /// Uniform on S^(dim-1): sample dim normals and normalize.
 /// Labels by sign of first coordinate (two hemispheres).
 pub fn generate_hd_sphere(n_samples: usize, dim: usize, seed: u64) -> DataPoints {

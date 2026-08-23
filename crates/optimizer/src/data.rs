@@ -32,9 +32,9 @@ impl Dataset {
             "antipodal_clusters" => generate_hd_antipodal_clusters(n_samples, 10, seed),
             "tree" => generate_hd_tree(n_samples, 10, seed),
             "hyperbolic_shells" => generate_hd_hyperbolic_shells(n_samples, 10, seed),
-            // Euclidean synthetic (thesis §datasets: "a lattice in R²"), unlike the
-            // curved synthetics above this is 2D, not lifted to dim=10.
-            "grid" => generate_uniform_grid(n_samples, seed),
+            // Euclidean synthetic: a lattice in R^10, matching the ambient
+            // dimension of the curved synthetics above.
+            "grid" => generate_hd_uniform_grid(n_samples, 10, seed),
             _ => {
                 return Err(format!(
                     "Unknown dataset '{name}'.\n  \
