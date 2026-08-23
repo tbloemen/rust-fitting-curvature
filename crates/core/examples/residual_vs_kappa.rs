@@ -96,7 +96,11 @@ fn golden(a: f64, b: f64, f: &mut dyn FnMut(f64) -> f64) -> (f64, f64) {
             break;
         }
     }
-    if f1 < f2 { (r1, f1) } else { (r2, f2) }
+    if f1 < f2 {
+        (r1, f1)
+    } else {
+        (r2, f2)
+    }
 }
 
 /// Coarse log grid over the window, golden-refine every local minimum, keep the
@@ -125,7 +129,11 @@ fn fit_window(lo: f64, hi: f64, f: &mut dyn FnMut(f64) -> f64) -> (f64, f64, boo
     for &i in &mins {
         let a = gr[i.saturating_sub(1)];
         let b = gr[(i + 1).min(G - 1)];
-        let (r, v) = if a < b { golden(a, b, f) } else { (gr[i], gv[i]) };
+        let (r, v) = if a < b {
+            golden(a, b, f)
+        } else {
+            (gr[i], gv[i])
+        };
         if v < bv {
             bv = v;
             br = r;
@@ -170,13 +178,7 @@ struct Case {
     pinned: bool,
 }
 
-fn build_case(
-    name: &'static str,
-    color: RGBColor,
-    control: bool,
-    d: &[f64],
-    n: usize,
-) -> Case {
+fn build_case(name: &'static str, color: RGBColor, control: bool, d: &[f64], n: usize) -> Case {
     let dm = d_max_of(d);
     let dr = d_rms_of(d, n);
     let gauge = n as f64 * dm * dm;
@@ -360,12 +362,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         "\n  kappa*        = curvature the Wilson fit reports (pinned => it is the cap position)"
     );
     println!("  kappa_gromov  = curvature from the saturated Gromov delta; only USED where gromov=hyperbolic");
-    println!("  slope         = dlog(residual)/dlog(kappa) across the window: 1 = residual tracks the");
+    println!(
+        "  slope         = dlog(residual)/dlog(kappa) across the window: 1 = residual tracks the"
+    );
     println!("                  curvature mismatch (exactly flat data); ~0 = curvature explains none of it");
     println!("  leverage      = R(kappa_floor)/R(kappa_cap): total swing of the residual over the window");
     println!("  slope@cap     = local dlog(R)/dlog(kappa) at the cap (kappa_cap -> 3*kappa_cap):");
-    println!("                  how hard the objective is still pushing flat-ward where the bound binds");
-    let pinned: Vec<f64> = cases.iter().filter(|c| c.pinned).map(|c| c.kappa_star).collect();
+    println!(
+        "                  how hard the objective is still pushing flat-ward where the bound binds"
+    );
+    let pinned: Vec<f64> = cases
+        .iter()
+        .filter(|c| c.pinned)
+        .map(|c| c.kappa_star)
+        .collect();
     let (klo, khi) = (
         pinned.iter().cloned().fold(f64::INFINITY, f64::min),
         pinned.iter().cloned().fold(0.0_f64, f64::max),
@@ -454,7 +464,10 @@ fn plot(
     };
     chart.draw_series(std::iter::once(Text::new(
         band_label,
-        (cap_band.0 + 0.03, y_range.0 + 0.965 * (y_range.1 - y_range.0)),
+        (
+            cap_band.0 + 0.03,
+            y_range.0 + 0.965 * (y_range.1 - y_range.0),
+        ),
         ("sans-serif", 14).into_font().color(&RGBColor(60, 90, 150)),
     )))?;
 

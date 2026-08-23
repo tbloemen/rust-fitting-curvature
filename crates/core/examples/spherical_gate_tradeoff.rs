@@ -471,10 +471,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         )))?;
     }
     c1.draw_series(std::iter::once(PathElement::new(
-        vec![
-            (SPHERICAL_ANGULAR_MIN, -8.5),
-            (SPHERICAL_ANGULAR_MIN, 0.0),
-        ],
+        vec![(SPHERICAL_ANGULAR_MIN, -8.5), (SPHERICAL_ANGULAR_MIN, 0.0)],
         BLACK.mix(0.35).stroke_width(1),
     )))?;
     // Legend, drawn in its own strip in backend pixels so it never overlaps a
@@ -502,7 +499,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         "safe ceiling (lowest impostor".to_string(),
         Mark::Line(RGBColor(140, 140, 140), 2),
     ));
-    entries.push(("  of any kind: admits E2)".to_string(), Mark::Line(WHITE, 0)));
+    entries.push((
+        "  of any kind: admits E2)".to_string(),
+        Mark::Line(WHITE, 0),
+    ));
     entries.push(("".to_string(), Mark::Line(WHITE, 0)));
     entries.push((
         "safe on residual alone".to_string(),
@@ -572,7 +572,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         .draw()?;
 
     for (curve, tag, col) in [
-        (&metric, "metric noise (jittered geodesics)", RGBColor(200, 0, 0)),
+        (
+            &metric,
+            "metric noise (jittered geodesics)",
+            RGBColor(200, 0, 0),
+        ),
         (
             &ambient_geo,
             "ambient noise, geodesic-corrected",
