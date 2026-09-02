@@ -12,7 +12,9 @@ use fitting_core::synthetic_data::{generate_uniform_hyperbolic, generate_uniform
 /// xoshiro-free deterministic filler — these matrices only need to be
 /// reproducible, not statistically good.
 fn lcg(seed: &mut u64) -> f64 {
-    *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    *seed = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
     ((*seed >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
 }
 
@@ -165,5 +167,8 @@ fn works_on_a_hyperbolic_z_matrix() {
     // eigenvalue, two positive, and a vanishing middle.
     let middle: f64 = e.values[1..n - 2].iter().map(|v| v.abs()).sum();
     assert!(e.values[0] < -1.0, "expected a Lorentzian time axis");
-    assert!(middle < 1e-7, "H² Z-matrix middle should vanish, got {middle}");
+    assert!(
+        middle < 1e-7,
+        "H² Z-matrix middle should vanish, got {middle}"
+    );
 }

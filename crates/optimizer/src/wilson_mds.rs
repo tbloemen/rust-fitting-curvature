@@ -192,10 +192,7 @@ pub fn run_wilson_mds(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
     {
         Ok(f) => f,
         Err(e) => {
-            eprintln!(
-                "wilson-mds: failed to open {} for append: {e}",
-                args.output
-            );
+            eprintln!("wilson-mds: failed to open {} for append: {e}", args.output);
             return;
         }
     };

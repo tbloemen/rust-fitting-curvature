@@ -40,9 +40,7 @@
 //! reconstruction runs *once* at an already-fitted radius, never inside the
 //! radius search.
 
-use super::signature::{
-    build_z_euclidean, build_z_hyperbolic, build_z_spherical, eigen_symmetric,
-};
+use super::signature::{build_z_euclidean, build_z_hyperbolic, build_z_spherical, eigen_symmetric};
 use crate::manifolds::create_manifold;
 
 /// A configuration recovered from a fitted constant-curvature model.

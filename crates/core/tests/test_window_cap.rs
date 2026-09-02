@@ -58,7 +58,10 @@ fn the_fitted_radius_stays_within_the_window() {
     let n = 120;
     for (name, d) in [
         ("grid", grid_distances(n, 7)),
-        ("hyperbolic", generate_uniform_hyperbolic(n, 7, 3.0).distances),
+        (
+            "hyperbolic",
+            generate_uniform_hyperbolic(n, 7, 3.0).distances,
+        ),
     ] {
         let d_max = d.iter().cloned().fold(0.0_f64, f64::max);
         let fit = fit_hyperbolic(&d, n, DIM);

@@ -105,7 +105,10 @@ fn reconstructions_satisfy_the_manifold_constraint() {
     for i in 0..n {
         let row = &rec.points[i * rec.ambient_dim..(i + 1) * rec.ambient_dim];
         let norm = row.iter().map(|v| v * v).sum::<f64>().sqrt();
-        assert!((norm - 1.0).abs() < 1e-9, "point {i} off the sphere: {norm}");
+        assert!(
+            (norm - 1.0).abs() < 1e-9,
+            "point {i} off the sphere: {norm}"
+        );
     }
 
     let hyp = generate_uniform_hyperbolic(n, 7, 3.0);
@@ -129,10 +132,14 @@ fn discarded_mass_equals_the_wilson_residual() {
             generate_uniform_hyperbolic(100, 3, 3.0).distances,
             100,
         ),
-        ("grid", {
-            let g = generate_uniform_grid(100, 3);
-            compute_euclidean_distance_matrix(&g.x, 100, g.ambient_dim)
-        }, 100),
+        (
+            "grid",
+            {
+                let g = generate_uniform_grid(100, 3);
+                compute_euclidean_distance_matrix(&g.x, 100, g.ambient_dim)
+            },
+            100,
+        ),
     ];
 
     for (name, d, n) in cases {
@@ -177,7 +184,10 @@ fn mismatched_models_still_produce_finite_coordinates() {
         reconstruct_hyperbolic(&sphere.distances, n, DIM, 4.0),
         reconstruct_euclidean(&sphere.distances, n, DIM),
     ] {
-        assert!(rec.points.iter().all(|v| v.is_finite()), "non-finite coords");
+        assert!(
+            rec.points.iter().all(|v| v.is_finite()),
+            "non-finite coords"
+        );
         assert!(rec.discarded_mass.is_finite() && rec.discarded_mass > 0.0);
         assert!(rec.pairwise_distances(n).iter().all(|v| v.is_finite()));
         assert!(rec.distances_from_origin(n).iter().all(|v| v.is_finite()));

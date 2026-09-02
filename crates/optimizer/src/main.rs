@@ -9,11 +9,11 @@ use crate::bayes::run_bayes;
 use crate::cli::Args;
 use crate::data::Dataset;
 use crate::detect::run_detect;
-use crate::wilson_mds::run_wilson_mds;
 use crate::evaluate::Evaluator;
 use crate::pareto::run_pareto;
 use crate::random::run_random;
 use crate::scan::run_scan;
+use crate::wilson_mds::run_wilson_mds;
 
 mod bayes;
 mod cli;
