@@ -113,9 +113,20 @@ impl TrialRecord {
         }
     }
 
-    /// Dimensionless embedding curvature κ = |K|·R_rms² for one trial.
+    /// Dimensionless embedding curvature κ = |K|·R_rms² for one trial
+    /// (thesis `@eq:kappa` at the embedding gauge, `4methods.typ` §gauge-fixing).
+    ///
+    /// `|K|` prefers `curvature_magnitude` and falls back to `|curvature|`.
+    /// The fallback is not cosmetic: **Euclidean sweeps write `curvature: 0.0`
+    /// and omit `curvature_magnitude` entirely** (0 of 1032 trials carry it in
+    /// `all_off_grid_euclidean.jsonl`, while every hyperbolic trial does), so
+    /// without it every Euclidean cell reports no κ at all. Euclidean space has
+    /// `K = 0`, hence `κ = 0` exactly on any gauge — that is a value, not a
+    /// missing measurement, and a table that prints `---` for it is wrong.
     pub fn kappa(&self) -> Option<f64> {
-        let k = self.curvature_magnitude?;
+        let k = self
+            .curvature_magnitude
+            .or_else(|| self.curvature.map(f64::abs))?;
         let r = self.r_rms?;
         if !(k.is_finite() && r.is_finite()) {
             return None;

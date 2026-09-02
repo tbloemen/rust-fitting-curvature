@@ -17,6 +17,11 @@
 //!   scalar (`gromov_hyperbolicity`), still used by the histogram tests.
 //! - [`gromov_ball_curve`] — the NeTS-proposal growing-ball δ(k) curve
 //!   and the saturation-based [`gromov_ball_curve::detect_hyperbolic`].
+//! - [`reconstruct`] — coordinates from a fitted radius.  Each `Z(r)` the
+//!   signature criterion scores is the Gram matrix of the model it tests
+//!   for, so its retained eigen-block *is* an embedding; this turns a
+//!   [`signature::WilsonFit`] into points that can be measured by the same
+//!   DR-quality metrics a t-SNE embedding is.
 //!
 //! The signature and growing-ball APIs are re-exported here for
 //! convenience (`curvature_detection::detect_geometry`,
@@ -28,7 +33,11 @@ pub mod gromov;
 pub mod gromov_ball_curve;
 pub mod histogram;
 pub mod old_detection;
+pub mod reconstruct;
 pub mod signature;
 
 pub use gromov_ball_curve::*;
+pub use reconstruct::{
+    reconstruct_euclidean, reconstruct_hyperbolic, reconstruct_spherical, Reconstruction,
+};
 pub use signature::*;

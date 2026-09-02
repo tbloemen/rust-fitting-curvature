@@ -124,7 +124,7 @@ impl Figure for KappaScatter<'_> {
                 .build_cartesian_2d((x_lo..x_hi).log_scale(), (y_lo..y_hi).log_scale())?;
 
             style_mesh!(chart.configure_mesh())
-                .x_desc("data-intrinsic κ_data = |K|·d_rms²")
+                .x_desc("detected κ_data = |K|·R_rms²")
                 .y_desc(if col == 0 {
                     "median Pareto-front κ = |K|·R_rms²"
                 } else {
@@ -164,37 +164,50 @@ impl Figure for KappaScatter<'_> {
 
 // ─── unanchored vs rms_anchored κ ─────────────────────────────────────────────
 
+/// One dataset's unanchored-vs-`rms_anchored` κ histogram.
+///
+/// Deliberately **one figure per dataset** rather than one wide strip: the
+/// panels go into the report individually, arranged as the text needs. That
+/// fixes the sizing too — each SVG is drawn small (`SIZE`) with report-sized
+/// type, so that at ~53 mm wide (a third of A4's text block, i.e. a 3×3 grid)
+/// the labels land near 7 pt instead of being scaled into illegibility.
 pub struct RmsAnchored<'a> {
     cells: &'a CellMap,
     n: usize,
-    datasets: Vec<String>,
+    dataset: String,
 }
 
 impl<'a> RmsAnchored<'a> {
-    pub fn new(cells: &'a CellMap, n: usize) -> Self {
-        let datasets = all_datasets()
+    /// One figure per dataset that has hyperbolic runs at this N.
+    pub fn panels(cells: &'a CellMap, n: usize) -> Vec<Self> {
+        all_datasets()
             .into_iter()
             .filter(|ds| {
                 cells
                     .keys()
-                    .any(|k| k.dataset == *ds && k.geometry == "hyperbolic")
+                    .any(|k| k.dataset == *ds && k.n == n && k.geometry == "hyperbolic")
             })
-            .map(|s| s.to_string())
-            .collect();
-        Self { cells, n, datasets }
+            .map(|ds| Self {
+                cells,
+                n,
+                dataset: ds.to_string(),
+            })
+            .collect()
     }
 
-    /// Whether any `rms_anchored` run exists at all; the figure is meaningless
-    /// without one.
+    /// Whether any `rms_anchored` run exists for this dataset; the figure is
+    /// meaningless without one.
     pub fn has_anchored(&self) -> bool {
-        self.cells.keys().any(|k| k.setting == "rms_anchored")
+        self.cells
+            .keys()
+            .any(|k| k.setting == "rms_anchored" && k.dataset == self.dataset && k.n == self.n)
     }
 
-    /// (unanchored κ, anchored κ) over the hyperbolic fronts of one dataset.
-    fn kappas(&self, dataset: &str) -> (Vec<f64>, Vec<f64>) {
+    /// (unanchored κ, anchored κ) over the hyperbolic fronts of this dataset.
+    fn kappas(&self) -> (Vec<f64>, Vec<f64>) {
         let (mut unanchored, mut anchored) = (Vec::new(), Vec::new());
         for (key, recs) in self.cells {
-            if key.dataset != dataset || key.n != self.n || key.geometry != "hyperbolic" {
+            if key.dataset != self.dataset || key.n != self.n || key.geometry != "hyperbolic" {
                 continue;
             }
             let ks = pareto_front_records(recs)
@@ -213,25 +226,22 @@ impl<'a> RmsAnchored<'a> {
 
 impl Figure for RmsAnchored<'_> {
     fn name(&self) -> String {
-        format!("exp3_rms_anchored_kappa_N{}", self.n)
+        format!("exp3_rms_anchored_kappa_{}_N{}", self.dataset, self.n)
     }
 
+    /// Small on purpose — see the struct doc. 300×260 px is ~79 mm at 96 dpi,
+    /// so a third of an A4 text block scales it by ~0.67 and the 13 px tick
+    /// labels come out around 6.5 pt.
     fn size(&self) -> (u32, u32) {
-        (320 * self.datasets.len().max(1) as u32, 420)
+        (300, 260)
     }
 
     fn draw<DB: DrawingBackend>(&self, root: &DrawingArea<DB, Shift>) -> Res
     where
         DB::ErrorType: 'static,
     {
-        let root = root.titled(
-            &format!(
-                "Experiment 3 — unanchored vs rms_anchored κ (hyperbolic, N={})",
-                self.n
-            ),
-            ("sans-serif", 18).into_font().color(&OK_BLACK),
-        )?;
-        let (legend, grid) = root.split_vertically(30);
+        // Each panel stands alone in the report, so it carries its own legend.
+        let (legend, area) = root.split_vertically(24);
         draw_legend(
             &legend,
             &[
@@ -240,37 +250,38 @@ impl Figure for RmsAnchored<'_> {
             ],
         )?;
 
-        let panels = grid.split_evenly((1, self.datasets.len().max(1)));
-        for (j, dataset) in self.datasets.iter().enumerate() {
-            let (unanchored, anchored) = self.kappas(dataset);
-            let all: Vec<f64> = unanchored.iter().chain(&anchored).copied().collect();
-            let (x_lo, x_hi) = padded_range(&all, 0.05).unwrap_or((0.0, 1.0));
+        let (unanchored, anchored) = self.kappas();
+        let all: Vec<f64> = unanchored.iter().chain(&anchored).copied().collect();
+        let (x_lo, x_hi) = padded_range(&all, 0.05).unwrap_or((0.0, 1.0));
 
-            let un = histogram(&unanchored, x_lo, x_hi, 20);
-            let an = histogram(&anchored, x_lo, x_hi, 20);
-            let y_hi = un
-                .iter()
-                .chain(&an)
-                .map(|b| b.density)
-                .fold(0.0f64, f64::max)
-                .max(1e-9)
-                * 1.1;
+        let un = histogram(&unanchored, x_lo, x_hi, 20);
+        let an = histogram(&anchored, x_lo, x_hi, 20);
+        let y_hi = un
+            .iter()
+            .chain(&an)
+            .map(|b| b.density)
+            .fold(0.0f64, f64::max)
+            .max(1e-9)
+            * 1.1;
 
-            let mut chart = ChartBuilder::on(&panels[j])
-                .margin(8)
-                .caption(dataset, ("sans-serif", 14).into_font())
-                .x_label_area_size(42)
-                .y_label_area_size(if j == 0 { 60 } else { 30 })
-                .build_cartesian_2d(x_lo..x_hi, 0.0..y_hi)?;
-            style_mesh!(chart.configure_mesh())
-                .x_desc("κ")
-                .y_desc(if j == 0 { "density" } else { "" })
-                .x_labels(4)
-                .draw()?;
+        let mut chart = ChartBuilder::on(&area)
+            .margin(8)
+            .caption(
+                format!("{} (N={})", self.dataset, self.n),
+                ("sans-serif", 15).into_font().color(&OK_BLACK),
+            )
+            .x_label_area_size(40)
+            .y_label_area_size(58)
+            .build_cartesian_2d(x_lo..x_hi, 0.0..y_hi)?;
+        style_mesh!(chart.configure_mesh())
+            .x_desc("κ")
+            .y_desc("density")
+            .x_labels(4)
+            .y_labels(5)
+            .draw()?;
 
-            draw_histogram(&mut chart, &un, OK_BLUE, 0.5)?;
-            draw_histogram(&mut chart, &an, OK_ORANGE, 0.5)?;
-        }
+        draw_histogram(&mut chart, &un, OK_BLUE, 0.5)?;
+        draw_histogram(&mut chart, &an, OK_ORANGE, 0.5)?;
         Ok(())
     }
 }

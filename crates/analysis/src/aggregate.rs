@@ -49,7 +49,11 @@ pub struct CellRecord {
 }
 
 /// One (n, geometry, setting, dataset, region) row: its R2, the baseline's, and ΔR2.
-#[derive(Debug, Clone, Serialize)]
+///
+/// `Deserialize` as well as `Serialize` because the figures read this table back
+/// from its JSONL: the ΔR2 bar charts plot the rows this stage writes rather
+/// than recomputing them, so the charts and the thesis table cannot disagree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeltaRow {
     pub n: usize,
     pub geometry: String,

@@ -9,6 +9,7 @@ use crate::bayes::run_bayes;
 use crate::cli::Args;
 use crate::data::Dataset;
 use crate::detect::run_detect;
+use crate::wilson_mds::run_wilson_mds;
 use crate::evaluate::Evaluator;
 use crate::pareto::run_pareto;
 use crate::random::run_random;
@@ -28,6 +29,7 @@ mod resume;
 mod scan;
 mod search_space;
 mod trial_result;
+mod wilson_mds;
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
@@ -110,9 +112,13 @@ fn main() {
             "Starting curvature detection: {} datasets, exporting κ_data diagnostics (no embedding fit).",
             dataset_names.len(),
         ),
+        "wilson-mds" => println!(
+            "Starting Wilson-MDS scoring: {} datasets × 3 arms, reconstructing each constant-curvature fit and scoring it on the ten Pareto objectives (no t-SNE run).",
+            dataset_names.len(),
+        ),
         other => {
             eprintln!(
-                "Unknown --mode '{}'. Use 'random', 'scan', 'bayes', 'pareto', or 'detect'.",
+                "Unknown --mode '{}'. Use 'random', 'scan', 'bayes', 'pareto', 'detect', or 'wilson-mds'.",
                 other
             );
             std::process::exit(1);
@@ -186,6 +192,7 @@ fn main() {
                     "bayes" => run_bayes(&dataset_name, &args, evaluator, &mp, n_threads),
                     "pareto" => run_pareto(&dataset_name, &args, evaluator, &mp, n_threads),
                     "detect" => run_detect(&dataset_name, &args, &evaluator),
+                    "wilson-mds" => run_wilson_mds(&dataset_name, &args, &evaluator),
                     _ => run_random(&dataset_name, &args, evaluator, &mp),
                 },
             }

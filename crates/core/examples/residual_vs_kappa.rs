@@ -1,18 +1,24 @@
 //! The hyperbolic signature residual against the **dimensionless curvature**
-//! `κ = |K|·d_rms²` of the model being tested, instead of against the radius `r`.
+//! `κ = |K|·R_rms²` of the model being tested, instead of against the radius `r`.
 //!
-//! Since `κ_model = (d_rms/r)²`, sweeping `r` is sweeping `κ`, and the search
-//! window `[d_max/20, d_rms/√κ_min]` becomes a `κ` interval.  The flat-ward end
-//! is `κ_min = `[`HYPERBOLIC_KAPPA_MIN`] by construction — the same demand for
-//! every dataset — which is the point of stating the cap in `κ` rather than as
-//! a multiple of `d_max`.  Plotting in this gauge makes two things visible that
+//! `R_rms` is the RMS geodesic radius of the configuration a candidate radius
+//! implies, so each sweep point is reconstructed to place it on the κ axis —
+//! the same gauge the fits, `--mode detect` and the embeddings all report.
+//! Sweeping `r` still sweeps `κ` monotonically (a larger radius is a flatter
+//! model), and the search window becomes a `κ` interval whose flat-ward end is
+//! `κ_min = `[`HYPERBOLIC_KAPPA_MIN`] by construction — the same demand for
+//! every dataset, which is the point of stating the cap in `κ` rather than as a
+//! multiple of `d_max`.  Plotting in this gauge makes two things visible that
 //! the `r` axis hides:
 //!
-//! * an **exact H² manifold** has a sharp interior minimum at its true `κ` — the
-//!   Wilson fit is a good radius estimator when the model is actually true;
-//! * every **thesis dataset** instead descends monotonically across the whole
-//!   window, so the minimiser stops at the cap and the reported curvature is
-//!   just `κ_min` — the bound, not a measurement.
+//! * a genuine two-dimensional hyperbolic object has a sharp interior minimum at
+//!   its true `κ` — the Wilson fit is a good radius estimator when the model is
+//!   actually true.  `tree 2D` is the case that shows it;
+//! * every **other thesis dataset** instead descends monotonically across the
+//!   whole window, so the minimiser stops at the cap and the reported curvature
+//!   is just `κ_min` — the bound, not a measurement.  That includes `tree 10D`,
+//!   which is the same tree lifted into H⁹: the interior minimum is a property
+//!   of matching the fitted `dim`, not of the shape.
 //!
 //! The Gromov δ(k) verdict is printed alongside: the datasets it calls
 //! hyperbolic behave exactly like the ones it does not, which is the empirical
@@ -29,23 +35,15 @@
 
 use std::error::Error;
 
+mod common;
+use common::{d_max_of, d_rms_of, map_parallel, CommonArgs, Fixture, DIM};
+
 use fitting_core::curvature_detection::{
-    detect_hyperbolic, hyperbolic_residual_at, HYPERBOLIC_KAPPA_MIN,
-};
-use fitting_core::data::{load_fashion_mnist, load_mnist, load_pbmc, load_wordnet_mammals};
-use fitting_core::matrices::compute_euclidean_distance_matrix;
-use fitting_core::synthetic_data::{
-    generate_hd_antipodal_clusters, generate_hd_hyperbolic_shells, generate_hd_sphere,
-    generate_hd_tree, generate_uniform_grid, generate_uniform_hyperbolic, DataPoints,
+    detect_hyperbolic, fit_hyperbolic, hyperbolic_residual_at, reconstruct_hyperbolic,
+    HYPERBOLIC_KAPPA_MIN,
 };
 use plotters::prelude::*;
 
-const N: usize = 400;
-const SEED: u64 = 42;
-const DIM: usize = 2;
-/// Ambient dimension the curved synthetics are lifted into, matching
-/// `optimizer::Dataset::load_synthetic`.
-const HD: usize = 10;
 const N_GRID: usize = 70;
 /// Radius sweep as a multiple of `d_max`, spanning well past both search bounds.
 const R_LO_FRAC: f64 = 1.0 / 50.0;
@@ -53,101 +51,15 @@ const R_HI_FRAC: f64 = 50.0;
 /// Floor for the log residual axis, so the near-exact control stays finite.
 const LOG_FLOOR: f64 = -8.0;
 
-fn distances_for(d: &DataPoints) -> Vec<f64> {
-    if !d.distances.is_empty() {
-        d.distances.clone()
-    } else {
-        compute_euclidean_distance_matrix(&d.x, d.n_points, d.ambient_dim)
-    }
-}
-
-fn d_max_of(d: &[f64]) -> f64 {
-    d.iter().cloned().fold(0.0_f64, f64::max)
-}
-
-fn d_rms_of(d: &[f64], n: usize) -> f64 {
-    let s: f64 = d.iter().map(|x| x * x).sum();
-    (s / (n as f64 * (n as f64 - 1.0))).sqrt()
-}
-
-// ── The production minimiser, mirrored so the plotted r* is the real one ────
-
-fn golden(a: f64, b: f64, f: &mut dyn FnMut(f64) -> f64) -> (f64, f64) {
-    let phi = 0.618_033_988_749_894_9_f64;
-    let (mut a, mut b) = (a, b);
-    let mut r1 = a + (1.0 - phi) * (b - a);
-    let mut r2 = a + phi * (b - a);
-    let (mut f1, mut f2) = (f(r1), f(r2));
-    for _ in 0..50 {
-        if f1 < f2 {
-            b = r2;
-            r2 = r1;
-            f2 = f1;
-            r1 = a + (1.0 - phi) * (b - a);
-            f1 = f(r1);
-        } else {
-            a = r1;
-            r1 = r2;
-            f1 = f2;
-            r2 = a + phi * (b - a);
-            f2 = f(r2);
-        }
-        if (b - a) / (a + b).max(1e-12) < 1e-7 {
-            break;
-        }
-    }
-    if f1 < f2 {
-        (r1, f1)
-    } else {
-        (r2, f2)
-    }
-}
-
-/// Coarse log grid over the window, golden-refine every local minimum, keep the
-/// best — `signature::minimise_log_spaced`.  Returns `(r*, value, pinned)`.
-fn fit_window(lo: f64, hi: f64, f: &mut dyn FnMut(f64) -> f64) -> (f64, f64, bool) {
-    const G: usize = 30;
-    let step = (hi.ln() - lo.ln()) / (G - 1) as f64;
-    let gr: Vec<f64> = (0..G).map(|i| (lo.ln() + i as f64 * step).exp()).collect();
-    let gv: Vec<f64> = gr.iter().map(|&r| f(r)).collect();
-    let mut mins: Vec<usize> = Vec::new();
-    if gv[0] < gv[1] {
-        mins.push(0);
-    }
-    for i in 1..G - 1 {
-        if gv[i] < gv[i - 1] && gv[i] < gv[i + 1] {
-            mins.push(i);
-        }
-    }
-    if gv[G - 1] < gv[G - 2] {
-        mins.push(G - 1);
-    }
-    if mins.is_empty() {
-        mins.push(0);
-    }
-    let (mut br, mut bv, mut bi) = (gr[mins[0]], gv[mins[0]], mins[0]);
-    for &i in &mins {
-        let a = gr[i.saturating_sub(1)];
-        let b = gr[(i + 1).min(G - 1)];
-        let (r, v) = if a < b {
-            golden(a, b, f)
-        } else {
-            (gr[i], gv[i])
-        };
-        if v < bv {
-            bv = v;
-            br = r;
-            bi = i;
-        }
-    }
-    (br, bv, bi == G - 1)
-}
+// The production minimiser used to be mirrored here so the plotted `r*` would
+// be the real one.  It is called directly instead: `fit_hyperbolic` now solves
+// its flat-ward cap as a fixed point on `R_rms`, which a local copy would have
+// to reproduce exactly, and a copy that drifts plots a fit the detector never
+// made.  Calling the real thing makes the agreement structural.
 
 struct Case {
     name: &'static str,
     color: RGBColor,
-    /// Drawn heavier: the exact-manifold control.
-    control: bool,
     d_max: f64,
     d_rms: f64,
     gromov_hyperbolic: bool,
@@ -178,28 +90,53 @@ struct Case {
     pinned: bool,
 }
 
-fn build_case(name: &'static str, color: RGBColor, control: bool, d: &[f64], n: usize) -> Case {
+fn build_case(fx: &Fixture) -> Case {
+    let (d, n) = (fx.distances.as_slice(), fx.n);
     let dm = d_max_of(d);
     let dr = d_rms_of(d, n);
     let gauge = n as f64 * dm * dm;
     let norm = |r: f64| hyperbolic_residual_at(d, n, DIM, r) / gauge;
 
-    // Production window: [d_max/20, d_rms/√κ_min] with κ_min = HYPERBOLIC_KAPPA_MIN.
-    let cap = dr / HYPERBOLIC_KAPPA_MIN.sqrt();
-    let mut obj = |r: f64| hyperbolic_residual_at(d, n, DIM, r);
-    let (r_star, _, pinned) = fit_window(dm / 20.0, cap, &mut obj);
+    // κ of the model at radius `r`, on the reported gauge: |K|·R_rms² measured
+    // on the configuration that radius implies.
+    let kappa_at = |r: f64| reconstruct_hyperbolic(d, n, DIM, r).kappa(n);
+
+    // Take the window and the fit from production rather than mirroring them —
+    // the cap is now a fixed-point solve, and a local copy would silently
+    // desync the plotted r* from the one the detector actually uses.
+    let fit = fit_hyperbolic(d, n, DIM);
+    let (r_star, pinned) = (fit.radius, fit.at_upper_bound);
+    // The flat-ward cap is where κ falls to the floor, so invert it through κ.
+    let cap = {
+        let mut r = r_star;
+        for _ in 0..12 {
+            let next = reconstruct_hyperbolic(d, n, DIM, r).r_rms(n) / HYPERBOLIC_KAPPA_MIN.sqrt();
+            if !next.is_finite() || next <= 0.0 {
+                break;
+            }
+            let moved = (next - r).abs() / r;
+            r = next;
+            if moved < 1e-3 {
+                break;
+            }
+        }
+        r.max(dm / 20.0)
+    };
 
     // Residual at the two ends of the search window, in κ.
     let (r_cap, r_floor) = (norm(cap), norm(dm / 20.0));
-    let (k_cap, k_floor) = ((dr / cap).powi(2), (dr / (dm / 20.0)).powi(2));
+    let (k_cap, k_floor) = (kappa_at(cap), kappa_at(dm / 20.0));
     let slope = (r_floor.log10() - r_cap.log10()) / (k_floor.log10() - k_cap.log10());
     // Local slope where the constraint binds: κ_cap → 3·κ_cap, i.e. r = cap → cap/√3.
     let r_near = norm(cap / 3.0_f64.sqrt());
     let slope_at_cap = (r_near.log10() - r_cap.log10()) / 3.0_f64.log10();
 
     let hv = detect_hyperbolic(d, n);
+    // The δ estimate names a curvature but no radius-fitting procedure, so its
+    // κ is gauged on the hyperbolic configuration that curvature implies.
     let kappa_gromov = if hv.saturated_delta > 1e-12 {
-        ((1.0 + 2.0_f64.sqrt()).ln() / hv.saturated_delta).powi(2) * dr * dr
+        let k = ((1.0 + 2.0_f64.sqrt()).ln() / hv.saturated_delta).powi(2);
+        kappa_at(1.0 / k.sqrt())
     } else {
         f64::INFINITY
     };
@@ -222,16 +159,15 @@ fn build_case(name: &'static str, color: RGBColor, control: bool, d: &[f64], n: 
         .iter()
         .map(|&r| {
             (
-                (dr / r).powi(2).log10(),
+                kappa_at(r).max(1e-300).log10(),
                 norm(r).max(10f64.powf(LOG_FLOOR)).log10(),
             )
         })
         .collect();
 
     Case {
-        name,
-        color,
-        control,
+        name: fx.name,
+        color: RGBColor(fx.color.0, fx.color.1, fx.color.2),
         d_max: dm,
         d_rms: dr,
         gromov_hyperbolic: hv.is_hyperbolic,
@@ -248,85 +184,23 @@ fn build_case(name: &'static str, color: RGBColor, control: bool, d: &[f64], n: 
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let data_root = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "www/public/data".to_string());
-
+    let args = CommonArgs::parse(&[])?;
     std::fs::create_dir_all("plots")?;
 
-    let mut cases: Vec<Case> = Vec::new();
-
-    // Control: an exact H² manifold of curvature radius 1, so its true κ is d_rms².
-    let h2 = generate_uniform_hyperbolic(N, SEED, 5.0);
-    let dh = distances_for(&h2);
-    let true_kappa = d_rms_of(&dh, N).powi(2);
-    cases.push(build_case("H2 exact (control)", BLACK, true, &dh, N));
-
-    let synth: [(&'static str, RGBColor, DataPoints); 5] = [
-        ("tree", RGBColor(214, 39, 40), generate_hd_tree(N, HD, SEED)),
-        (
-            "hyperbolic_shells",
-            RGBColor(255, 127, 14),
-            generate_hd_hyperbolic_shells(N, HD, SEED),
-        ),
-        (
-            "sphere",
-            RGBColor(44, 160, 44),
-            generate_hd_sphere(N, HD, SEED),
-        ),
-        (
-            "antipodal_clusters",
-            RGBColor(23, 190, 207),
-            generate_hd_antipodal_clusters(N, HD, SEED),
-        ),
-        (
-            "grid",
-            RGBColor(148, 103, 189),
-            generate_uniform_grid(N, SEED),
-        ),
-    ];
-    for (name, color, dp) in synth {
-        let d = distances_for(&dp);
-        let n = dp.n_points;
-        cases.push(build_case(name, color, false, &d, n));
+    // The ten thesis datasets.  The exact-H² control is deliberately left out:
+    // the plot is about what the fit does on real data, not about the reference
+    // case where the model is true by construction.
+    let mut fixtures = common::thesis(args.n, args.seed, &args.data_root);
+    if args.all {
+        // Skip `controls()[0]`, the exact-H² control.
+        fixtures.extend(common::controls(args.n, args.seed).into_iter().skip(1));
     }
 
-    let reals: [(&'static str, RGBColor, Result<DataPoints, String>); 4] = [
-        (
-            "mnist",
-            RGBColor(31, 119, 180),
-            load_mnist(&format!("{data_root}/mnist"), N),
-        ),
-        (
-            "fashion_mnist",
-            RGBColor(227, 119, 194),
-            load_fashion_mnist(&format!("{data_root}/fashion-mnist"), N),
-        ),
-        (
-            "pbmc",
-            RGBColor(140, 86, 75),
-            load_pbmc(&format!("{data_root}/pbmc"), N),
-        ),
-        (
-            "wordnet_mammals",
-            RGBColor(127, 127, 127),
-            load_wordnet_mammals(&format!("{data_root}/wordnet"), N),
-        ),
-    ];
-    for (name, color, loaded) in reals {
-        match loaded {
-            Ok(dp) => {
-                let d = distances_for(&dp);
-                let n = dp.n_points;
-                cases.push(build_case(name, color, false, &d, n));
-            }
-            Err(e) => eprintln!("{name} skipped: {e}"),
-        }
-    }
+    let cases: Vec<Case> = map_parallel(&fixtures, build_case);
 
     // ── Console report ──────────────────────────────────────────────
     println!(
-        "\n{:<20}{:>9}{:>9}{:>11}{:>12}{:>13}{:>9}{:>13}{:>8}{:>11}{:>12}  {}",
+        "\n{:<20}{:>9}{:>9}{:>11}{:>12}{:>13}{:>9}{:>13}{:>8}{:>11}{:>12}  gromov",
         "dataset",
         "d_max",
         "d_rms",
@@ -338,7 +212,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         "slope",
         "leverage",
         "slope@cap",
-        "gromov"
     );
     println!("{}", "-".repeat(157));
     for c in &cases {
@@ -388,7 +261,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         khi,
         khi / klo,
     );
-    println!("control's true kappa = {true_kappa:.3}");
 
     // ── Plots ───────────────────────────────────────────────────────
     plot(
@@ -397,9 +269,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         &cases,
         (-2.4, 2.4),
         (LOG_FLOOR - 0.3, 5.5),
-        Some(true_kappa.log10()),
         (klo.log10(), khi.log10()),
-        SeriesLabelPosition::LowerLeft,
+        SeriesLabelPosition::UpperLeft,
     )?;
     plot(
         "plots/residual_vs_kappa_caps.png",
@@ -407,23 +278,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         &cases,
         (-2.4, -0.2),
         (-4.4, 0.2),
-        None,
         (klo.log10(), khi.log10()),
-        // The `grid` curve runs through the lower left here.
-        SeriesLabelPosition::UpperRight,
+        // The `grid 2D` curve runs through the lower left and every other
+        // curve sits in the top band, leaving the lower right clear.
+        SeriesLabelPosition::LowerRight,
     )?;
     println!("\nWrote 2 plots to plots/");
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn plot(
     path: &str,
     caption: &str,
     cases: &[Case],
     x_range: (f64, f64),
     y_range: (f64, f64),
-    true_kappa_log: Option<f64>,
     cap_band: (f64, f64),
     legend_pos: SeriesLabelPosition,
 ) -> Result<(), Box<dyn Error>> {
@@ -439,7 +308,7 @@ fn plot(
 
     chart
         .configure_mesh()
-        .x_desc("log10( kappa_model = |K| * d_rms^2 )    (flat  <--   -->  more curved)")
+        .x_desc("log10( kappa_model = |K| * R_rms^2 )    (flat  <--   -->  more curved)")
         .y_desc("log10( sum |lambda_res| / (n * d_max^2) )")
         .axis_desc_style(("sans-serif", 16))
         .draw()?;
@@ -455,59 +324,31 @@ fn plot(
             RGBColor(80, 110, 170).mix(0.55).stroke_width(1),
         )))?;
     }
-    // With the cap stated as a κ floor the band collapses to one line: every
-    // dataset is held to the same κ_min, which is the point of the change.
-    let band_label = if cap_band.1 - cap_band.0 < 0.01 {
-        format!("cap for every dataset: kappa_min = {HYPERBOLIC_KAPPA_MIN}")
-    } else {
-        "every cap lands in this band".to_string()
-    };
-    chart.draw_series(std::iter::once(Text::new(
-        band_label,
-        (
-            cap_band.0 + 0.03,
-            y_range.0 + 0.965 * (y_range.1 - y_range.0),
-        ),
-        ("sans-serif", 14).into_font().color(&RGBColor(60, 90, 150)),
-    )))?;
-
-    // The control's true curvature.
-    if let Some(tk) = true_kappa_log {
-        chart.draw_series(std::iter::once(PathElement::new(
-            vec![(tk, y_range.0), (tk, y_range.1)],
-            BLACK.mix(0.55).stroke_width(2),
-        )))?;
-        // Sits in the empty strip below every curve and left of the control's
-        // dive, so it clears the bundle where the curves converge.
-        chart.draw_series(std::iter::once(Text::new(
-            "true kappa of the control",
-            (tk - 0.78, y_range.0 + 0.36 * (y_range.1 - y_range.0)),
-            ("sans-serif", 14).into_font().color(&BLACK.mix(0.75)),
-        )))?;
-    }
-
     for case in cases {
-        let w = if case.control { 3 } else { 2 };
         chart
             .draw_series(LineSeries::new(
                 case.curve.iter().cloned(),
-                case.color.stroke_width(w),
+                case.color.stroke_width(2),
             ))?
-            .label(if case.pinned {
-                format!("{} (pinned)", case.name)
-            } else {
-                case.name.to_string()
-            })
+            .label(case.name)
             .legend(move |(x, y)| {
                 PathElement::new(vec![(x, y), (x + 20, y)], case.color.stroke_width(3))
             });
 
-        // Where the production fit lands.
-        chart.draw_series(std::iter::once(Circle::new(
-            (case.fit_x, case.fit_y),
-            5,
-            case.color.filled(),
-        )))?;
+        // Where the production fit lands — drawn only when it is actually
+        // inside the window.  The caps zoom spans just the pinned datasets'
+        // cap positions, so an unpinned fit like `tree 2D` (κ* = 136) would
+        // otherwise be clamped onto the frame edge and read as a data point
+        // sitting at the boundary.
+        let in_view = (x_range.0..=x_range.1).contains(&case.fit_x)
+            && (y_range.0..=y_range.1).contains(&case.fit_y);
+        if in_view {
+            chart.draw_series(std::iter::once(Circle::new(
+                (case.fit_x, case.fit_y),
+                5,
+                case.color.filled(),
+            )))?;
+        }
     }
 
     chart

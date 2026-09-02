@@ -25,7 +25,9 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) dataset: Option<String>,
 
-    /// Run mode: "random" (default), "bayes", "scan", "pareto", or "detect".
+    /// Run mode: "random" (default), "bayes", "scan", "pareto", "detect", or
+    /// "wilson-mds" (reconstruct each Wilson fit and score it on the ten
+    /// Pareto objectives, so it can be compared against the fronts directly).
     /// random: sample random configs with continuous curvature, compute all metrics.
     /// bayes:  Bayesian optimisation over all 7 hyperparameters (requires --metric).
     ///         Geometry sign is detected automatically unless --geometry is given.
