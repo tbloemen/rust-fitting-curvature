@@ -32,6 +32,12 @@ plots = ["dep:plotters"]
 name = "r2"
 path = "src/bin/r2.rs"
 
+# Experiment 1: matched-geometry vs the Euclidean baseline, joined against the
+# Wilson fits scored as embeddings. No plotting.
+[[bin]]
+name = "exp1"
+path = "src/bin/exp1.rs"
+
 # Local-only: renders the thesis result figures.
 [[bin]]
 name = "figures"

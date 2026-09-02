@@ -8,12 +8,17 @@
 //!
 //! ## What κ_data is
 //!
-//! The thesis reports a dimensionless curvature κ = |K|·R_rms² for an embedding
-//! (|sectional curvature| times the squared RMS geodesic radius it occupies).
-//! The data analog (methods §gauge-fixing) is `kappa_data = |K_data|·d_rms² =
-//! (d_rms / r*)²`, where `K_data = ±1/r*²` is the signed sectional curvature the
-//! detector reports and `d_rms` is the **input RMS pairwise distance**
-//! `sqrt((1 / n(n-1)) Σ_{i≠j} d_ij²)` — exactly the definition in the thesis.
+//! The thesis reports a dimensionless curvature **κ = |K|·R_rms²** (|sectional
+//! curvature| times the squared RMS geodesic radius the configuration occupies),
+//! and that is the gauge used throughout — for embeddings and for the detector
+//! alike, so the two land on one axis.
+//!
+//! For a detected geometry, `K = ±1/r*²` comes from the fitted radius and
+//! `R_rms` from the configuration that radius implies: each `Z(r*)` is the Gram
+//! matrix of its own model, so its retained eigen-block *is* that configuration
+//! (`curvature_detection::reconstruct`). `kappa_data` is therefore
+//! `|K|·R_rms²` measured on the reconstruction, not `|K|·d_rms²` measured on the
+//! input — the name is kept for continuity with the file it writes.
 //!
 //! The record also carries the raw per-model Wilson fits (radius + residual +
 //! whether the fit pinned at the flat-ward bound) and the growing-ball Gromov
@@ -29,7 +34,8 @@ use serde::Serialize;
 use crate::cli::Args;
 use crate::evaluate::Evaluator;
 use fitting_core::curvature_detection::{
-    detect_geometry, detect_hyperbolic, fit_hyperbolic, fit_spherical,
+    detect_geometry, detect_hyperbolic, fit_hyperbolic, fit_spherical, reconstruct_hyperbolic,
+    reconstruct_spherical,
 };
 
 /// One dataset's curvature-detection record (one JSONL line).
@@ -46,8 +52,10 @@ struct DetectionRecord {
     geometry_detected: &'static str,
     /// Signed sectional curvature of the verdict (`0.0` for euclidean).
     curvature: f64,
-    /// Dimensionless data curvature `|curvature| · d_rms²` — the quantity that
-    /// shares an axis with the embeddings' κ. `0.0` when the verdict is euclidean.
+    /// Dimensionless curvature `|curvature| · R_rms²` of the configuration the
+    /// verdict's fit implies — the quantity that shares an axis with the
+    /// embeddings' κ. `0.0` when the verdict is euclidean, where `K = 0` makes
+    /// κ vanish on any gauge.
     kappa_data: f64,
 
     // ── Scale of the data (distance-matrix only) ──
@@ -72,8 +80,12 @@ struct DetectionRecord {
     sph_angular_extent: f64,
     /// `+1/r*²` — curvature implied by the spherical radius.
     sph_curvature: f64,
-    /// `|+1/r*²| · d_rms²` — κ under the spherical hypothesis regardless of verdict.
+    /// `|+1/r*²| · R_rms²` of the spherical reconstruction — κ under the
+    /// spherical hypothesis regardless of verdict.
     sph_kappa: f64,
+    /// RMS geodesic radius of the spherical reconstruction, the gauge length
+    /// behind `sph_kappa`.
+    sph_r_rms: f64,
 
     // ── Wilson hyperbolic fit ──
     hyp_radius: f64,
@@ -83,14 +95,19 @@ struct DetectionRecord {
     /// thresholds this — the hyperbolic verdict comes from the δ(k) test — but
     /// it is the field to compare across datasets.
     hyp_residual_normalised: f64,
-    /// Whether `r*` sits at the flat-ward cap `d_rms/√HYPERBOLIC_KAPPA_MIN`.
-    /// When set, `hyp_kappa` is exactly `HYPERBOLIC_KAPPA_MIN` and carries no
-    /// information: the fit wanted a flatter model than the search allows.
+    /// Whether `r*` sits at the flat-ward cap, i.e. the radius at which the
+    /// reconstruction's κ falls to `HYPERBOLIC_KAPPA_MIN`. When set,
+    /// `hyp_kappa` is that floor and carries no information: the fit wanted a
+    /// flatter model than the search allows.
     hyp_at_upper_bound: bool,
     /// `-1/r*²` — curvature implied by the hyperbolic radius.
     hyp_curvature: f64,
-    /// `|-1/r*²| · d_rms²` — κ under the hyperbolic hypothesis regardless of verdict.
+    /// `|-1/r*²| · R_rms²` of the hyperbolic reconstruction — κ under the
+    /// hyperbolic hypothesis regardless of verdict.
     hyp_kappa: f64,
+    /// RMS geodesic radius of the hyperbolic reconstruction, the gauge length
+    /// behind `hyp_kappa`.
+    hyp_r_rms: f64,
 
     // ── Growing-ball Gromov δ(k) saturation diagnostics ──
     /// Whether the δ(k) curve saturates (the theoretically-backed hyperbolic gate).
@@ -103,12 +120,14 @@ struct DetectionRecord {
     delta_saturated_normalised: f64,
     /// Curvature from `δ = ln(1+√2)/√(−K)` when hyperbolic (`0.0` otherwise).
     delta_curvature: f64,
-    /// `|delta_curvature| · d_rms²` — κ from the Gromov δ estimate.
+    /// `|delta_curvature| · R_rms²` — κ from the Gromov δ estimate, gauged on
+    /// the hyperbolic configuration that curvature implies. `0.0` when the δ
+    /// test does not call the data hyperbolic.
     delta_kappa: f64,
 }
 
 /// Input RMS pairwise distance `sqrt((1 / n(n-1)) Σ_{i≠j} d_ij²)`, the thesis
-/// `d_rms` in `kappa_data = (d_rms / r*)²`. The flat matrix's diagonal is zero,
+/// reported for scale alongside the fits. The flat matrix's diagonal is zero,
 /// so summing all n² entries already excludes the i=i terms; dividing by the
 /// n(n-1) off-diagonal pair count gives the RMS over distinct pairs.
 fn rms_pairwise(distances: &[f64], n: usize) -> f64 {
@@ -126,7 +145,6 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
 
     let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
     let d_rms = rms_pairwise(distances, n);
-    let d_rms_sq = d_rms * d_rms;
 
     let verdict = detect_geometry(distances, n, embed_dim);
     let spherical = fit_spherical(distances, n, embed_dim);
@@ -136,6 +154,33 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
     let sph_curvature = 1.0 / (spherical.radius * spherical.radius);
     let hyp_curvature = -1.0 / (hyperbolic.radius * hyperbolic.radius);
 
+    // κ is gauged by R_rms, which is a property of the *configuration* a fit
+    // implies rather than of the radius alone — so each arm is reconstructed at
+    // its fitted radius. That is an eigendecomposition, not a second fit: each
+    // `Z(r*)` is the Gram matrix of its own model.
+    let sph_rec = reconstruct_spherical(distances, n, embed_dim, spherical.radius);
+    let hyp_rec = reconstruct_hyperbolic(distances, n, embed_dim, hyperbolic.radius);
+    let (sph_kappa, hyp_kappa) = (sph_rec.kappa(n), hyp_rec.kappa(n));
+
+    // The δ estimate names a curvature but no radius-fitting procedure, so its κ
+    // is gauged on the hyperbolic configuration that curvature implies. Zero
+    // curvature means the δ test did not call the data hyperbolic, and there is
+    // nothing to reconstruct.
+    let delta_kappa = if hyp_delta.curvature < 0.0 {
+        let r = 1.0 / (-hyp_delta.curvature).sqrt();
+        reconstruct_hyperbolic(distances, n, embed_dim, r).kappa(n)
+    } else {
+        0.0
+    };
+
+    // The verdict's κ is whichever arm it chose; euclidean has K = 0, so κ = 0
+    // on any gauge.
+    let kappa_data = match verdict.best_geometry {
+        "spherical" => sph_kappa,
+        "hyperbolic" => hyp_kappa,
+        _ => 0.0,
+    };
+
     let record = DetectionRecord {
         dataset: dataset_name.to_string(),
         n_samples: n,
@@ -143,7 +188,7 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
 
         geometry_detected: verdict.best_geometry,
         curvature: verdict.curvature,
-        kappa_data: verdict.curvature.abs() * d_rms_sq,
+        kappa_data,
 
         d_rms,
         d_max,
@@ -158,21 +203,23 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
             0.0
         },
         sph_curvature,
-        sph_kappa: sph_curvature.abs() * d_rms_sq,
+        sph_kappa,
+        sph_r_rms: sph_rec.r_rms(n),
 
         hyp_radius: hyperbolic.radius,
         hyp_residual: hyperbolic.residual,
         hyp_residual_normalised: hyperbolic.residual_normalised,
         hyp_at_upper_bound: hyperbolic.at_upper_bound,
         hyp_curvature,
-        hyp_kappa: hyp_curvature.abs() * d_rms_sq,
+        hyp_kappa,
+        hyp_r_rms: hyp_rec.r_rms(n),
 
         delta_is_hyperbolic: hyp_delta.is_hyperbolic,
         delta_tail_slope: hyp_delta.tail_slope,
         delta_saturated: hyp_delta.saturated_delta,
         delta_saturated_normalised: hyp_delta.saturated_delta_normalised,
         delta_curvature: hyp_delta.curvature,
-        delta_kappa: hyp_delta.curvature.abs() * d_rms_sq,
+        delta_kappa,
     };
 
     println!(

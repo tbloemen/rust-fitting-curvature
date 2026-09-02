@@ -10,10 +10,13 @@
 //!   (from `results/kappa_data.jsonl`), synthetic vs real markers; plus the
 //!   unanchored-vs-`rms_anchored` κ overlay (skipped with a notice if no
 //!   rms_anchored runs exist).
-//! * **Exp 4** (`manifold-projection-gap`) — ρ_man-proj(κ): per cell, the
-//!   Spearman correlation between each metric's manifold and 2D-projected
-//!   variants over the cell's trials, plotted against the cell's median κ, one
-//!   panel per metric, hyperbolic vs spherical, both N overlaid.
+//! * **Exp 4** (`manifold-projection-gap`) — two figures. ρ_man-proj(κ): per
+//!   cell, the Spearman correlation between each metric's manifold and
+//!   2D-projected variants over the cell's trials, against the cell's median κ.
+//!   And the projection gap: per Pareto-front trial, `oriented(manifold) −
+//!   oriented(2D)` against that trial's own κ, all datasets pooled, with a
+//!   Spearman per geometry in each panel. Both are one panel per metric,
+//!   hyperbolic vs spherical.
 //! * **Exp 5** (`comparison-real-results`) — the 4×3 trustworthiness-vs-stress
 //!   Pareto-front grid with convex envelope, and the hyperparameter marginal
 //!   histograms of the `all_off` fronts.
@@ -24,6 +27,7 @@ pub mod exp2;
 pub mod exp3;
 pub mod exp4;
 pub mod exp5;
+pub mod r2_bars;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -32,7 +36,7 @@ use plotters::coord::Shift;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
 
-use crate::cell::{discover_cells, Cell};
+use crate::cell::{discover_cells, Cell, SYNTH_TRUTH};
 use crate::error::{Error, IoContext, Result};
 use crate::pareto::pareto_front_records;
 use crate::records::{load_jsonl, trial_records, TrialRecord};
@@ -90,7 +94,24 @@ pub fn geometry_color(geometry: &str) -> RGBColor {
 }
 
 pub const REAL_DATASETS: [&str; 4] = ["mnist", "fashion_mnist", "pbmc", "wordnet_mammals"];
-pub const SYNTH_DATASETS: [&str; 4] = ["sphere", "antipodal_clusters", "tree", "hyperbolic_shells"];
+
+/// The synthetic datasets, *derived* from [`SYNTH_TRUTH`] rather than written
+/// out again: the two lists desynced once already (`grid` was added to the sweep
+/// grid and to `SYNTH_TRUTH`, but not here, so every figure that iterates
+/// [`all_datasets`] silently dropped it), and a hand-kept copy would desync
+/// again the next time a generator is added.
+pub const SYNTH_DATASETS: [&str; SYNTH_TRUTH.len()] = synth_datasets();
+
+const fn synth_datasets() -> [&'static str; SYNTH_TRUTH.len()] {
+    let mut out = [""; SYNTH_TRUTH.len()];
+    let mut i = 0;
+    while i < SYNTH_TRUTH.len() {
+        out[i] = SYNTH_TRUTH[i].0;
+        i += 1;
+    }
+    out
+}
+
 pub const CURVED: [&str; 2] = ["hyperbolic", "spherical"];
 
 pub use crate::cell::GEOMETRIES;
@@ -347,10 +368,21 @@ pub fn finite_xy(records: &[TrialRecord], xm: &str, ym: &str) -> (Vec<f64>, Vec<
     (xs, ys)
 }
 
-/// Median of y in log-spaced x bins, for bins with ≥2 points — the trend curve
-/// through a cloud of independent cells.
-pub fn binned_median(x: &[f64], y: &[f64], n_bins: usize) -> (Vec<f64>, Vec<f64>) {
-    if x.len() < 2 {
+/// Median of y in log-spaced x bins, for bins with ≥ `min_per_bin` points — the
+/// trend curve through a cloud of independent cells.
+///
+/// `min_per_bin` is the guard against reading a trend off two or three cells: a
+/// median over that few flips on a single point, and on a log axis the sparse
+/// tail bins are exactly where that happens. Callers set it from how many cells
+/// they expect per bin, never below 2.
+pub fn binned_median(
+    x: &[f64],
+    y: &[f64],
+    n_bins: usize,
+    min_per_bin: usize,
+) -> (Vec<f64>, Vec<f64>) {
+    let min_per_bin = min_per_bin.max(2);
+    if x.len() < min_per_bin {
         return (Vec::new(), Vec::new());
     }
     let x_min = x.iter().cloned().fold(f64::INFINITY, f64::min);
@@ -375,7 +407,7 @@ pub fn binned_median(x: &[f64], y: &[f64], n_bins: usize) -> (Vec<f64>, Vec<f64>
             .collect();
         // `median` is None only on an empty slice, which the length test rules
         // out; `if let` keeps that a fact of the code rather than an unwrap.
-        if let (true, Some(m)) = (vals.len() >= 2, median(&vals)) {
+        if let (true, Some(m)) = (vals.len() >= min_per_bin, median(&vals)) {
             centres.push((a * b).sqrt());
             meds.push(m);
         }
@@ -422,7 +454,7 @@ pub fn padded_range(values: &[f64], frac: f64) -> Option<(f64, f64)> {
     // the last ulp satisfy `hi > lo`, so an exact test leaves a span of ~1e-16
     // and the panel magnifies float rounding noise to full width. Exp 3's
     // hyperbolic κ_data hit exactly this once every dataset pinned at the
-    // Wilson cap and hyp_kappa became the constant HYPERBOLIC_KAPPA_MIN.
+    // Wilson cap, where hyp_kappa is the constant HYPERBOLIC_KAPPA_MIN.
     let span = hi - lo;
     let pad = if span > 1e-12 * lo.abs().max(hi.abs()).max(1.0) {
         span * frac

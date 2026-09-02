@@ -29,7 +29,7 @@ pub mod stats;
 #[cfg(feature = "plots")]
 pub mod figures;
 
-pub use cell::{discover_cells, parse_cell_stem, Cell, CellFile};
+pub use cell::{discover_cells, parse_cell_stem, truth_of, Cell, CellFile, SYNTH_TRUTH};
 pub use error::{Error, IoContext, Result};
 pub use indicators::{epsilon_additive, epsilon_pair, EpsilonPair};
 pub use objectives::{oriented_matrix, oriented_value, OBJECTIVES};

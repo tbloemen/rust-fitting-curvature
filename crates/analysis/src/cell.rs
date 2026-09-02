@@ -16,7 +16,42 @@ pub const SETTINGS: [&str; 6] = [
 ];
 
 /// The three constant-curvature geometries.
+///
+/// Everywhere in this crate `geometry` means the *embedding model a sweep was
+/// run under*, never a claim about the data. For the datasets whose geometry is
+/// known by construction, see [`SYNTH_TRUTH`].
 pub const GEOMETRIES: [&str; 3] = ["euclidean", "hyperbolic", "spherical"];
+
+/// Intrinsic geometry of each synthetic dataset, by construction.
+///
+/// Experiment 1 asks whether the embedding geometry *matching* the data beats
+/// the Euclidean baseline, so it needs a ground truth that no other table does:
+/// everywhere else `geometry` is the model that was fitted.
+///
+/// The origin of these labels is `crates/core/examples/common/mod.rs`
+/// (`Fixture::truth`), which names the same generators `"sphere 10D"`,
+/// `"tree 10D"`, `"grid 10D"`. The names here are the optimizer's, from
+/// `crates/optimizer/src/data.rs::load_synthetic` — that is what appears in
+/// results filenames, and the two vocabularies do not join automatically.
+///
+/// The real datasets are deliberately absent: their geometry is the question,
+/// not the given.
+pub const SYNTH_TRUTH: [(&str, &str); 5] = [
+    ("grid", "euclidean"),
+    ("sphere", "spherical"),
+    ("antipodal_clusters", "spherical"),
+    ("tree", "hyperbolic"),
+    ("hyperbolic_shells", "hyperbolic"),
+];
+
+/// The geometry `dataset` is built to have, or `None` for a real dataset (or
+/// any name not in [`SYNTH_TRUTH`]).
+pub fn truth_of(dataset: &str) -> Option<&'static str> {
+    SYNTH_TRUTH
+        .iter()
+        .find(|(name, _)| *name == dataset)
+        .map(|(_, truth)| *truth)
+}
 
 /// A single (setting, dataset, N, geometry) experiment cell.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

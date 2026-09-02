@@ -114,6 +114,9 @@ const QL_MAX_ITER: usize = 50;
 ///
 /// Householder reduction to tridiagonal form + implicit-shift QL.  Only
 /// the lower triangle of `a` is read; eigenvectors are not accumulated.
+/// This is the hot path — [`minimise_log_spaced`] calls it once per
+/// candidate radius — so it skips the `O(n³)` back-transformation that
+/// [`eigen_symmetric`] pays for.
 pub fn eigenvalues_symmetric(a: &[f64], n: usize) -> Vec<f64> {
     if n == 0 {
         return Vec::new();
@@ -121,18 +124,87 @@ pub fn eigenvalues_symmetric(a: &[f64], n: usize) -> Vec<f64> {
     let mut z = a.to_vec();
     let mut d = vec![0.0; n];
     let mut e = vec![0.0; n];
-    tridiagonalise(&mut z, n, &mut d, &mut e);
-    ql_implicit(&mut d, &mut e, n);
+    tridiagonalise(&mut z, n, &mut d, &mut e, false);
+    ql_implicit(&mut d, &mut e, n, None);
     d.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
     d
 }
 
+/// A full symmetric eigendecomposition: eigenvalues **and** the matching
+/// eigenvectors.
+#[derive(Debug, Clone)]
+pub struct Eigen {
+    /// Eigenvalues in ascending order — the same sequence
+    /// [`eigenvalues_symmetric`] returns for the same input.
+    pub values: Vec<f64>,
+    /// Eigenvectors, row-major `n × n`, **column `j` is the unit
+    /// eigenvector for `values[j]`**: entry `(i, j)` is `vectors[i * n + j]`.
+    /// Column order tracks `values`, so the two are read together.
+    pub vectors: Vec<f64>,
+}
+
+impl Eigen {
+    /// Component `i` of the eigenvector for `values[j]`.
+    #[inline]
+    pub fn vector_component(&self, i: usize, j: usize, n: usize) -> f64 {
+        self.vectors[i * n + j]
+    }
+}
+
+/// Eigenvalues *and* eigenvectors of the symmetric matrix `a` (row-major,
+/// `n × n`), ascending by eigenvalue.
+///
+/// The same Householder + implicit-QL pair as [`eigenvalues_symmetric`],
+/// with the eigenvector accumulation switched on: the Householder
+/// reflectors are back-transformed into an orthogonal basis and every QL
+/// plane rotation is applied to it.  That costs roughly `(4/3)n³` instead
+/// of `(2/3)n³`, plus the rotations, so it is deliberately *not* used by
+/// the radius search.  It exists for [`super::reconstruct`], which needs
+/// the retained signature block as actual coordinates and runs once per
+/// fitted radius rather than once per candidate.
+///
+/// The eigenvalues it returns agree with [`eigenvalues_symmetric`] to
+/// rounding: both call the same two routines on the same input, and the
+/// vector accumulation does not feed back into `d` or `e`.
+pub fn eigen_symmetric(a: &[f64], n: usize) -> Eigen {
+    if n == 0 {
+        return Eigen {
+            values: Vec::new(),
+            vectors: Vec::new(),
+        };
+    }
+    let mut z = a.to_vec();
+    let mut d = vec![0.0; n];
+    let mut e = vec![0.0; n];
+    tridiagonalise(&mut z, n, &mut d, &mut e, true);
+    ql_implicit(&mut d, &mut e, n, Some(&mut z));
+
+    // QL leaves the eigenvalues unordered; sort ascending and carry the
+    // matching columns of `z` along, so `values` matches what the
+    // eigenvalue-only path returns and the residual code's positional
+    // `retain_low`/`retain_high` slicing means the same thing here.
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&x, &y| d[x].partial_cmp(&d[y]).unwrap_or(std::cmp::Ordering::Equal));
+
+    let values: Vec<f64> = order.iter().map(|&j| d[j]).collect();
+    let mut vectors = vec![0.0; n * n];
+    for (new_j, &old_j) in order.iter().enumerate() {
+        for i in 0..n {
+            vectors[i * n + new_j] = z[i * n + old_j];
+        }
+    }
+    Eigen { values, vectors }
+}
+
 /// Householder reduction of a symmetric matrix to tridiagonal form
-/// (Numerical Recipes `tred2`, eigenvector accumulation dropped).
+/// (Numerical Recipes `tred2`).
 ///
 /// On return `d` holds the diagonal and `e[1..]` the sub-diagonal of the
-/// tridiagonal matrix; `z` is destroyed.
-fn tridiagonalise(z: &mut [f64], n: usize, d: &mut [f64], e: &mut [f64]) {
+/// tridiagonal matrix.  With `want_vectors` false, `z` is destroyed and
+/// only the `(2/3)n³` reduction runs.  With it true, `z` comes back
+/// holding the accumulated orthogonal transformation, which is the extra
+/// `O(n³)` back-transformation loop at the end.
+fn tridiagonalise(z: &mut [f64], n: usize, d: &mut [f64], e: &mut [f64], want_vectors: bool) {
     for i in (1..n).rev() {
         let l = i - 1;
         let mut h = 0.0;
@@ -155,6 +227,13 @@ fn tridiagonalise(z: &mut [f64], n: usize, d: &mut [f64], e: &mut [f64]) {
                 z[i * n + l] = f - g;
                 f = 0.0;
                 for j in 0..i {
+                    if want_vectors {
+                        // Stash the Householder vector in the upper triangle
+                        // for the back-transformation below.  The reduction
+                        // itself reads only the lower triangle and row `i`,
+                        // so this write is invisible to it.
+                        z[j * n + i] = z[i * n + j] / h;
+                    }
                     let mut g = 0.0;
                     for k in 0..=j {
                         g += z[j * n + k] * z[i * n + k];
@@ -180,17 +259,54 @@ fn tridiagonalise(z: &mut [f64], n: usize, d: &mut [f64], e: &mut [f64]) {
         }
         d[i] = h;
     }
+
+    if !want_vectors {
+        e[0] = 0.0;
+        for i in 0..n {
+            d[i] = z[i * n + i];
+        }
+        return;
+    }
+
+    // Back-transformation: turn the stashed Householder vectors into the
+    // orthogonal matrix that reduced `a` to tridiagonal form.  `d[i]` still
+    // holds the reflector norm `h` from the loop above, and a zero there
+    // means that step was a no-op (NR `tred2`); it is overwritten with the
+    // tridiagonal diagonal once it has served that test.
+    d[0] = 0.0;
     e[0] = 0.0;
     for i in 0..n {
+        if d[i] != 0.0 {
+            for j in 0..i {
+                let mut g = 0.0;
+                for k in 0..i {
+                    g += z[i * n + k] * z[k * n + j];
+                }
+                for k in 0..i {
+                    z[k * n + j] -= g * z[k * n + i];
+                }
+            }
+        }
         d[i] = z[i * n + i];
+        z[i * n + i] = 1.0;
+        for j in 0..i {
+            z[j * n + i] = 0.0;
+            z[i * n + j] = 0.0;
+        }
     }
 }
 
 /// Eigenvalues of a symmetric tridiagonal matrix by the QL algorithm
-/// with implicit shifts (Numerical Recipes `tqli`, eigenvector
-/// accumulation dropped).  `d` is the diagonal (overwritten with the
-/// eigenvalues, unordered), `e[1..]` the sub-diagonal (destroyed).
-fn ql_implicit(d: &mut [f64], e: &mut [f64], n: usize) {
+/// with implicit shifts (Numerical Recipes `tqli`).  `d` is the diagonal
+/// (overwritten with the eigenvalues, unordered), `e[1..]` the
+/// sub-diagonal (destroyed).
+///
+/// When `vectors` is `Some`, every plane rotation is applied to its
+/// columns as well; passed the output of `tridiagonalise(.., true)`, its
+/// columns come back as the eigenvectors of the *original* matrix, in the
+/// same order as `d`.  `None` skips that work entirely, which is what the
+/// radius search wants.
+fn ql_implicit(d: &mut [f64], e: &mut [f64], n: usize, mut vectors: Option<&mut [f64]>) {
     for i in 1..n {
         e[i - 1] = e[i];
     }
@@ -244,6 +360,14 @@ fn ql_implicit(d: &mut [f64], e: &mut [f64], n: usize) {
                 p = s * r;
                 d[i + 1] = g + p;
                 g = c * r - b;
+                if let Some(z) = vectors.as_deref_mut() {
+                    // Same plane rotation, applied to columns i and i+1.
+                    for k in 0..n {
+                        let f = z[k * n + i + 1];
+                        z[k * n + i + 1] = s * z[k * n + i] + c * f;
+                        z[k * n + i] = c * z[k * n + i] - s * f;
+                    }
+                }
             }
             if underflowed {
                 continue;
@@ -258,7 +382,7 @@ fn ql_implicit(d: &mut [f64], e: &mut [f64], n: usize) {
 // ── Gram matrices ───────────────────────────────────────────────────────────
 
 /// `Z_{ij}(r) = r² cos(d_{ij}/r)` for spherical model.
-fn build_z_spherical(d: &[f64], n: usize, r: f64) -> Vec<f64> {
+pub(crate) fn build_z_spherical(d: &[f64], n: usize, r: f64) -> Vec<f64> {
     let r2 = r * r;
     let inv_r = 1.0 / r;
     let mut z = vec![0.0; n * n];
@@ -271,7 +395,7 @@ fn build_z_spherical(d: &[f64], n: usize, r: f64) -> Vec<f64> {
 }
 
 /// `Z_{ij}(r) = −r² cosh(d_{ij}/r)` for hyperbolic model.
-fn build_z_hyperbolic(d: &[f64], n: usize, r: f64) -> Vec<f64> {
+pub(crate) fn build_z_hyperbolic(d: &[f64], n: usize, r: f64) -> Vec<f64> {
     let r2 = r * r;
     let inv_r = 1.0 / r;
     let mut z = vec![0.0; n * n];
@@ -281,6 +405,46 @@ fn build_z_hyperbolic(d: &[f64], n: usize, r: f64) -> Vec<f64> {
         }
     }
     z
+}
+
+/// `B = −J D∘D J / 2` with `J = I − 11ᵀ/n` — the classical-MDS (PCoA) Gram
+/// matrix, i.e. the flat model's `Z`.  It takes no radius: Euclidean space
+/// has no curvature parameter, which is exactly what makes this arm the
+/// nested null model of the other two.
+///
+/// This is the `r → ∞` limit of *both* curved kernels.  `r² cos(d/r) →
+/// r²J − D²/2` and `−r² cosh(d/r) → −r²J − D²/2` (Wilson et al. 2014,
+/// eqs. 24–26); the `±r²J` term is rank 1 along `1`, which the double
+/// centring here removes outright and which the hyperbolic signature
+/// instead absorbs into its Lorentzian time slot.  That correspondence is
+/// what makes [`euclidean_residual`] directly comparable to the curved
+/// residuals rather than merely similar in spirit — see
+/// [`fit_euclidean`].
+///
+/// The centring arithmetic mirrors `matrices::pca_from_distances`, which
+/// builds the same `B` but then extracts only its top eigenpairs by power
+/// iteration; the signature criterion needs the whole spectrum, so the
+/// matrix is rebuilt here for [`eigenvalues_symmetric`].
+pub(crate) fn build_z_euclidean(d: &[f64], n: usize) -> Vec<f64> {
+    let mut d2 = vec![0.0; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            let v = d[i * n + j];
+            d2[i * n + j] = v * v;
+        }
+    }
+    let row_means: Vec<f64> = (0..n)
+        .map(|i| (0..n).map(|j| d2[i * n + j]).sum::<f64>() / n as f64)
+        .collect();
+    let grand_mean = row_means.iter().sum::<f64>() / n as f64;
+
+    let mut b = vec![0.0; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            b[i * n + j] = -0.5 * (d2[i * n + j] - row_means[i] - row_means[j] + grand_mean);
+        }
+    }
+    b
 }
 
 // ── Signature residuals ──────────────────────────────────────────────────────
@@ -325,6 +489,23 @@ fn spherical_residual(d: &[f64], n: usize, dim: usize, r: f64) -> f64 {
 fn hyperbolic_residual(d: &[f64], n: usize, dim: usize, r: f64) -> f64 {
     let z = build_z_hyperbolic(d, n, r);
     residual_from_spectrum(&eigenvalues_symmetric(&z, n), 1, dim)
+}
+
+/// Euclidean residual for a `dim`-dimensional embedding.  A
+/// `dim`-dimensional flat configuration spans only `dim` ambient
+/// dimensions — there is no extra ambient axis, because the centring in
+/// [`build_z_euclidean`] has already removed the `1` direction that the
+/// curved models spend their `(dim+1)`-th slot on.  So a conforming `B` is
+/// PSD of rank `dim`: retain the `dim` most-positive eigenvalues and sum
+/// `|λ|` over the remaining `n − dim`.
+///
+/// Retaining `dim` rather than `dim+1` is what makes this the exact `r →
+/// ∞` limit of [`hyperbolic_residual`]: there, `λ₁ ≈ −n r²` (the `1`
+/// direction) fills the time slot and the `dim` largest fill the spatial
+/// ones, leaving the same set of data directions in the residual as here.
+fn euclidean_residual(d: &[f64], n: usize, dim: usize) -> f64 {
+    let b = build_z_euclidean(d, n);
+    residual_from_spectrum(&eigenvalues_symmetric(&b, n), 0, dim)
 }
 
 // ── Search over r ───────────────────────────────────────────────────────────
@@ -522,21 +703,25 @@ pub fn fit_spherical(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
     }
 }
 
-/// Smallest dimensionless curvature `κ = |K|·d_rms²` the hyperbolic search
-/// is asked to resolve; it sets the flat-ward edge of the window via
-/// `r_upper = d_rms/√κ_min` (see [`fit_hyperbolic`]).
+/// Smallest dimensionless curvature `κ = |K|·R_rms²` the hyperbolic search
+/// is asked to resolve; it sets the flat-ward edge of the window (see
+/// [`fit_hyperbolic`]).
 ///
 /// A hyperbolic metric departs from the Euclidean one by a *relative*
-/// `κ/6` over the extent of the data — the circumference of a geodesic
-/// circle of radius `s` in `H²(r)` is
-/// `2πr·sinh(s/r) = 2πs(1 + (s/r)²/6 + …)`, and `(d_rms/r)² = κ`.  At
-/// `κ = 0.01` that is 0.17%: beyond this radius the model is flat to
-/// within a fifth of a percent across the whole sample, so searching
-/// further only fits Euclidean structure.
+/// `κ/6` over the extent of the configuration — the circumference of a
+/// geodesic circle of radius `s` in `H²(r)` is
+/// `2πr·sinh(s/r) = 2πs(1 + (s/r)²/6 + …)`, and taking `s = R_rms`, the RMS
+/// geodesic radius of the configuration about its centre, gives
+/// `(R_rms/r)² = κ`.  At `κ = 0.01` that is 0.17%: beyond this radius the
+/// model is flat to within a fifth of a percent across the whole sample, so
+/// searching further only fits Euclidean structure.
 pub const HYPERBOLIC_KAPPA_MIN: f64 = 0.01;
 
-/// Root-mean-square of the `n(n−1)` off-diagonal pairwise distances — the
-/// scale statistic the thesis's `κ = |K|·d_rms²` gauge is written in.
+/// Root-mean-square of the `n(n−1)` off-diagonal pairwise distances.
+///
+/// Used only to seed the window solve in [`hyperbolic_window_cap`]: it is the
+/// cheapest available estimate of the configuration's extent, and the flat-limit
+/// reconstruction's `R_rms` is within a small factor of it.
 fn rms_distance(distances: &[f64], n: usize) -> f64 {
     if n < 2 {
         return 0.0;
@@ -545,25 +730,77 @@ fn rms_distance(distances: &[f64], n: usize) -> f64 {
     (sum_sq / (n as f64 * (n as f64 - 1.0))).sqrt()
 }
 
+/// Iterations allowed for the window-cap fixed point before falling back.
+const WINDOW_CAP_MAX_ITER: usize = 12;
+/// Relative movement below which the window-cap fixed point is converged.
+const WINDOW_CAP_TOL: f64 = 1e-3;
+
+/// The radius at which a hyperbolic reconstruction's dimensionless curvature
+/// falls to [`HYPERBOLIC_KAPPA_MIN`] — the flat-ward edge of the search window.
+///
+/// κ is gauged by `R_rms`, the extent of the configuration the model implies,
+/// so the cap solves `κ(r) = R_rms(r)²/r² = κ_min`, i.e. the fixed point
+/// `r = R_rms(r)/√κ_min`.
+///
+/// # Why a fixed point rather than a scan
+///
+/// `R_rms(r)` is nearly *constant* in `r` at the flat end: as `r → ∞` the
+/// hyperbolic kernel degenerates to the flat-limit one and the reconstruction
+/// tends to the fixed classical-MDS configuration. The map is therefore
+/// strongly contracting, and seeding it with the input-scale estimate
+/// `d_rms/√κ_min` converges in a handful of steps. That matters, because each
+/// evaluation is a full eigendecomposition *with* eigenvectors — the expensive
+/// path — where the search itself only needs eigenvalues.
+///
+/// Falling back to the seed on non-convergence keeps the window well-defined
+/// for degenerate input (coincident points, `n < 2`) rather than propagating a
+/// NaN into the search bounds.
+fn hyperbolic_window_cap(distances: &[f64], n: usize, dim: usize, r_lower: f64) -> f64 {
+    let seed = rms_distance(distances, n) / HYPERBOLIC_KAPPA_MIN.sqrt();
+    if !seed.is_finite() || seed <= 0.0 {
+        return r_lower;
+    }
+
+    let mut r = seed;
+    for _ in 0..WINDOW_CAP_MAX_ITER {
+        let r_rms = super::reconstruct::reconstruct_hyperbolic(distances, n, dim, r).r_rms(n);
+        if !r_rms.is_finite() || r_rms <= 0.0 {
+            return seed.max(r_lower);
+        }
+        let next = r_rms / HYPERBOLIC_KAPPA_MIN.sqrt();
+        let moved = (next - r).abs() / r;
+        r = next;
+        if moved < WINDOW_CAP_TOL {
+            return r.max(r_lower);
+        }
+    }
+    r.max(r_lower)
+}
+
 /// Fit a `dim`-dimensional hyperbolic model: find `r*` minimising
 /// `Σ|λ|` over the eigenvalues of `Z_hyperbolic(r)` outside its
 /// `(1 negative, dim positive)` signature block.
 ///
 /// Search bounds: r ≥ d_max/20 (keeps `cosh(d_max/r) ≤ cosh(20) ≈ 2.4·10⁸`,
-/// safe from overflow) and `r ≤ d_rms/√`[`HYPERBOLIC_KAPPA_MIN`], i.e.
-/// `10·d_rms`.  Hyperbolic space is non-compact, so the
+/// safe from overflow) and `r ≤` the radius at which the implied
+/// configuration's `κ = |K|·R_rms²` falls to [`HYPERBOLIC_KAPPA_MIN`], solved
+/// by [`hyperbolic_window_cap`].  Hyperbolic space is non-compact, so the
 /// geodesic-fits-on-space lower bound from the spherical case does not
-/// apply — but for r ≫ d_rms, `cosh(d/r) ≈ 1 + d²/2r²` and `Z` degenerates
-/// to the flat-limit kernel `−r²J − D²/2`, which no longer carries
-/// curvature information.  The cap is stated as a floor on the
-/// dimensionless curvature rather than as a multiple of `d_max` so that it
-/// makes the same demand of every dataset: `d_max` is an extreme order
-/// statistic that drifts with `n` and varies 30× across the thesis
-/// datasets, so `r ≤ d_max` silently imposes a `κ_min` that ranges over 7×.
+/// apply — but for r far beyond the configuration's extent,
+/// `cosh(d/r) ≈ 1 + d²/2r²` and `Z` degenerates to the flat-limit kernel
+/// `−r²J − D²/2`, which no longer carries curvature information.
+///
+/// The cap is stated as a floor on the dimensionless curvature rather than as
+/// a multiple of `d_max` so that it makes the same demand of every dataset:
+/// `d_max` is an extreme order statistic that drifts with `n` and varies 30×
+/// across the thesis datasets, so `r ≤ d_max` silently imposes a `κ_min` that
+/// ranges over 7×.  It is gauged by `R_rms` rather than by the input's `d_rms`
+/// so that the bound is a statement about the same κ the fit reports — see
+/// [`hyperbolic_window_cap`] for what that costs and why it is affordable.
 pub fn fit_hyperbolic(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
     let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
     let r_lower = d_max / 20.0;
-    let r_upper = (rms_distance(distances, n) / HYPERBOLIC_KAPPA_MIN.sqrt()).max(r_lower);
+    let r_upper = hyperbolic_window_cap(distances, n, dim, r_lower);
 
     let mut objective = |r: f64| -> f64 { hyperbolic_residual(distances, n, dim, r) };
 
@@ -574,6 +811,41 @@ pub fn fit_hyperbolic(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
         residual,
         residual_normalised: normalise_residual(residual, n, d_max),
         at_upper_bound: at_upper,
+    }
+}
+
+/// Fit the flat model: `Σ|λ|` over the eigenvalues of the classical-MDS
+/// Gram matrix `B` outside its rank-`dim` PSD signature block.
+///
+/// There is no search, because Euclidean space has no curvature parameter
+/// — which is the whole point of having this arm.  The result is reported
+/// as a [`WilsonFit`] so it lands on the same axis as the curved fits:
+/// `residual_normalised` uses the identical `n · d_max²` gauge, so the
+/// three numbers are directly comparable.  `radius` is `f64::INFINITY`
+/// (the flat limit is `r → ∞`) and `at_upper_bound` is `false` (there is
+/// no window to be pinned against).
+///
+/// # This is the curved arms' null model, not a sibling
+///
+/// The three models are **nested**: `B` is the `r → ∞` limit of both
+/// `Z_spherical` and `Z_hyperbolic`, so the curved arms can always match
+/// this residual by running flat-ward, and — having a free parameter `r`
+/// this one lacks — can only ever do better within their windows.  A
+/// comparison of the three residuals is therefore a nested-model test
+/// ("does allowing curvature fit strictly better than flat?"), not a
+/// symmetric contest, and any decision rule built on it needs a margin
+/// rather than a bare argmin.  In particular the hyperbolic arm's
+/// residual converges to this one as [`HYPERBOLIC_KAPPA_MIN`] is
+/// loosened, so that cap sets the minimum curvature the comparison can
+/// resolve.
+pub fn fit_euclidean(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
+    let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
+    let residual = euclidean_residual(distances, n, dim);
+    WilsonFit {
+        radius: f64::INFINITY,
+        residual,
+        residual_normalised: normalise_residual(residual, n, d_max),
+        at_upper_bound: false,
     }
 }
 
@@ -605,6 +877,13 @@ pub fn spherical_residual_at(distances: &[f64], n: usize, dim: usize, r: f64) ->
 /// for a `dim`-dimensional model.
 pub fn hyperbolic_residual_at(distances: &[f64], n: usize, dim: usize, r: f64) -> f64 {
     hyperbolic_residual(distances, n, dim, r)
+}
+
+/// Diagnostic: raw Euclidean (classical-MDS) signature residual
+/// `Σ|λ_res|` for a `dim`-dimensional model.  Takes no radius — this is
+/// the flat limit the curved residuals converge to.
+pub fn euclidean_residual_at(distances: &[f64], n: usize, dim: usize) -> f64 {
+    euclidean_residual(distances, n, dim)
 }
 
 /// Minimum angular extent `d_max / r*` required for the spherical fit
