@@ -32,9 +32,6 @@
 //! number: it asks whether the closed-form solution reaches anywhere the sweep
 //! did not. Exactly `0` means the front already covers it, and it cannot be
 //! negative — adding a point can only lower a cost. **This is the headline.**
-//!
-//! `wilson.eps_*` and `wilson.dominated_by_front` are the parameter-free
-//! cross-check, carrying none of the preference model's choices.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -46,10 +43,7 @@ use fitting_analysis::cell::{discover_cells, truth_of};
 use fitting_analysis::objectives::{oriented_matrix, oriented_row, N_OBJECTIVES};
 use fitting_analysis::r2::{cell_summary, front_utilities, r2, Weights};
 use fitting_analysis::stats;
-use fitting_analysis::{
-    epsilon_pair, load_jsonl, pareto_front_mask, trial_records, write_jsonl, Error, Result,
-    TrialRecord,
-};
+use fitting_analysis::{load_jsonl, trial_records, write_jsonl, Error, Result, TrialRecord};
 
 /// The loss-weight setting Experiment 1 reads. `all_off` zeroes every auxiliary
 /// loss, recovering plain KL-divergence t-SNE, so geometry is the only thing
@@ -150,12 +144,6 @@ struct WilsonSummary {
     /// `R2(front) − R2(front ∪ {w})`, per region. Zero means the front already
     /// covers the closed-form solution. Never negative.
     r2_gain_over_front: Option<BTreeMap<String, f64>>,
-    /// `I_ε+({w}, front)`; `≤ 0` iff the Wilson point covers the whole front.
-    eps_wilson_vs_front: Option<f64>,
-    /// `I_ε+(front, {w})`; `≤ 0` iff the front covers the Wilson point.
-    eps_front_vs_wilson: Option<f64>,
-    /// Whether some front point dominates the Wilson point outright.
-    dominated_by_front: Option<bool>,
 }
 
 /// One `(dataset, N, geometry)` row.
@@ -368,9 +356,6 @@ fn wilson_summary(
         kappa: w.kappa,
         r2: None,
         r2_gain_over_front: None,
-        eps_wilson_vs_front: None,
-        eps_front_vs_wilson: None,
-        dominated_by_front: None,
     };
     if !comparable {
         return Some(summary);
@@ -387,12 +372,6 @@ fn wilson_summary(
     let base = r2_by_region(&cell.front, weights);
     let with_wilson = r2_by_region(&augmented, weights);
 
-    let pair = epsilon_pair(&singleton, &cell.front);
-
-    // The augmented front's mask says directly whether the front dominates the
-    // newcomer: if the Wilson point survives the sort, nothing dominates it.
-    let mask = pareto_front_mask(&augmented);
-
     summary.r2 = Some(r2_by_region(&singleton, weights));
     summary.r2_gain_over_front = Some(
         base.iter()
@@ -402,8 +381,5 @@ fn wilson_summary(
             })
             .collect(),
     );
-    summary.eps_wilson_vs_front = pair.as_ref().map(|p| p.setting_vs_baseline);
-    summary.eps_front_vs_wilson = pair.as_ref().map(|p| p.baseline_vs_setting);
-    summary.dominated_by_front = Some(!mask[augmented.len() - 1]);
     Some(summary)
 }

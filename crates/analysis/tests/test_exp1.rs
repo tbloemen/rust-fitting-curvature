@@ -1,13 +1,12 @@
 //! Tests for the pieces `bin/exp1.rs` depends on.
 //!
-//! The binary itself is thin glue over `cell_summary`, `front_utilities` and
-//! `epsilon_pair`, all of which have their own tests. What is new here, and so
+//! The binary itself is thin glue over `cell_summary` and `front_utilities`,
+//! both of which have their own tests. What is new here, and so
 //! what is worth pinning, is the ground-truth map and the properties the
 //! Experiment 1 table's two headline numbers rely on.
 
 use fitting_analysis::cell::{truth_of, GEOMETRIES, SYNTH_TRUTH};
 use fitting_analysis::objectives::N_OBJECTIVES;
-use fitting_analysis::pareto::pareto_front_mask;
 use fitting_analysis::r2::{front_utilities, r2, Weights};
 use fitting_analysis::TrialRecord;
 
@@ -175,32 +174,6 @@ fn a_singleton_never_beats_a_front_containing_it() {
             region.name
         );
     }
-}
-
-/// `dominated_by_front` is read off the augmented front's mask at the last
-/// index. Pin both directions, since getting this backwards would invert the
-/// column silently.
-#[test]
-fn dominance_flag_reads_the_augmented_mask() {
-    let front = sample_front();
-
-    // A point dominated by every front member.
-    let mut augmented = front.clone();
-    augmented.push(point(0.1));
-    let mask = pareto_front_mask(&augmented);
-    assert!(
-        !mask[augmented.len() - 1],
-        "a strictly worse point should be dominated"
-    );
-
-    // A point that beats everything.
-    let mut augmented = front.clone();
-    augmented.push(point(0.99));
-    let mask = pareto_front_mask(&augmented);
-    assert!(
-        mask[augmented.len() - 1],
-        "a strictly better point should survive the sort"
-    );
 }
 
 /// ΔR2 is formed baseline-minus-row because R2 is a cost, so a *lower* R2 for

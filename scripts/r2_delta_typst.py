@@ -223,7 +223,7 @@ def build(table, n, datasets, settings):
         f"      align: ({', '.join(align)}),",
         "      stroke: none,",
         # Eleven columns at the default 5pt side inset spend ~4cm of the text
-        # width on padding alone. Same treatment as `exp1_typst.py`.
+        # width on padding alone. Same treatment as `exp1_common.py`'s `render`.
         "      inset: (x: 2.5pt, y: 3pt),",
         "      table.hline(stroke: 0.8pt),",
         "      table.header(",
