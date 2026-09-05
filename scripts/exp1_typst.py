@@ -3,10 +3,17 @@ Turn the JSONL emitted by `crates/analysis/src/bin/exp1.rs` into a Typst
 `#figure(table(...))` fragment for the thesis.
 
 Usage:
+    uv run python scripts/exp1_typst.py --n 1000 --region all
+
+The input and output default to the paths the pipeline already uses -- `exp1`
+writes `results/exp1_geometry_match.jsonl`, and the fragment lands in `tables/`
+alongside the other generated Typst tables -- so the flags are only needed to
+override them:
+
     uv run python scripts/exp1_typst.py \
-        --input exp1_geometry_match.jsonl \
-        --output exp1_geometry_match.typ \
-        --n 1000 --region all
+        --input results/exp1_geometry_match.jsonl \
+        --output tables/exp1_geometry_match_n5000.typ \
+        --n 5000 --region all
 
 The fragment is self-contained: numbers are pre-rendered as Typst math, so it
 needs no package imports beyond what `docs/thesis/main.typ` already provides,
@@ -23,6 +30,15 @@ Stdlib only.
 import argparse
 import json
 import math
+import os
+
+
+def _ensure_parent(path: str) -> None:
+    """Create the output's directory, so the default `tables/` works on a fresh
+    clone (the directory holds only generated fragments, so it may not exist)."""
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 
 # Datasets flat-first, then grouped by the geometry they are built to have.
 # Rows absent from the JSONL are skipped; rows present but not listed here are
@@ -335,8 +351,8 @@ def build(rows, n, region):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--input", default="exp1_geometry_match.jsonl")
-    ap.add_argument("--output", default="exp1_geometry_match.typ")
+    ap.add_argument("--input", default="results/exp1_geometry_match.jsonl")
+    ap.add_argument("--output", default="tables/exp1_geometry_match.typ")
     ap.add_argument("--n", type=int, default=1000, help="sample size to tabulate")
     ap.add_argument("--region", default="all", help="preference region to report")
     a = ap.parse_args()
@@ -350,6 +366,7 @@ def main():
     if a.region not in regions:
         raise SystemExit(f"unknown region {a.region!r}; have {', '.join(regions)}")
 
+    _ensure_parent(a.output)
     with open(a.output, "w") as f:
         f.write(build(rows, a.n, a.region))
     print(f"wrote {a.output} (n={a.n}, region={a.region})")

@@ -82,25 +82,29 @@ struct StatsArgs {
     results_dir: PathBuf,
 
     /// Output JSONL path (one line per cell).
-    #[arg(long)]
+    #[arg(long, default_value = "results/r2_local.jsonl")]
     out: PathBuf,
 }
 
 #[derive(Parser, Debug)]
 struct AggregateArgs {
-    /// Stage-1 JSONL file(s).
+    /// Stage-1 JSONL file(s), as written by `stats --out`.
     #[arg(required = true)]
     tables: Vec<PathBuf>,
 
     /// Friedman + Holm results, one JSON object per (region, geometry) test.
-    #[arg(long, default_value = "r2_tests.jsonl")]
+    #[arg(long, default_value = "results/r2_tests.jsonl")]
     tests: PathBuf,
 
-    /// Optional path to write the per-dataset ΔR2 rows as JSONL.
+    /// Optional path to write the per-dataset ΔR2 rows as JSONL. Absent means
+    /// the table is not written; the pipeline's path is
+    /// `results/r2_delta.jsonl`, which is where `figures --r2-delta` and
+    /// `scripts/r2_delta_typst.py` look for it.
     #[arg(long)]
     deltas: Option<PathBuf>,
 
     /// Optional path for the descriptive per-(N, geometry, setting) ΔR2 table.
+    /// Same convention as `--deltas`: under `results/`, which is gitignored.
     #[arg(long)]
     descriptive: Option<PathBuf>,
 
@@ -121,7 +125,7 @@ struct CompareArgs {
     results_dir: PathBuf,
 
     /// Output JSONL path (one line per (dataset, geometry, N, setting)).
-    #[arg(long, default_value = "r2_epsilon.jsonl")]
+    #[arg(long, default_value = "results/r2_epsilon.jsonl")]
     out: PathBuf,
 
     /// Settings to compare against the baseline. The default is the four
@@ -138,7 +142,8 @@ struct CompareArgs {
     #[arg(long)]
     r2_table: Option<PathBuf>,
 
-    /// Optional path for the ΔR2 / Δε agreement table.
+    /// Optional path for the ΔR2 / Δε agreement table. Same convention as
+    /// `aggregate --deltas`: under `results/`, which is gitignored.
     #[arg(long, requires = "r2_table")]
     agreement: Option<PathBuf>,
 }
@@ -150,7 +155,7 @@ struct RecommendArgs {
     results_dir: PathBuf,
 
     /// Output JSONL path (one line per (cell, preference region)).
-    #[arg(long)]
+    #[arg(long, default_value = "results/recommendations.jsonl")]
     out: PathBuf,
 }
 

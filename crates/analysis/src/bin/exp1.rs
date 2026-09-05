@@ -68,7 +68,7 @@ struct Args {
 
     /// JSONL from `optimizer --mode wilson-mds`: the reconstructed Wilson fits
     /// scored on the ten Pareto objectives.
-    #[arg(long, default_value = "wilson_mds.jsonl")]
+    #[arg(long, default_value = "results/wilson_mds.jsonl")]
     wilson_mds: PathBuf,
 
     /// Loss-weight setting to read.
@@ -87,7 +87,7 @@ struct Args {
     #[arg(long)]
     wilson_fallback: bool,
 
-    #[arg(long, default_value = "exp1_geometry_match.jsonl")]
+    #[arg(long, default_value = "results/exp1_geometry_match.jsonl")]
     out: PathBuf,
 }
 
