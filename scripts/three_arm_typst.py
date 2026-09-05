@@ -3,9 +3,16 @@ Turn the JSONL emitted by `crates/core/examples/three_arm_residuals.rs` into a
 Typst `#figure(table(...))` fragment for the thesis.
 
 Usage:
+    uv run python scripts/three_arm_typst.py
+
+The defaults are the paths the pipeline already uses -- the example writes
+`results/three_arm_residuals.jsonl`, and the fragment lands in `tables/`
+alongside the other generated Typst tables -- so the flags are only needed to
+override them:
+
     uv run python scripts/three_arm_typst.py \
-        --input three_arm_residuals.jsonl \
-        --output three_arm_residuals.typ
+        --input results/three_arm_residuals.jsonl \
+        --output tables/three_arm_residuals.typ
 
 The fragment is self-contained: numbers are pre-rendered as Typst math, so it
 needs no package imports beyond what `docs/thesis/main.typ` already provides,
@@ -17,6 +24,15 @@ Stdlib only.
 import argparse
 import json
 import math
+import os
+
+
+def _ensure_parent(path: str) -> None:
+    """Create the output's directory, so the default `tables/` works on a fresh
+    clone (the directory holds only generated fragments, so it may not exist)."""
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 
 # Table order. Rows absent from the JSONL are skipped; rows present but not
 # listed here are appended at the end, so `--all` runs still produce output.
@@ -174,8 +190,8 @@ def build(rows: list[dict]) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--input", default="three_arm_residuals.jsonl")
-    ap.add_argument("--output", default="three_arm_residuals.typ")
+    ap.add_argument("--input", default="results/three_arm_residuals.jsonl")
+    ap.add_argument("--output", default="tables/three_arm_residuals.typ")
     a = ap.parse_args()
 
     with open(a.input) as f:
@@ -183,6 +199,7 @@ def main() -> None:
     if not rows:
         raise SystemExit(f"{a.input} is empty")
 
+    _ensure_parent(a.output)
     with open(a.output, "w") as f:
         f.write(build(rows))
     print(f"wrote {len(rows)} rows to {a.output}")

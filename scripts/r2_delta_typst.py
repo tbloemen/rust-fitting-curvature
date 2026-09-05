@@ -3,9 +3,16 @@ Turn the ΔR2 rows emitted by `crates/analysis/src/bin/r2.rs aggregate --deltas`
 into a Typst `#figure(table(...))` fragment for the thesis.
 
 Usage:
+    uv run python scripts/r2_delta_typst.py --datasets real --n 1000
+
+The input defaults to `results/r2_delta.jsonl`, where `r2 aggregate --deltas`
+writes it, and the output to `tables/r2_delta_<datasets>_n<N>.typ`, alongside
+the other generated Typst tables -- so both flags are only needed to override
+those:
+
     uv run python scripts/r2_delta_typst.py \
-        --input r2_delta.jsonl \
-        --output r2_delta_real_n1000.typ \
+        --input results/r2_delta.jsonl \
+        --output tables/r2_delta_real_n1000.typ \
         --datasets real --n 1000
 
 The fragment is self-contained: numbers are pre-rendered as Typst math, so it
@@ -24,6 +31,15 @@ Stdlib only.
 import argparse
 import json
 import math
+import os
+
+
+def _ensure_parent(path: str) -> None:
+    """Create the output's directory, so the default `tables/` works on a fresh
+    clone (the directory holds only generated fragments, so it may not exist)."""
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 
 # The five synthetic generators of known intrinsic geometry, flat-first and then
 # grouped by curvature sign, and the four real datasets of Experiment 2.  Rows
@@ -207,7 +223,7 @@ def build(table, n, datasets, settings):
         f"      align: ({', '.join(align)}),",
         "      stroke: none,",
         # Eleven columns at the default 5pt side inset spend ~4cm of the text
-        # width on padding alone. Same treatment as `exp1_typst.py`.
+        # width on padding alone. Same treatment as `exp1_common.py`'s `render`.
         "      inset: (x: 2.5pt, y: 3pt),",
         "      table.hline(stroke: 0.8pt),",
         "      table.header(",
@@ -331,8 +347,8 @@ def build(table, n, datasets, settings):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--input", default="r2_delta.jsonl")
-    ap.add_argument("--output", help="default: r2_delta_<datasets>_n<N>.typ")
+    ap.add_argument("--input", default="results/r2_delta.jsonl")
+    ap.add_argument("--output", help="default: tables/r2_delta_<datasets>_n<N>.typ")
     ap.add_argument("--n", type=int, default=1000, help="sample size to tabulate")
     ap.add_argument(
         "--datasets",
@@ -350,9 +366,10 @@ def main():
     settings = [s for s in a.settings.split(",") if s]
     if BASELINE not in settings:
         raise SystemExit(f"--settings must include the {BASELINE!r} baseline")
-    out = a.output or f"r2_delta_{a.datasets}_n{a.n}.typ"
+    out = a.output or f"tables/r2_delta_{a.datasets}_n{a.n}.typ"
 
     table = load(a.input, a.n, a.datasets, settings)
+    _ensure_parent(out)
     with open(out, "w") as f:
         f.write(build(table, a.n, a.datasets, settings))
     print(f"wrote {out} (n={a.n}, datasets={a.datasets})")

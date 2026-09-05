@@ -5,7 +5,6 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "matplotlib>=3.10.8",
     "nltk>=3.9",
     "numpy>=2.0",
     "scipy>=1.17.1",
@@ -14,3 +13,10 @@ dependencies = [
     "igraph>=0.11",
     "scikit-learn>=1.5",
 ]
+
+[tool.pyright]
+# The Experiment 1 generators in `scripts/` import their sibling `exp1_common`
+# module. At runtime Python puts the script's own directory on `sys.path`, so
+# `python scripts/exp1_r2_typst.py` resolves it; a type checker invoked from the
+# repo root has to be told.
+extraPaths = ["scripts"]

@@ -49,7 +49,7 @@ struct Args {
     /// chart per (dataset, geometry) under `<out-dir>/experiment_4`. Absent is
     /// not an error — it is a separate `r2` run — and the charts are then
     /// simply not written.
-    #[arg(long, default_value = "r2_delta.jsonl")]
+    #[arg(long, default_value = "results/r2_delta.jsonl")]
     r2_delta: PathBuf,
 }
 

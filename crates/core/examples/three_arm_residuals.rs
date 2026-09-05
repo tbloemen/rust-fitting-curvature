@@ -41,7 +41,9 @@
 //! Flags: `--n <usize>`, `--seed <u64>`, `--data-root <path>`,
 //! `--jsonl <path>`, `--all`. The data root defaults to `www/public/data`
 //! (relative to the cwd, so run from the repo root); a bare positional
-//! argument is still accepted as the data root.
+//! argument is still accepted as the data root. The JSONL defaults to
+//! `results/three_arm_residuals.jsonl`, where `scripts/three_arm_typst.py`
+//! looks for it when rendering `tables/three_arm_residuals.typ`.
 
 use std::fmt::Write as _;
 use std::io::Write as _;
@@ -215,7 +217,9 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let jsonl = args.get("--jsonl").unwrap_or("three_arm_residuals.jsonl");
+    let jsonl = args
+        .get("--jsonl")
+        .unwrap_or("results/three_arm_residuals.jsonl");
 
     let mut fixtures = common::thesis(args.n, args.seed, &args.data_root);
     if args.all {
@@ -296,6 +300,18 @@ fn main() {
     let agree = rows.iter().filter(|r| r.truth == r.winner).count();
     let labelled = rows.iter().filter(|r| r.truth != "?").count();
     println!("\n  argmin matches construction on {agree}/{labelled} datasets of known geometry");
+
+    // The default output lives under `results/`, which is gitignored and so is
+    // absent from a fresh clone; `File::create` does not make parent
+    // directories.
+    if let Some(parent) = std::path::Path::new(jsonl).parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                eprintln!("error: cannot create {}: {e}", parent.display());
+                std::process::exit(1);
+            }
+        }
+    }
 
     let mut out = match std::fs::File::create(jsonl) {
         Ok(f) => std::io::BufWriter::new(f),
