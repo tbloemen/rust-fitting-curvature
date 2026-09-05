@@ -2,7 +2,7 @@
 name = "fitting-core"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.81"
+rust-version = "1.82"
 
 [dependencies]
 
@@ -29,12 +29,4 @@ required-features = ["plot-examples"]
 
 [[example]]
 name = "wilson_residual_curve_real"
-required-features = ["plot-examples"]
-
-[[example]]
-name = "residual_vs_kappa"
-required-features = ["plot-examples"]
-
-[[example]]
-name = "spherical_gate_tradeoff"
 required-features = ["plot-examples"]
