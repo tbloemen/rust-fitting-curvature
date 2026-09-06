@@ -45,14 +45,6 @@ impl Evaluator {
         &self.high_dim_dist
     }
 
-    /// Class labels, as the label-aware metrics (`neighborhood_hit`, the
-    /// density measures) need them. Used by `--mode wilson-mds`, which scores
-    /// a reconstruction through [`metrics_from_embedding`] instead of running
-    /// an embedding through [`Evaluator::compute_all_metrics`].
-    pub fn labels(&self) -> &[u32] {
-        &self.dataset.labels
-    }
-
     /// Detect the best-fitting geometry for this dataset.  Returns only
     /// the [`GeometryVerdict`] (geometry label + curvature) — the caller
     /// acts on the decision, not the detector's diagnostic internals.
@@ -181,13 +173,14 @@ impl Evaluator {
 /// Score a configuration on every metric, given only its coordinates.
 ///
 /// Split out of [`Evaluator::compute_all_metrics`], which is now this function
-/// plus the t-SNE run that produces `points`. The split exists so that a
-/// configuration which did *not* come from t-SNE — the Wilson reconstruction
-/// of `--mode wilson-mds` — is measured by exactly this code rather than by a
-/// parallel copy of it: the same neighbourhood size `k`, the same azimuthal
-/// projection, the same metric implementations. Two embeddings scored by two
-/// pieces of code produce numbers that only look comparable, and the whole
-/// point of the Wilson-versus-front comparison is that they genuinely are.
+/// plus the t-SNE run that produces `points`. The split was introduced so a
+/// configuration that did *not* come from t-SNE — the Wilson reconstruction of
+/// the former `--mode wilson-mds` — went through exactly this code rather than
+/// a parallel copy. That mode is gone and `compute_all_metrics` is now the only
+/// caller; the split is kept because it is the seam any future
+/// score-these-coordinates path should re-use, for the same reason: two
+/// embeddings scored by two pieces of code produce numbers that only look
+/// comparable.
 ///
 /// `points` is row-major `n × ambient_dim` on the manifold of the given
 /// `curvature`, matching `EmbeddingState::points` / `Reconstruction::points`.
