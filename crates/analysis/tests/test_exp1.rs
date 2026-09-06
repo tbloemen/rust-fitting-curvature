@@ -1,9 +1,8 @@
 //! Tests for the pieces `bin/exp1.rs` depends on.
 //!
-//! The binary itself is thin glue over `cell_summary` and `front_utilities`,
-//! both of which have their own tests. What is new here, and so
-//! what is worth pinning, is the ground-truth map and the properties the
-//! Experiment 1 table's two headline numbers rely on.
+//! The binary itself is thin glue over `cell_summary`, which has its own tests.
+//! What is new here, and so what is worth pinning, is the ground-truth map and
+//! the ΔR2 sign convention.
 
 use fitting_analysis::cell::{truth_of, GEOMETRIES, SYNTH_TRUTH};
 use fitting_analysis::objectives::N_OBJECTIVES;
@@ -111,69 +110,10 @@ fn truth_covers_the_optimizer_synthetic_set() {
     }
 }
 
-// ─── Properties the table's headline numbers depend on ───────────────────────
+// ─── The ΔR2 sign convention ─────────────────────────────────────────────────
 
 fn point(fill: f64) -> [f64; N_OBJECTIVES] {
     [fill; N_OBJECTIVES]
-}
-
-/// Build a small spread-out front so the indicator has something to work with.
-fn sample_front() -> Vec<[f64; N_OBJECTIVES]> {
-    let mut a = point(0.5);
-    a[0] = 0.9;
-    let mut b = point(0.5);
-    b[1] = 0.9;
-    let mut c = point(0.6);
-    c[2] = 0.7;
-    vec![a, b, c]
-}
-
-/// `ΔR2^W = R2(front) − R2(front ∪ {w})` is the table's fair Wilson number
-/// precisely because it cannot be negative: adding a point to a set can only
-/// lower a cost. If this ever failed, a negative entry would read as "the
-/// closed-form solution hurt the front", which is not a thing that can happen.
-#[test]
-fn adding_a_point_never_raises_r2() {
-    let weights = Weights::new();
-    let front = sample_front();
-    let base = front_utilities(&front, &weights.vectors);
-
-    for fill in [0.0, 0.3, 0.55, 0.95] {
-        let mut augmented = front.clone();
-        augmented.push(point(fill));
-        let after = front_utilities(&augmented, &weights.vectors);
-
-        for region in &weights.regions {
-            let before = r2(&base, region);
-            let now = r2(&after, region);
-            assert!(
-                now <= before + 1e-12,
-                "region {}: adding a {fill}-point raised R2 from {before} to {now}",
-                region.name
-            );
-        }
-    }
-}
-
-/// The counterpart caveat, and the reason the singleton's R2 is not tabulated:
-/// a one-point set is scored strictly worse than a front containing it, so
-/// putting the two side by side would compare cardinality, not quality.
-#[test]
-fn a_singleton_never_beats_a_front_containing_it() {
-    let weights = Weights::new();
-    let front = sample_front();
-    let singleton = vec![front[0]];
-
-    let full = front_utilities(&front, &weights.vectors);
-    let one = front_utilities(&singleton, &weights.vectors);
-
-    for region in &weights.regions {
-        assert!(
-            r2(&one, region) >= r2(&full, region) - 1e-12,
-            "region {}: a singleton scored better than a superset",
-            region.name
-        );
-    }
 }
 
 /// ΔR2 is formed baseline-minus-row because R2 is a cost, so a *lower* R2 for

@@ -25,15 +25,15 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) dataset: Option<String>,
 
-    /// Run mode: "random" (default), "bayes", "scan", "pareto", "detect", or
-    /// "wilson-mds" (reconstruct each Wilson fit and score it on the ten
-    /// Pareto objectives, so it can be compared against the fronts directly).
+    /// Run mode: "random" (default), "bayes", "scan", "pareto" or "detect".
     /// random: sample random configs with continuous curvature, compute all metrics.
     /// bayes:  Bayesian optimisation over all 7 hyperparameters (requires --metric).
     ///         Geometry sign is detected automatically unless --geometry is given.
     /// scan:   sweep each parameter individually from a base config (requires --metric).
     /// pareto: qParEGO multi-objective optimisation over 10 objectives (no --metric needed).
-    /// detect: run curvature detection on the data distances; one JSONL line per dataset.
+    /// detect: run curvature detection on the data distances; one JSONL line per
+    ///         dataset, carrying κ_data plus all three Wilson arms and the δ(k)
+    ///         diagnostics. This is what `fitting-analysis`'s `exp1` reads.
     #[arg(long, default_value = "random")]
     pub(crate) mode: String,
 

@@ -34,8 +34,8 @@ use serde::Serialize;
 use crate::cli::Args;
 use crate::evaluate::Evaluator;
 use fitting_core::curvature_detection::{
-    detect_geometry, detect_hyperbolic, fit_hyperbolic, fit_spherical, reconstruct_hyperbolic,
-    reconstruct_spherical,
+    detect_geometry, detect_hyperbolic, fit_euclidean, fit_hyperbolic, fit_spherical,
+    reconstruct_hyperbolic, reconstruct_spherical,
 };
 
 /// One dataset's curvature-detection record (one JSONL line).
@@ -109,6 +109,23 @@ struct DetectionRecord {
     /// behind `hyp_kappa`.
     hyp_r_rms: f64,
 
+    // ── Wilson euclidean fit ──
+    // The flat null model: `B = −J D∘D J / 2`, the `r → ∞` limit of both curved
+    // kernels (Wilson et al. 2014, eqs. 24–26). It carries no free radius, so
+    // there is no search, nothing to pin, and no reconstruction to gauge — which
+    // is why it has three fields where the curved arms have seven. Reported so
+    // the curved residuals can be read as a nested-model question ("does
+    // allowing curvature buy a strictly better fit than flat?") rather than as
+    // bare numbers.
+    /// `Σ|λ|` over the residual eigenvalues of the classical-MDS kernel.
+    euc_residual: f64,
+    /// `euc_residual / (n · d_max²)`; the arm-comparable form, same gauge as
+    /// `sph_residual_normalised` and `hyp_residual_normalised`.
+    euc_residual_normalised: f64,
+    /// `0` exactly: the flat model has `K = 0`, so `κ = |K| · R_rms²` vanishes
+    /// on any gauge. Present so all three arms expose the same κ field.
+    euc_kappa: f64,
+
     // ── Growing-ball Gromov δ(k) saturation diagnostics ──
     /// Whether the δ(k) curve saturates (the theoretically-backed hyperbolic gate).
     delta_is_hyperbolic: bool,
@@ -149,6 +166,7 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
     let verdict = detect_geometry(distances, n, embed_dim);
     let spherical = fit_spherical(distances, n, embed_dim);
     let hyperbolic = fit_hyperbolic(distances, n, embed_dim);
+    let euclidean = fit_euclidean(distances, n, embed_dim);
     let hyp_delta = detect_hyperbolic(distances, n);
 
     let sph_curvature = 1.0 / (spherical.radius * spherical.radius);
@@ -213,6 +231,10 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
         hyp_curvature,
         hyp_kappa,
         hyp_r_rms: hyp_rec.r_rms(n),
+
+        euc_residual: euclidean.residual,
+        euc_residual_normalised: euclidean.residual_normalised,
+        euc_kappa: 0.0,
 
         delta_is_hyperbolic: hyp_delta.is_hyperbolic,
         delta_tail_slope: hyp_delta.tail_slope,
