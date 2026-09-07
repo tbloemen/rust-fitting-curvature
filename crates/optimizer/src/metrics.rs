@@ -26,6 +26,15 @@ pub struct AllMetrics {
     // Not optimised; logged to verify the (K, R_max) gauge problem.
     pub r_max: f64,
     pub r_rms: f64,
+    /// Origin-free spread: the radius of gyration over the pairwise manifold
+    /// geodesics. Equals the RMS distance to the centroid in flat space.
+    ///
+    /// `r_max`/`r_rms` are measured from a *fixed* pole, which is meaningful on
+    /// the hyperboloid (centred every iteration) but not on the sphere, where
+    /// `Sphere::center` is a no-op and PCA init lands the data on that pole's
+    /// equator — pinning `|K|·r_rms²` near `π²/4` regardless of curvature. This
+    /// column is the one to gauge κ with; see `evaluate::metrics_from_embedding`.
+    pub r_gyration: f64,
 }
 
 impl AllMetrics {
@@ -52,6 +61,7 @@ impl AllMetrics {
             cluster_density_measure: avg(|m| m.cluster_density_measure),
             r_max: avg(|m| m.r_max),
             r_rms: avg(|m| m.r_rms),
+            r_gyration: avg(|m| m.r_gyration),
         }
     }
 }

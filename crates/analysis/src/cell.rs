@@ -1,9 +1,10 @@
 //! Cell identity: parsing a results-file stem into its experiment coordinates,
 //! and finding every results file under a directory.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::error::{IoContext, Result};
+use crate::error::{Error, IoContext, Result};
 
 /// The loss-weight settings a sweep can be run under.
 pub const SETTINGS: [&str; 6] = [
@@ -73,17 +74,78 @@ impl Cell {
     }
 }
 
-/// Parse a results file stem like `all_off_mnist_n5000_hyperbolic`.
+/// Which sweep a results file came from, when its stem carries a marker after
+/// the geometry token. `None` — no marker — is the original sweeps.
+///
+/// The marker lives in the *filename* purely as a safety net: the sets are kept
+/// in separate directories (`results/` vs `results-rgyr/`), and differing
+/// basenames mean a mis-targeted rsync cannot silently overwrite one with the
+/// other. It is **not** part of [`Cell`]; see [`parse_cell_stem`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Variant {
+    /// `_rgyr` — the N=5000 curved re-run that logs the origin-free
+    /// `r_gyration` column ([`crate::records::TrialRecord::kappa_gyration`])
+    /// alongside the pole-relative `r_rms`.
+    Rgyr,
+}
+
+impl Variant {
+    /// Every variant, for exhaustive matching against a stem.
+    pub const ALL: [Variant; 1] = [Variant::Rgyr];
+
+    /// The stem suffix this variant is written as, without the separating `_`.
+    pub const fn suffix(self) -> &'static str {
+        match self {
+            Variant::Rgyr => "rgyr",
+        }
+    }
+
+    /// The variant a suffix names, or `None` if it names none.
+    pub fn from_suffix(suffix: &str) -> Option<Self> {
+        Variant::ALL.into_iter().find(|v| v.suffix() == suffix)
+    }
+}
+
+impl std::fmt::Display for Variant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.suffix())
+    }
+}
+
+/// Parse a results file stem like `all_off_mnist_n5000_hyperbolic`, returning
+/// the cell and the [`Variant`] the stem carried.
 ///
 /// Returns `None` for names that are not a plain trial-results stem (e.g.
 /// `*_pareto_*` front files, which contain a second geometry token).
 ///
 /// The setting is anchored at the start and the geometry at the end, so the
 /// split is unambiguous even though dataset names contain underscores.
+///
+/// **The variant is deliberately not part of [`Cell`].** Every figure builds its
+/// lookup keys with `Cell::new(...)`, so a variant field would make those
+/// lookups miss and `--results-dir results-rgyr` would render nothing. The
+/// directory selects the set; the marker only labels the file. Two files in one
+/// directory that parse to the same `Cell` are rejected by [`discover_cells`]
+/// rather than silently collapsing into one.
 pub fn parse_cell_stem(stem: &str) -> Option<Cell> {
+    parse_cell_stem_variant(stem).map(|(cell, _)| cell)
+}
+
+/// [`parse_cell_stem`], also returning the [`Variant`] the stem carried.
+pub fn parse_cell_stem_variant(stem: &str) -> Option<(Cell, Option<Variant>)> {
     if stem.contains("_pareto_") {
         return None;
     }
+    // Strip the variant before the geometry anchor: it sits *after* the geometry
+    // token, so leaving it on would fail the `ends_with(geometry)` test below and
+    // the file would be skipped entirely rather than parsed.
+    let (stem, variant) = match Variant::ALL.into_iter().find(|v| {
+        let s = v.suffix();
+        stem.len() > s.len() + 1 && stem.ends_with(s) && stem[..stem.len() - s.len()].ends_with('_')
+    }) {
+        Some(v) => (&stem[..stem.len() - v.suffix().len() - 1], Some(v)),
+        None => (stem, None),
+    };
     // Longest match first: the settings list has no shared prefixes today, but
     // matching in descending length order keeps that robust to new settings.
     let mut settings: Vec<&str> = SETTINGS.to_vec();
@@ -110,7 +172,7 @@ pub fn parse_cell_stem(stem: &str) -> Option<Cell> {
     if dataset.is_empty() {
         return None;
     }
-    Some(Cell::new(setting, dataset, n, geometry))
+    Some((Cell::new(setting, dataset, n, geometry), variant))
 }
 
 /// One results file and the experiment cell its name encodes.
@@ -120,6 +182,9 @@ pub struct CellFile {
     /// because `parse_cell_stem` already proved it is valid UTF-8.
     pub stem: String,
     pub cell: Cell,
+    /// Which sweep this file came from, or `None` for the original ones. Not
+    /// part of [`Cell`]: it labels the file, not the experiment.
+    pub variant: Option<Variant>,
 }
 
 /// Every trial-results JSONL under *results_dir*, with its parsed cell.
@@ -136,14 +201,34 @@ pub fn discover_cells(results_dir: &Path) -> Result<Vec<CellFile>> {
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
-        if let Some(cell) = parse_cell_stem(stem) {
+        if let Some((cell, variant)) = parse_cell_stem_variant(stem) {
             out.push(CellFile {
                 stem: stem.to_string(),
                 path: path.clone(),
                 cell,
+                variant,
             });
         }
     }
     out.sort_by(|a, b| a.stem.cmp(&b.stem));
+
+    // Two stems mapping to one cell means two variants of the same experiment
+    // landed in one directory — a mis-targeted rsync, most likely. Downstream
+    // every cell goes into a `BTreeMap` keyed by `Cell`, so the second insert
+    // would silently discard the first and every table would be computed over
+    // whichever file happened to sort last. Fail loudly instead.
+    //
+    // Keyed rather than pairwise on the sorted vec: the sort is by *stem*, and
+    // two stems for one cell need not be adjacent under it.
+    let mut seen: BTreeMap<&Cell, &str> = BTreeMap::new();
+    for cf in &out {
+        if let Some(first) = seen.insert(&cf.cell, &cf.stem) {
+            return Err(Error::DuplicateCell {
+                cell: format!("{:?}", cf.cell),
+                first: first.to_string(),
+                second: cf.stem.clone(),
+            });
+        }
+    }
     Ok(out)
 }

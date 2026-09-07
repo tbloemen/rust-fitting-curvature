@@ -86,6 +86,11 @@ pub(crate) fn load_prior_evals(path: &str, metrics: &[Metric]) -> Vec<PriorEval>
                     cluster_density_measure: 0.0,
                     r_max: rec.r_max.unwrap_or(nan),
                     r_rms: rec.r_rms.unwrap_or(nan),
+                    // Never read on the replay path: a reused trial only
+                    // re-`observe`s (which ignores it) and never rewrites its
+                    // JSONL line, so the value on disk — written by the chunk
+                    // that evaluated it fresh — is the one that survives.
+                    r_gyration: nan,
                 };
                 out.push(PriorEval {
                     metric_vec: metrics_to_vec(&all, metrics),

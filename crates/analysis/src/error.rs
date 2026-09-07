@@ -51,6 +51,15 @@ pub enum Error {
         geometry: String,
         dataset: String,
     },
+    /// Two results files in one directory parse to the same experiment cell —
+    /// typically the original sweep and its `_rgyr` re-run rsynced into one
+    /// place. Every table keys cells by [`crate::cell::Cell`], so one would
+    /// silently shadow the other; the two sets belong in separate directories.
+    DuplicateCell {
+        cell: String,
+        first: String,
+        second: String,
+    },
     /// A figure failed to render. plotters' error type is generic over the
     /// backend, so it is flattened to its message here, which keeps plotters
     /// out of the non-`plots` build.
@@ -110,6 +119,15 @@ impl fmt::Display for Error {
             } => write!(
                 f,
                 "no {baseline} cell for ({dataset}, {geometry}, N={n}) to compare against"
+            ),
+            Error::DuplicateCell {
+                cell,
+                first,
+                second,
+            } => write!(
+                f,
+                "{first}.jsonl and {second}.jsonl are both {cell}; keep result sets \
+                 in separate directories and select one with --results-dir"
             ),
             Error::Plot(msg) => write!(f, "rendering figure: {msg}"),
         }
