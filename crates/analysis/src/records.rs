@@ -73,6 +73,11 @@ pub struct TrialRecord {
     pub r_max: Option<f64>,
     #[serde(default)]
     pub r_rms: Option<f64>,
+    /// Origin-free spread (radius of gyration over the pairwise geodesics).
+    /// Written only by builds carrying the fix, so it is absent from every
+    /// pre-existing `results/` file and present throughout `results-rgyr/`.
+    #[serde(default)]
+    pub r_gyration: Option<f64>,
 
     /// Present only on `--mode scan` sweeps, which are excluded from analysis.
     #[serde(default)]
@@ -109,6 +114,7 @@ impl TrialRecord {
             "curvature" => self.curvature,
             "r_max" => self.r_max,
             "r_rms" => self.r_rms,
+            "r_gyration" => self.r_gyration,
             _ => None,
         }
     }
@@ -128,6 +134,34 @@ impl TrialRecord {
             .curvature_magnitude
             .or_else(|| self.curvature.map(f64::abs))?;
         let r = self.r_rms?;
+        if !(k.is_finite() && r.is_finite()) {
+            return None;
+        }
+        Some(k * r * r)
+    }
+
+    /// κ gauged by the origin-free radius, `|K|·r_gyration²`.
+    ///
+    /// The same quantity [`TrialRecord::kappa`] reports, measured without a
+    /// pole. On the hyperboloid and in Euclidean space the two agree closely —
+    /// `Hyperboloid::center` runs every iteration, so the origin already *is*
+    /// the centroid. On the sphere they do not: `Sphere::center` is a no-op and
+    /// `lift_pca_to_manifold` puts the constrained coordinate in the last
+    /// ambient slot while `distances_from_origin` reads the first, so PCA init
+    /// lands every point at ~90° from the pole κ is measured from and
+    /// [`TrialRecord::kappa`] sits at `π²/4 ≈ 2.4674` whatever `|K|` is
+    /// (68% of the 71,839 spherical trials in `results/`, whole range
+    /// `[1.66, 4.93]`).
+    ///
+    /// `None` for every file written before the fix, which is every file under
+    /// `results/`. Callers that need a κ for both sets must say which gauge they
+    /// are using rather than silently falling back — the two are not comparable
+    /// on the spherical arm.
+    pub fn kappa_gyration(&self) -> Option<f64> {
+        let k = self
+            .curvature_magnitude
+            .or_else(|| self.curvature.map(f64::abs))?;
+        let r = self.r_gyration?;
         if !(k.is_finite() && r.is_finite()) {
             return None;
         }

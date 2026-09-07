@@ -43,6 +43,7 @@ pub(crate) struct TrialResult {
     pub(crate) cluster_density_measure: Option<f64>,
     pub(crate) r_max: Option<f64>,
     pub(crate) r_rms: Option<f64>,
+    pub(crate) r_gyration: Option<f64>,
 
     pub(crate) time_ms: u64,
 
@@ -91,6 +92,7 @@ impl TrialResult {
             cluster_density_measure: None,
             r_max: None,
             r_rms: None,
+            r_gyration: None,
             time_ms,
             scan_param: None,
         }
@@ -115,6 +117,7 @@ impl TrialResult {
         self.cluster_density_measure = Some(m.cluster_density_measure);
         self.r_max = Some(m.r_max);
         self.r_rms = Some(m.r_rms);
+        self.r_gyration = Some(m.r_gyration);
         self
     }
 }

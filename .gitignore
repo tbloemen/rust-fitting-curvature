@@ -4,5 +4,8 @@ AGENTS.md
 CLAUDE.md
 plots
 results
+# The N=5000 re-run that logs the origin-free r_gyration column; kept apart from
+# results/ so the two kappa gauges never share a directory (slurm/run_5000_rgyr.sh).
+results-rgyr
 __pycache__
 www/dist

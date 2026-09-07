@@ -2,7 +2,10 @@
 
 use fitting_analysis::objectives::{oriented_row, oriented_value, N_OBJECTIVES, OBJECTIVES};
 use fitting_analysis::pareto::{slice_front_2d, step_polyline};
-use fitting_analysis::{pareto_front_mask, pareto_front_records, parse_cell_stem, TrialRecord};
+use fitting_analysis::{
+    pareto_front_mask, pareto_front_records, parse_cell_stem, parse_cell_stem_variant, TrialRecord,
+    Variant,
+};
 
 /// A record whose 10 objectives are all *v* except normalised stress, which is
 /// set so that its oriented value is also *v* (stress is minimised).
@@ -60,6 +63,33 @@ fn dataset_names_that_contain_a_geometry_still_split_correctly() {
     assert_eq!(c.dataset, "sphere");
     assert_eq!(c.geometry, "spherical");
     assert_eq!(c.n, 5000);
+}
+
+/// The `_rgyr` re-run's stems must parse to the *same* cell as the originals —
+/// that is what lets `--results-dir results-rgyr` render every existing figure
+/// unchanged — while still reporting the marker so the two can be told apart.
+#[test]
+fn variant_marker_is_stripped_but_reported() {
+    let plain = parse_cell_stem("all_off_sphere_n5000_spherical").unwrap();
+    let (marked, variant) = parse_cell_stem_variant("all_off_sphere_n5000_spherical_rgyr").unwrap();
+
+    assert_eq!(marked, plain, "a variant must not change the cell identity");
+    assert_eq!(variant, Some(Variant::Rgyr));
+    assert_eq!(Variant::Rgyr.suffix(), "rgyr");
+    assert_eq!(Variant::from_suffix("rgyr"), Some(Variant::Rgyr));
+    assert_eq!(Variant::from_suffix("nope"), None);
+    assert_eq!(
+        parse_cell_stem_variant("all_off_sphere_n5000_spherical")
+            .unwrap()
+            .1,
+        None
+    );
+
+    // The marker sits after the geometry, so the geometry anchor has to survive
+    // it — without the strip this stem parses as nothing at all.
+    assert_eq!(marked.geometry, "spherical");
+    assert_eq!(marked.dataset, "sphere");
+    assert_eq!(marked.n, 5000);
 }
 
 #[test]
