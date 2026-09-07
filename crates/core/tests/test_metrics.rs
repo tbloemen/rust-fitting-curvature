@@ -333,6 +333,130 @@ fn test_shepard_goodness_lower_for_uncorrelated() {
     );
 }
 
+#[test]
+fn test_shepard_goodness_collapsed_embedding_is_zero() {
+    // Every pairwise distance identical: the embedding carries no rank
+    // information whatsoever, so the score must be 0. The `1 - 6Σd²` shortcut
+    // with ordinal ranks scored this ~0.5-0.63 on block-structured data,
+    // because it broke the all-way tie by point index.
+    let n = 30;
+    let d_high = make_distance_matrix(n, 7);
+    let collapsed = vec![0.25f64; n * n];
+    let sg = shepard_goodness(&d_high, &collapsed, n);
+    assert!(
+        sg.abs() < 1e-12,
+        "Collapsed embedding should score 0, got {sg}"
+    );
+}
+
+#[test]
+fn test_shepard_goodness_ties_match_reference_spearman() {
+    // Heavily tied integer distances on both sides (the wordnet_mammals shape:
+    // BFS hop counts take a handful of distinct values). Compare against
+    // r_s computed independently as Pearson on fractional ranks.
+    let n = 24;
+    let mut d1 = vec![0.0f64; n * n];
+    let mut d2 = vec![0.0f64; n * n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let a = ((i + j) % 4) as f64 + 1.0;
+            let b = ((i * j) % 3) as f64 + 1.0;
+            d1[i * n + j] = a;
+            d1[j * n + i] = a;
+            d2[i * n + j] = b;
+            d2[j * n + i] = b;
+        }
+    }
+    let sg = shepard_goodness(&d1, &d2, n);
+
+    let mut u1 = Vec::new();
+    let mut u2 = Vec::new();
+    for i in 0..n {
+        for j in (i + 1)..n {
+            u1.push(d1[i * n + j]);
+            u2.push(d2[i * n + j]);
+        }
+    }
+    let expected = pearson_on_fractional_ranks(&u1, &u2).max(0.0);
+    assert!(
+        (sg - expected).abs() < 1e-10,
+        "Tied inputs should give r_s = {expected}, got {sg}"
+    );
+}
+
+#[test]
+fn test_shepard_goodness_tie_order_is_irrelevant() {
+    // Permuting points must not change the score. Under ordinal ranking it
+    // does, because ties are then resolved by array position.
+    let n = 20;
+    let mut d1 = vec![0.0f64; n * n];
+    let mut d2 = vec![0.0f64; n * n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let a = ((i + j) % 3) as f64;
+            let b = ((i + 2 * j) % 5) as f64;
+            d1[i * n + j] = a;
+            d1[j * n + i] = a;
+            d2[i * n + j] = b;
+            d2[j * n + i] = b;
+        }
+    }
+    let sg = shepard_goodness(&d1, &d2, n);
+
+    // Reverse the point order in both matrices: same distance multiset, same
+    // pairing, different array layout.
+    let perm: Vec<usize> = (0..n).rev().collect();
+    let mut p1 = vec![0.0f64; n * n];
+    let mut p2 = vec![0.0f64; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            p1[i * n + j] = d1[perm[i] * n + perm[j]];
+            p2[i * n + j] = d2[perm[i] * n + perm[j]];
+        }
+    }
+    let sg_perm = shepard_goodness(&p1, &p2, n);
+    assert!(
+        (sg - sg_perm).abs() < 1e-12,
+        "Score changed under point relabelling: {sg} vs {sg_perm}"
+    );
+}
+
+/// Reference `r_s`: the Pearson correlation coefficient of the rank variables
+/// `R[X]`, `R[Y]`, with ties given fractional (average) ranks.
+fn pearson_on_fractional_ranks(a: &[f64], b: &[f64]) -> f64 {
+    fn fractional_ranks(v: &[f64]) -> Vec<f64> {
+        let mut idx: Vec<usize> = (0..v.len()).collect();
+        idx.sort_by(|&x, &y| v[x].total_cmp(&v[y]));
+        let mut r = vec![0.0; v.len()];
+        let mut i = 0;
+        while i < idx.len() {
+            let mut j = i;
+            while j + 1 < idx.len() && v[idx[j + 1]] == v[idx[i]] {
+                j += 1;
+            }
+            let avg = (i + j) as f64 / 2.0;
+            for &k in &idx[i..=j] {
+                r[k] = avg;
+            }
+            i = j + 1;
+        }
+        r
+    }
+    let (ra, rb) = (fractional_ranks(a), fractional_ranks(b));
+    let m = ra.len() as f64;
+    let ma = ra.iter().sum::<f64>() / m;
+    let mb = rb.iter().sum::<f64>() / m;
+    let mut cov = 0.0;
+    let mut va = 0.0;
+    let mut vb = 0.0;
+    for (x, y) in ra.iter().zip(rb.iter()) {
+        cov += (x - ma) * (y - mb);
+        va += (x - ma) * (x - ma);
+        vb += (y - mb) * (y - mb);
+    }
+    cov / (va * vb).sqrt()
+}
+
 // ---------------------------------------------------------------------------
 // Before vs after projection distinction
 // ---------------------------------------------------------------------------
