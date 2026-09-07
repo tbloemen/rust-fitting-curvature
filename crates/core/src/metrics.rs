@@ -533,13 +533,28 @@ pub fn davies_bouldin_ratio(
 // E. Distance-rank preservation
 // ---------------------------------------------------------------------------
 
-/// Assign 0-based ranks to `values` (rank 0 = smallest value).
-fn rank_vector(values: &[f64]) -> Vec<usize> {
+/// The rank variable `R[X]` of `values`, using **fractional ranks**: identical
+/// values "are each assigned fractional ranks equal to the average of their
+/// positions" (Spearman's rank correlation coefficient, *Definition and
+/// calculation*). 0-based here, so rank 0 is the smallest value.
+///
+/// Ties are not exotic in this codebase, which is why the fractional
+/// convention matters rather than being a formality.
+fn fractional_rank_vector(values: &[f64]) -> Vec<f64> {
     let mut indices: Vec<usize> = (0..values.len()).collect();
     indices.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
-    let mut ranks = vec![0usize; values.len()];
-    for (rank, &idx) in indices.iter().enumerate() {
-        ranks[idx] = rank;
+    let mut ranks = vec![0.0; values.len()];
+    let mut start = 0;
+    while start < indices.len() {
+        let mut end = start;
+        while end + 1 < indices.len() && values[indices[end + 1]] == values[indices[start]] {
+            end += 1;
+        }
+        let fractional_rank = (start + end) as f64 / 2.0;
+        for &idx in &indices[start..=end] {
+            ranks[idx] = fractional_rank;
+        }
+        start = end + 1;
     }
     ranks
 }
@@ -616,15 +631,42 @@ pub fn neighborhood_hit(embedded_distances: &[f64], labels: &[u32], n: usize, k:
     total / n as f64
 }
 
-/// Shepard goodness (Spearman rank correlation of pairwise distances).
+/// Shepard goodness `M_shep` (Espadoto et al.): Spearman's rank correlation
+/// coefficient `r_s` between the pairwise distances of the original space and
+/// those of the embedding.
 ///
-/// Computes the Spearman rank correlation between all N*(N-1)/2 upper-triangle
-/// pairwise distances in the original space and in the embedding, giving a
-/// scalar measure of how well the global rank-order of distances is preserved.
+/// The observations `(X_i, Y_i)` are the `m = n(n−1)/2` upper-triangle point
+/// pairs — note that the statistical sample size is `m`, not this function's
+/// `n`, which counts *points*, not observations. `r_s` is then a scalar measure
+/// of how well the global rank-order of distances is preserved.
 ///
-/// Returns a value in [0, 1], with **1 being best** (perfect rank order
-/// preservation).  The result is clipped to 0 from below since negative
-/// correlations are meaningless for projection quality.
+/// Computed from the general definition, as the Pearson correlation
+/// coefficient of the two rank variables:
+///
+/// `r_s = ρ(R[X], R[Y]) = cov(R[X], R[Y]) / (σ_R[X] · σ_R[Y])`
+///
+/// and deliberately **not** via the familiar shortcut
+///
+/// `r_s = 1 − 6·Σd_i² / (m(m²−1))`,  `d_i = R[X_i] − R[Y_i]`
+///
+/// which "applies only when all n ranks are distinct integers (no ties)".
+/// These distance vectors are routinely full of ties (see
+/// [`fractional_rank_vector`]), so the standard guidance holds: with ties
+/// present that formula "should not be used" and "the Pearson correlation
+/// coefficient should be calculated on the ranks" instead. Using it anyway
+/// with ordinal ranks scored a fully collapsed embedding — every pairwise
+/// distance identical, so no rank information at all — at 0.63 on
+/// `tree_structured` and 0.51 on `hyperbolic_shells`, purely from tie-breaking
+/// by point index.
+///
+/// Two project-specific deviations from textbook `r_s ∈ [−1, 1]`:
+///
+/// - The result is clipped to 0 from below, since negative correlations are
+///   meaningless for projection quality. So the returned value is in [0, 1],
+///   with **1 being best** (perfect rank order preservation).
+/// - Degenerate input — either side constant, so `σ_R = 0` and `r_s` is
+///   undefined (`scipy.stats.spearmanr` returns NaN here) — returns 0 rather
+///   than NaN, because this feeds a Pareto objective where NaN is a hazard.
 pub fn shepard_goodness(high_dim_distances: &[f64], embedded_distances: &[f64], n: usize) -> f64 {
     let m = n * (n - 1) / 2;
     if m < 2 {
@@ -640,25 +682,33 @@ pub fn shepard_goodness(high_dim_distances: &[f64], embedded_distances: &[f64], 
         }
     }
 
-    let ranks_high = rank_vector(&d_high);
-    let ranks_embed = rank_vector(&d_embed);
+    let r_x = fractional_rank_vector(&d_high);
+    let r_y = fractional_rank_vector(&d_embed);
 
-    // Spearman: r_s = 1 - 6 * sum(d_i^2) / (m * (m^2 - 1))
-    let sum_sq: f64 = ranks_high
-        .iter()
-        .zip(ranks_embed.iter())
-        .map(|(&rh, &re)| {
-            let diff = rh as f64 - re as f64;
-            diff * diff
-        })
-        .sum();
-
-    let denom = m as f64 * (m as f64 * m as f64 - 1.0);
-    if denom < 1e-12 {
-        return 1.0;
+    // cov(R[X], R[Y]) / (σ_R[X] · σ_R[Y]), with the 1/m factors cancelling.
+    // Both mean ranks are (m-1)/2 whatever the tie pattern, since fractional
+    // ranks redistribute 0..m-1 without changing their sum; the σ do change
+    // — ties shrink them — which is exactly what the shortcut cannot see.
+    let mean_rank = (m - 1) as f64 / 2.0;
+    let mut cov = 0.0;
+    let mut var_x = 0.0;
+    let mut var_y = 0.0;
+    for (&rx, &ry) in r_x.iter().zip(r_y.iter()) {
+        let (dx, dy) = (rx - mean_rank, ry - mean_rank);
+        cov += dx * dy;
+        var_x += dx * dx;
+        var_y += dy * dy;
     }
 
-    (1.0 - 6.0 * sum_sq / denom).max(0.0)
+    // A constant distance vector collapses every rank onto `mean_rank`, so
+    // σ_R = 0 and r_s is undefined. That is a total loss of rank structure,
+    // so it scores 0, not 1.
+    let sigma_product = (var_x * var_y).sqrt();
+    if sigma_product < 1e-12 {
+        return 0.0;
+    }
+
+    (cov / sigma_product).max(0.0)
 }
 
 // ---------------------------------------------------------------------------
