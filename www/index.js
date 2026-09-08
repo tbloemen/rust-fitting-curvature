@@ -18,7 +18,7 @@ import PARAMS from "@config/params.json";
 
 const PARAM_CONFIG = Object.fromEntries(PARAMS.map((p) => [p.name, p]));
 
-// The six qParEGO objectives, in the order `default_pareto_metrics` writes them
+// The five qParEGO objectives, in the order `default_pareto_metrics` writes them
 // (crates/optimizer/src/pareto.rs). All are measured after projection to 2D;
 // the manifold variants are still recorded on each trial but are no longer
 // optimised, so a front's `metrics` object does not carry them.
@@ -734,7 +734,6 @@ const METRIC_GROUPS = [
     metrics: [
       { key: "trustworthiness", label: "Trustworthiness", dir: "↑" },
       { key: "continuity", label: "Continuity", dir: "↑" },
-      { key: "knn_overlap", label: "KNN Overlap", dir: "↑" },
       { key: "neighborhood_hit", label: "Neighborhood Hit", dir: "↑" },
     ],
   },

@@ -23,9 +23,9 @@ fn score(front: &[[f64; N_OBJECTIVES]], w: &Weights, region: &str) -> f64 {
 #[test]
 fn simplex_has_the_expected_size_and_every_vector_sums_to_one() {
     let w = Weights::new();
-    // C(s + k - 1, k - 1) = C(10, 5) = 252 for k = 6, s = 5.
+    // C(s + k - 1, k - 1) = C(9, 4) = 126 for k = 5, s = 5.
     assert_eq!(w.s, Weights::DEFAULT_S);
-    assert_eq!(w.vectors.len(), 252);
+    assert_eq!(w.vectors.len(), 126);
     assert_eq!(w.counts.len(), w.vectors.len());
 
     for (counts, lambda) in w.counts.iter().zip(&w.vectors) {
@@ -39,16 +39,16 @@ fn simplex_has_the_expected_size_and_every_vector_sums_to_one() {
 #[test]
 fn resolution_flows_through_the_enumeration_and_the_regions() {
     let w = Weights::with_resolution(2);
-    // C(2 + 5, 5) = 21, and "at least half the mass" is now a count of 1.
+    // C(2 + 4, 4) = 15, and "at least half the mass" is now a count of 1.
     assert_eq!(w.s, 2);
-    assert_eq!(w.vectors.len(), 21);
+    assert_eq!(w.vectors.len(), 15);
     for counts in &w.counts {
         let total: u32 = counts.iter().map(|&c| u32::from(c)).sum();
         assert_eq!(total, 2, "counts {counts:?} must sum to s");
     }
     // The families partition the objectives, so every vector puts at least one
-    // of its two units on some family and the family regions have to cover the
-    // whole simplex.
+    // of its two units on some family's objectives and the family regions have
+    // to cover the whole simplex.
     let covered: std::collections::BTreeSet<usize> = FAMILIES
         .iter()
         .flat_map(|(f, _)| w.region(f).expect("family region exists").indices.clone())
@@ -95,25 +95,29 @@ fn every_objective_resolves_on_a_record() {
 fn region_sizes_match_the_combinatorics() {
     let w = Weights::new();
 
-    assert_eq!(w.region(REGION_ALL).unwrap().indices.len(), 252);
+    assert_eq!(w.region(REGION_ALL).unwrap().indices.len(), 126);
 
-    // At least 3 of 5 units on the family's two objectives, the other four
-    // objectives taking the rest:
-    //   t=3: 4·C(5,3)=40, t=4: 5·C(4,3)=20, t=5: 6·C(3,3)=6  ⇒ 66.
-    for (family, _) in FAMILIES {
+    // At least 3 of 5 units on the family's own objectives, the remaining
+    // objectives taking the rest. For a two-objective family out of five:
+    //   t=3: 4·C(4,2)=24, t=4: 5·C(3,2)=15, t=5: 6·C(2,2)=6  ⇒ 45.
+    // A one-objective family is the single-objective count below, 15 — which
+    // is exactly why `class_separation` currently duplicates the
+    // `neighborhood_hit` region.
+    for (family, members) in FAMILIES {
+        let want = if members.len() == 2 { 45 } else { 15 };
         assert_eq!(
             w.region(family).unwrap().indices.len(),
-            66,
+            want,
             "region {family}"
         );
     }
 
-    // At least 3 of 5 units on one objective, the other five taking the rest:
-    //   l=3: C(6,4)=15, l=4: C(5,4)=5, l=5: 1  ⇒ 21.
+    // At least 3 of 5 units on one objective, the other four taking the rest:
+    //   l=3: C(5,3)=10, l=4: C(4,3)=4, l=5: 1  ⇒ 15.
     for objective in OBJECTIVES {
         assert_eq!(
             w.region(objective).unwrap().indices.len(),
-            21,
+            15,
             "region {objective}"
         );
     }
@@ -124,7 +128,10 @@ fn families_partition_the_objectives() {
     // FAMILIES indexes into OBJECTIVES by position, so a reordering of either
     // silently regroups the regions. Every objective must belong to exactly one
     // family.
-    let mut seen: Vec<usize> = FAMILIES.iter().flat_map(|(_, idx)| *idx).collect();
+    let mut seen: Vec<usize> = FAMILIES
+        .iter()
+        .flat_map(|(_, idx)| idx.iter().copied())
+        .collect();
     seen.sort_unstable();
     assert_eq!(seen, (0..N_OBJECTIVES).collect::<Vec<_>>());
 }
@@ -133,13 +140,13 @@ fn families_partition_the_objectives() {
 fn a_family_region_puts_at_least_half_its_mass_on_its_own_objectives() {
     let w = Weights::new();
     let half = w.s.div_ceil(2) as u8;
-    for (family, [a, b]) in FAMILIES {
+    for (family, members) in FAMILIES {
         for &i in &w.region(family).unwrap().indices {
             let c = &w.counts[i];
+            let mass: u8 = members.iter().map(|&j| c[j]).sum();
             assert!(
-                c[a] + c[b] >= half,
-                "region {family} admits {c:?}, which puts {} of {} units on it",
-                c[a] + c[b],
+                mass >= half,
+                "region {family} admits {c:?}, which puts {mass} of {} units on it",
                 w.s
             );
         }
@@ -153,10 +160,11 @@ fn a_family_region_penalises_its_own_objectives_hardest() {
     // cost more under that family than degrading someone else's by the same
     // amount. (R2 is a cost, so "worse" is larger.)
     let w = Weights::new();
-    let degrade = |[a, b]: [usize; 2]| {
+    let degrade = |members: &[usize]| {
         let mut p = flat(0.9);
-        p[a] = 0.1;
-        p[b] = 0.1;
+        for &j in members {
+            p[j] = 0.1;
+        }
         p
     };
     for (family, own) in FAMILIES {
@@ -293,7 +301,6 @@ fn record(v: f64) -> TrialRecord {
         shepard_goodness_manifold: Some(v),
         neighborhood_hit: Some(v),
         neighborhood_hit_manifold: Some(v),
-        class_density_measure: Some(v),
         ..Default::default()
     }
 }

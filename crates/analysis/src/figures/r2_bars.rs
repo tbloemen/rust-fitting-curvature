@@ -113,7 +113,6 @@ fn short_metric(metric: &str) -> &str {
         "normalized_stress" => "stress",
         "shepard_goodness" => "shep",
         "neighborhood_hit" => "nh",
-        "class_density_measure" => "cdm",
         // families
         "structure" => "struct",
         "distance" => "dist",

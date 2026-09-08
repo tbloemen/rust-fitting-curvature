@@ -1,7 +1,7 @@
 //! Post-hoc analysis of the qParEGO sweeps: Pareto fronts, the R2 indicator, and
 //! the statistics behind the thesis result figures.
 //!
-//! The six qParEGO objectives (see `crates/optimizer/src/pareto.rs` ::
+//! The five qParEGO objectives (see `crates/optimizer/src/pareto.rs` ::
 //! `default_pareto_metrics`) are all measured on the 2D projection, and all
 //! bounded in `[0, 1]` by construction. One of them (normalised stress) is
 //! minimised; the rest are maximised. Everything here works in an *oriented*

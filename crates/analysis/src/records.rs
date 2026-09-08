@@ -68,14 +68,6 @@ pub struct TrialRecord {
     pub neighborhood_hit: Option<f64>,
     #[serde(default)]
     pub neighborhood_hit_manifold: Option<f64>,
-    /// Projection-only and label-aware; an objective since the set moved to
-    /// projected-only metrics. The other three label-aware metrics
-    /// (`dunn_index`, `davies_bouldin_ratio`, `cluster_density_measure`) are
-    /// deliberately absent: they are unbounded, so they are not objectives and
-    /// nothing here reads them.
-    #[serde(default)]
-    pub class_density_measure: Option<f64>,
-
     #[serde(default)]
     pub r_max: Option<f64>,
     #[serde(default)]
@@ -104,7 +96,6 @@ impl TrialRecord {
             "shepard_goodness_manifold" => self.shepard_goodness_manifold,
             "neighborhood_hit" => self.neighborhood_hit,
             "neighborhood_hit_manifold" => self.neighborhood_hit_manifold,
-            "class_density_measure" => self.class_density_measure,
             _ => None,
         }
     }

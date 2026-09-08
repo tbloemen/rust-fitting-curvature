@@ -1,11 +1,14 @@
 //! Embedding quality metrics.
 //!
 //! Metrics grouped into:
-//! - A. Local structure preservation (trustworthiness, continuity, knn_overlap)
-//! - B. Global geometry preservation (geodesic_distortion)
-//! - C. Space efficiency (radial_distribution)
-//! - D. Perceptual evaluation (class_density_measure, cluster_density_measure,
-//!   davies_bouldin, davies_bouldin_ratio)
+//! - A. Local structure preservation (trustworthiness, continuity)
+//! - B. Class separation (neighborhood_hit, cluster_density_measure,
+//!   davies_bouldin, davies_bouldin_ratio, dunn_index)
+//! - C. Distance-rank preservation (normalized_stress, shepard_goodness)
+//!
+//! Every metric takes a *distance matrix*, never a manifold: the
+//! before/after-projection distinction is carried entirely by which matrix the
+//! caller passes in.
 
 // ---------------------------------------------------------------------------
 // Helpers

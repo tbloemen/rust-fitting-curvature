@@ -75,7 +75,7 @@ impl Weights {
     /// Enumerate the simplex at [`Self::DEFAULT_S`] and build every preference
     /// region.
     ///
-    /// For six objectives at `s = 5` this is `C(10, 5) = 252` vectors.
+    /// For five objectives at `s = 5` this is `C(9, 4) = 126` vectors.
     pub fn new() -> Self {
         Self::with_resolution(Self::DEFAULT_S)
     }
@@ -146,8 +146,10 @@ fn fill(
 /// The preference regions: the whole simplex, one per family, one per objective.
 ///
 /// Both the family and the single-objective regions use the same "at least half
-/// the mass" rule, which at `s = 5` means an integer count of 3 or more. That
-/// gives 252 / 66 / 21 vectors respectively; `test_r2.rs` pins all three.
+/// the mass" rule, which at `s = 5` means an integer count of 3 or more. Over
+/// the 126 vectors of the 5-objective simplex that admits 45 for a
+/// two-objective family and 15 for a single objective — and so also 15 for
+/// `class_separation`, which currently holds one. `test_r2.rs` pins all of them.
 ///
 /// The families are *not* defined as "supported entirely on" their objectives,
 /// the way the old `manifold` / `projected` surface regions were. A family holds
@@ -160,10 +162,14 @@ fn build_regions(counts: &[[u8; N_OBJECTIVES]], s: usize) -> Vec<Region> {
         indices: (0..counts.len()).collect(),
     }];
 
-    for (name, [a, b]) in FAMILIES {
+    for (name, members) in FAMILIES {
         regions.push(Region {
             name: name.to_string(),
-            indices: select(counts, |c| c[a] + c[b] >= half),
+            // `u16` because a family may hold more than two objectives and
+            // `s` can be up to 255; summing `u8` counts in place would wrap.
+            indices: select(counts, |c| {
+                members.iter().map(|&j| c[j] as u16).sum::<u16>() >= half as u16
+            }),
         });
     }
 
@@ -308,7 +314,7 @@ pub struct CellSummary {
 /// The oriented objective values of one record, by objective name.
 ///
 /// Used by the recommendation table, which reports what a recommended
-/// configuration attains on all six objectives alongside its hyperparameters.
+/// configuration attains on all five objectives alongside its hyperparameters.
 pub fn oriented_objectives(record: &TrialRecord) -> BTreeMap<String, f64> {
     let row = crate::objectives::oriented_row(record);
     OBJECTIVES

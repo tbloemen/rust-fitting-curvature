@@ -13,10 +13,10 @@
 //!
 //! * R2 is only **weakly** Pareto compliant; the additive ε-indicator is fully
 //!   compliant, so `I ≤ 0` is a statement about domination, not about a mean.
-//! * R2 averages over 252 weight vectors, which can bury a regression confined
+//! * R2 averages over 126 weight vectors, which can bury a regression confined
 //!   to one corner of objective space. ε is a **worst case** and cannot.
 //!
-//! Both quantities live in the oriented space of [`crate::objectives`] — all six
+//! Both quantities live in the oriented space of [`crate::objectives`] — all five
 //! objectives in `[0, 1]`, higher better — so an ε is directly readable as
 //! "objective units", and the NaN-freedom `oriented_value` guarantees carries
 //! through: nothing here can produce a NaN from finite input.

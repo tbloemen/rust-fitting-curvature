@@ -24,7 +24,6 @@ fn record_at(v: f64) -> TrialRecord {
         shepard_goodness_manifold: Some(v),
         neighborhood_hit: Some(v),
         neighborhood_hit_manifold: Some(v),
-        class_density_measure: Some(v),
         ..Default::default()
     }
 }

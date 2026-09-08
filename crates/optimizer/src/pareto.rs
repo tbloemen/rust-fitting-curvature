@@ -239,8 +239,8 @@ pub fn run_pareto(
     pb.println(format!("Pareto front written to {}", front_path));
 }
 
-/// Default set of objectives for --mode pareto: six metrics, all measured on
-/// the 2D projection, giving 6 objectives total.
+/// Default set of objectives for --mode pareto: five metrics, all measured on
+/// the 2D projection, giving 5 objectives total.
 ///
 /// Two rules fix this list.
 ///
@@ -251,12 +251,12 @@ pub fn run_pareto(
 /// `AllMetrics` changed — they just no longer steer the search. `figures/exp4.rs`
 /// reads those columns and is what shows whether dropping them was justified.
 ///
-/// **Bounded in `[0, 1]` only.** `class_density_measure` is the one of the four
-/// label-aware, projection-only metrics that qualifies. `dunn_index`,
-/// `davies_bouldin_ratio` and `cluster_density_measure` are ratios, unbounded
-/// above, and measured over `results/` their upper tails reach 3.0e10, 2.9e11
-/// and 2e24 respectively — the last mostly from collapsed clusters hitting the
-/// `1e-12` radius floor in the formula. Admitting one would break both consumers:
+/// **Bounded in `[0, 1]` only.** Of the label-aware, projection-only metrics
+/// only `neighborhood_hit` qualifies. `dunn_index`, `davies_bouldin_ratio` and
+/// `cluster_density_measure` are ratios, unbounded above, and measured over
+/// `results/` their upper tails reach 3.0e10, 2.9e11 and 2e24 respectively —
+/// the last mostly from collapsed clusters hitting the `1e-12` radius floor in
+/// the formula. Admitting one would break both consumers:
 /// `scalarize_subset` min-max normalises per batch, so a single outlier flattens
 /// that axis to ~0 for every real trial, and `fitting_analysis::oriented_value`
 /// clamps to `[0, 1]`, which would peg 74% of trials at 1.0 on that axis.

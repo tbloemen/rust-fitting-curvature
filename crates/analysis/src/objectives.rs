@@ -1,8 +1,8 @@
-//! The 6 qParEGO objectives and their orientation into `[0, 1]`-higher-is-better.
+//! The 5 qParEGO objectives and their orientation into `[0, 1]`-higher-is-better.
 
 use crate::records::TrialRecord;
 
-/// The 6 qParEGO objectives, in the order written by the optimizer
+/// The 5 qParEGO objectives, in the order written by the optimizer
 /// (`default_pareto_metrics` in `crates/optimizer/src/pareto.rs`).
 ///
 /// Every one is measured **after projection to 2D** and is bounded in `[0, 1]`
@@ -15,12 +15,11 @@ use crate::records::TrialRecord;
 /// - *Bounded only.* [`oriented_value`] clamps to `[0, 1]` and the R2 ideal
 ///   point is pinned at `(1, …, 1)`, so an unbounded objective would be
 ///   silently truncated rather than measured. That is why `dunn_index`,
-///   `davies_bouldin_ratio` and `cluster_density_measure` are absent while
-///   `class_density_measure` is present: the first three are ratios whose upper
-///   tails over `results/` reach 3.0e10, 2.9e11 and 2e24. Admitting one would
-///   require estimated ideal/nadir bounds (Karl et al., *MOHPO — An Overview*,
-///   §3.3.3; Grodzevich & Romanko 2006 §4.2), which no longer applies to a set
-///   whose limits are all known a priori.
+///   `davies_bouldin_ratio` and `cluster_density_measure` are absent: all three
+///   are ratios whose upper tails over `results/` reach 3.0e10, 2.9e11 and 2e24.
+///   Admitting one would require estimated ideal/nadir bounds (Karl et al.,
+///   *MOHPO — An Overview*, §3.3.3; Grodzevich & Romanko 2006 §4.2), which no
+///   longer applies to a set whose limits are all known a priori.
 ///
 /// Row order is grouped by [`FAMILIES`] and is otherwise a free choice — the
 /// indicators are invariant under a relabelling of the axes (the weight simplex
@@ -55,13 +54,26 @@ pub const N_OBJECTIVES: usize = OBJECTIVES.len();
 /// resemblance to trustworthiness/continuity is that it is a k-NN statistic at
 /// the same `k`, which is a computational similarity, not a semantic one.
 ///
+/// **`class_separation` currently holds a single objective**, since
+/// `class_density_measure` was dropped, so its region is *identical* to the
+/// per-objective `neighborhood_hit` region — both admit exactly the vectors
+/// putting at least half the mass on that one axis. It is reported anyway, so
+/// the family row survives if a second bounded class-separation metric is added
+/// back. Tests that contrast a family against its members exempt it for that
+/// reason.
+///
+/// Membership is a **slice, not a fixed-size array**: the `[usize; 2]` this used
+/// to be silently outlived the objective set it indexed into, leaving
+/// `("class_separation", [4, 5])` reading index 5 of a 5-element row.
+/// Variable arity removes the failure mode rather than the one instance.
+///
 /// Indices rather than names because [`OBJECTIVES`] is ordered by family, so
 /// they are contiguous and there is nothing to look up.
 /// `families_partition_the_objectives` pins that.
-pub const FAMILIES: [(&str, [usize; 2]); 3] = [
-    ("structure", [0, 1]),
-    ("distance", [2, 3]),
-    ("class_separation", [4, 5]),
+pub const FAMILIES: [(&str, &[usize]); 3] = [
+    ("structure", &[0, 1]),
+    ("distance", &[2, 3]),
+    ("class_separation", &[4]),
 ];
 
 /// The five metrics that have both a projected and a manifold variant, as
@@ -69,8 +81,8 @@ pub const FAMILIES: [(&str, [usize; 2]); 3] = [
 ///
 /// **This is a diagnostic table, not the objective list.** It used to generate
 /// [`OBJECTIVES`] by interleaving; it no longer does, and the two are now
-/// independent — `class_density_measure` is an objective with no manifold
-/// variant and correctly does not appear here.
+/// independent — an objective with no manifold variant would correctly not
+/// appear here.
 ///
 /// Its remaining consumer is `figures/exp4.rs`, which plots one panel per row
 /// to compare the manifold and projected readings of the same metric. That

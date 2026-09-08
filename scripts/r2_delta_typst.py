@@ -94,7 +94,6 @@ REGIONS = [
     ("normalized_stress", '$W_"stress"$'),
     ("shepard_goodness", '$W_"shep"$'),
     ("neighborhood_hit", '$W_"nh"$'),
-    ("class_density_measure", '$W_"cdm"$'),
 ]
 
 # Every entry in the table is scaled by this.  |ΔR2| spans 8e-5 to 0.13, so the
