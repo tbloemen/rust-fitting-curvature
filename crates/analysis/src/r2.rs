@@ -175,7 +175,7 @@ fn build_regions(counts: &[[u8; N_OBJECTIVES]], s: usize) -> Vec<Region> {
 
     for (j, objective) in OBJECTIVES.iter().enumerate() {
         regions.push(Region {
-            name: (*objective).to_string(),
+            name: objective.name().to_string(),
             indices: select(counts, |c| c[j] >= half),
         });
     }
@@ -320,7 +320,7 @@ pub fn oriented_objectives(record: &TrialRecord) -> BTreeMap<String, f64> {
     OBJECTIVES
         .iter()
         .zip(row)
-        .map(|(name, v)| ((*name).to_string(), v))
+        .map(|(metric, v)| (metric.name().to_string(), v))
         .collect()
 }
 

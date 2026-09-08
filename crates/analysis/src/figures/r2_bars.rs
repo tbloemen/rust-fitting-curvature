@@ -94,26 +94,21 @@ fn regions() -> Vec<(&'static str, String)> {
     out.extend(
         OBJECTIVES
             .iter()
-            .map(|objective| (*objective, format!("W_{}", short_metric(objective)))),
+            .map(|o| (o.name(), format!("W_{}", o.short()))),
     );
     out
 }
 
-/// Abbreviations for the axis labels; the full names do not fit.
+/// Abbreviations for the family region labels; the full names do not fit.
 ///
+/// Only the families are listed here — a metric carries its own abbreviation
+/// on `QualityMetric::short`, so the objective regions no longer need an arm.
 /// The fallthrough is a hazard rather than a convenience: an unabbreviated name
 /// renders at full width and overlaps its neighbours, so every region
-/// [`regions`] can emit needs an arm here. `every_region_label_is_abbreviated`
-/// in `test_r2.rs` pins that.
+/// [`regions`] can emit needs an arm here or a `short()`.
+/// `every_region_label_is_abbreviated` in `test_r2.rs` pins that.
 fn short_metric(metric: &str) -> &str {
     match metric {
-        // objectives
-        "trustworthiness" => "trust",
-        "continuity" => "cont",
-        "normalized_stress" => "stress",
-        "shepard_goodness" => "shep",
-        "neighborhood_hit" => "nh",
-        // families
         "structure" => "struct",
         "distance" => "dist",
         "class_separation" => "class",
@@ -369,9 +364,11 @@ impl Figure for R2Bars {
 mod tests {
     use super::*;
 
-    /// `short_metric` falls through to the full name, which renders at full
-    /// width and overlaps its neighbours instead of erroring. Every region
-    /// [`regions`] emits therefore needs its own arm.
+    /// An unabbreviated label renders at full width and overlaps its
+    /// neighbours instead of erroring, so every region needs a short form —
+    /// whichever route produced it. Objective regions take theirs from
+    /// `QualityMetric::short`; the families still come from [`short_metric`],
+    /// whose fallthrough is the hazard this guards.
     #[test]
     fn every_region_label_is_abbreviated() {
         for (name, label) in regions() {
@@ -379,8 +376,8 @@ mod tests {
                 continue;
             }
             assert_ne!(
-                short_metric(name),
-                name,
+                label,
+                format!("W_{name}"),
                 "region `{name}` has no abbreviation, so it renders as `{label}`"
             );
         }

@@ -1,11 +1,14 @@
 //! The R2 indicator: weight-simplex enumeration, the preference regions, the
 //! compliance property the ΔR2 claim rests on, and the recommendation.
 
-use fitting_analysis::objectives::{FAMILIES, METRIC_PAIRS, N_OBJECTIVES, OBJECTIVES};
+use fitting_analysis::objectives::{
+    FAMILIES, METRIC_PAIRS, N_METRIC_PAIRS, N_OBJECTIVES, OBJECTIVES,
+};
 use fitting_analysis::r2::{
     cell_summary, front_utilities, r2, recommendation, Weights, REGION_ALL,
 };
 use fitting_analysis::TrialRecord;
+use fitting_core::metrics::{Direction, Family, MetricValues, CONTINUITY, TRUSTWORTHINESS};
 
 /// A front point that scores *v* on every objective.
 fn flat(v: f64) -> [f64; N_OBJECTIVES] {
@@ -69,24 +72,33 @@ fn simplex_vectors_are_distinct() {
 
 #[test]
 fn every_pair_follows_the_manifold_naming_convention() {
-    // METRIC_PAIRS no longer generates OBJECTIVES — it is the Exp 4 diagnostic
-    // table now — but its names are still hand-written, and `_manifold` is the
-    // suffix that ties them to the JSONL columns.
-    for (projected, manifold) in METRIC_PAIRS {
-        assert_eq!(manifold, format!("{projected}_manifold"));
+    // METRIC_PAIRS is derived by matching `QualityMetric::base`, so the pairing
+    // itself can no longer be wrong. What is still worth pinning is the
+    // *naming*: `_manifold` is the suffix that ties a pair's second member to
+    // its JSONL column, and Exp 4's panel captions read the first member's.
+    for (projected, manifold) in METRIC_PAIRS.iter() {
+        assert_eq!(manifold.name(), format!("{}_manifold", projected.name()));
     }
+    assert_eq!(METRIC_PAIRS.len(), N_METRIC_PAIRS);
+}
+
+#[test]
+fn metric_pairs_has_the_declared_length() {
+    // `N_METRIC_PAIRS` is a `const` because `figures/exp4.rs` uses it as an
+    // array length, so it is the one count restated rather than derived.
+    assert_eq!(METRIC_PAIRS.len(), N_METRIC_PAIRS);
 }
 
 #[test]
 fn every_objective_resolves_on_a_record() {
-    // The way to break this is a typo in OBJECTIVES, or an objective added
-    // there but not to `TrialRecord::objective` — either one makes the
-    // objective read as permanently missing, i.e. silently worst-case.
+    // `oriented_row` still resolves objectives by *name*, so a metric whose
+    // wire name does not round-trip reads as permanently missing — silently
+    // worst-case rather than an error.
     let r = record(0.5);
-    for name in OBJECTIVES {
+    for metric in OBJECTIVES {
         assert!(
-            r.objective(name).is_some(),
-            "{name} does not resolve on a fully-populated record"
+            r.objective(metric.name()).is_some(),
+            "{metric} does not resolve on a fully-populated record"
         );
     }
 }
@@ -116,7 +128,7 @@ fn region_sizes_match_the_combinatorics() {
     //   l=3: C(5,3)=10, l=4: C(4,3)=4, l=5: 1  ⇒ 15.
     for objective in OBJECTIVES {
         assert_eq!(
-            w.region(objective).unwrap().indices.len(),
+            w.region(objective.name()).unwrap().indices.len(),
             15,
             "region {objective}"
         );
@@ -289,18 +301,31 @@ fn recommendation_ties_resolve_to_the_lowest_front_index() {
 
 /// A record scoring *v* on every maximised objective; stress is stored raw, so
 /// `1 - v` there gives an oriented value of *v* as well.
+/// A record scoring *v* on every objective, oriented so that a larger `v` is a
+/// better record: `normalized_stress` is minimised, so it gets `1 - v`.
+///
+/// Built through `MetricValues` rather than as a struct literal, since the
+/// metric columns are one flattened block now.
+fn metrics_at(v: f64) -> MetricValues {
+    let mut m = MetricValues::MISSING;
+    for metric in fitting_core::metrics::ALL {
+        if metric.family() == Family::Spread {
+            continue;
+        }
+        m.set(
+            *metric,
+            match metric.direction() {
+                Direction::Minimize => 1.0 - v,
+                Direction::Maximize => v,
+            },
+        );
+    }
+    m
+}
+
 fn record(v: f64) -> TrialRecord {
     TrialRecord {
-        trustworthiness: Some(v),
-        trustworthiness_manifold: Some(v),
-        continuity: Some(v),
-        continuity_manifold: Some(v),
-        normalized_stress: Some(1.0 - v),
-        normalized_stress_manifold: Some(1.0 - v),
-        shepard_goodness: Some(v),
-        shepard_goodness_manifold: Some(v),
-        neighborhood_hit: Some(v),
-        neighborhood_hit_manifold: Some(v),
+        metrics: metrics_at(v),
         ..Default::default()
     }
 }
@@ -330,9 +355,12 @@ fn cell_summary_indexes_the_front_back_into_the_records() {
 #[test]
 fn a_diverged_trial_scores_worst_rather_than_vanishing() {
     let w = Weights::new();
+    // The two shapes divergence takes on disk: a missing column and a
+    // non-finite one. `MetricValues` collapses both to absent, and
+    // `oriented_value` maps absent to the worst case.
     let mut diverged = record(0.9);
-    diverged.trustworthiness = None;
-    diverged.continuity = Some(f64::NAN);
+    diverged.metrics.set(TRUSTWORTHINESS, f64::NAN);
+    diverged.metrics.set(CONTINUITY, f64::INFINITY);
 
     let good = cell_summary(&[record(0.9)], &w);
     let bad = cell_summary(&[diverged], &w);

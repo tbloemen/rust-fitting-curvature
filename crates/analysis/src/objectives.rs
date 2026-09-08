@@ -1,9 +1,17 @@
-//! The 5 qParEGO objectives and their orientation into `[0, 1]`-higher-is-better.
+//! The qParEGO objectives and their orientation into `[0, 1]`-higher-is-better.
+
+use std::sync::LazyLock;
+
+use fitting_core::metrics::{Direction, Metric};
 
 use crate::records::TrialRecord;
 
-/// The 5 qParEGO objectives, in the order written by the optimizer
-/// (`default_pareto_metrics` in `crates/optimizer/src/pareto.rs`).
+/// The qParEGO objectives, in the order the optimizer writes them.
+///
+/// This *is* `fitting_core::metrics::OBJECTIVES`, which
+/// `optimizer::pareto::default_pareto_metrics` also returns. The two used to be
+/// separate lists kept aligned by hand across crates — the alignment this
+/// module's doc comment used to ask readers to maintain.
 ///
 /// Every one is measured **after projection to 2D** and is bounded in `[0, 1]`
 /// by construction. Both properties are load-bearing:
@@ -21,24 +29,24 @@ use crate::records::TrialRecord;
 ///   *MOHPO — An Overview*, §3.3.3; Grodzevich & Romanko 2006 §4.2), which no
 ///   longer applies to a set whose limits are all known a priori.
 ///
+/// Both rules are now checked rather than described: `QualityMetric::space` and
+/// `is_objective` carry them per metric, and `test_registry.rs` asserts them in
+/// both directions.
+///
 /// Row order is grouped by [`FAMILIES`] and is otherwise a free choice — the
 /// indicators are invariant under a relabelling of the axes (the weight simplex
 /// is enumerated symmetrically) and nothing on disk is positional, since
 /// [`oriented_row`] resolves values by name and every output table is
-/// name-keyed. What it *does* have to match is the optimizer's
-/// `default_pareto_metrics`; that alignment is by hand across crates.
-pub const OBJECTIVES: [&str; 5] = [
-    // structure
-    "trustworthiness",
-    "continuity",
-    // distance preservation
-    "normalized_stress",
-    "shepard_goodness",
-    // class separation
-    "neighborhood_hit",
-];
+/// name-keyed. The grouping itself is not free: [`FAMILIES`] indexes into this
+/// list by position, and `objectives_are_grouped_by_family` in the core
+/// registry tests pins the contiguity.
+pub const OBJECTIVES: &[Metric] = fitting_core::metrics::OBJECTIVES;
 
 /// Number of objectives; the dimension of the oriented objective space.
+///
+/// A `const`, because `r2.rs`, `indicators.rs` and `pareto.rs` all use it as an
+/// array length. `<[T]>::len` is const-evaluable, so this still derives from
+/// the registry rather than restating its size.
 pub const N_OBJECTIVES: usize = OBJECTIVES.len();
 
 /// The three preference families, as `(name, indices into [`OBJECTIVES`])`.
@@ -76,8 +84,8 @@ pub const FAMILIES: [(&str, &[usize]); 3] = [
     ("class_separation", &[4]),
 ];
 
-/// The five metrics that have both a projected and a manifold variant, as
-/// `(projected, manifold)` column names.
+/// The metrics that have both a projected and a manifold reading, as
+/// `(projected, manifold)`.
 ///
 /// **This is a diagnostic table, not the objective list.** It used to generate
 /// [`OBJECTIVES`] by interleaving; it no longer does, and the two are now
@@ -87,21 +95,26 @@ pub const FAMILIES: [(&str, &[usize]); 3] = [
 /// Its remaining consumer is `figures/exp4.rs`, which plots one panel per row
 /// to compare the manifold and projected readings of the same metric. That
 /// figure is the evidence for dropping the manifold objectives, so it outlives
-/// them. Row order is the Exp 4 panel order.
-pub const METRIC_PAIRS: [(&str, &str); 5] = [
-    ("trustworthiness", "trustworthiness_manifold"),
-    ("continuity", "continuity_manifold"),
-    ("normalized_stress", "normalized_stress_manifold"),
-    ("shepard_goodness", "shepard_goodness_manifold"),
-    ("neighborhood_hit", "neighborhood_hit_manifold"),
-];
+/// them.
+///
+/// Derived by matching `QualityMetric::base` over the registry, so a metric
+/// that gains or loses a twin gains or loses a panel with no edit here.
+pub static METRIC_PAIRS: LazyLock<Vec<(Metric, Metric)>> =
+    LazyLock::new(|| Metric::dual_pairs().collect());
 
-/// Objectives where lower is better; oriented as `1 - value`.
-pub const MINIMIZE: [&str; 1] = ["normalized_stress"];
+/// Length of [`METRIC_PAIRS`], as a `const` because `figures/exp4.rs` uses it
+/// as an array length and `QualityMetric`'s methods are not const-callable.
+/// The one number here that is restated rather than derived;
+/// `metric_pairs_has_the_declared_length` pins it.
+pub const N_METRIC_PAIRS: usize = 5;
 
 /// True when *name* is an objective that is minimised.
+///
+/// Was a `MINIMIZE: [&str; 1]` constant listing `normalized_stress`; the
+/// registry states each metric's own orientation, and
+/// `only_normalized_stress_is_minimized` pins that this is still the only one.
 pub fn is_minimized(name: &str) -> bool {
-    MINIMIZE.contains(&name)
+    Metric::by_name(name).is_some_and(|m| m.direction() == Direction::Minimize)
 }
 
 /// Map one raw metric value into `[0, 1]` with higher = better.
@@ -122,8 +135,8 @@ pub fn oriented_value(name: &str, v: Option<f64>) -> f64 {
 /// One record's oriented objective vector.
 pub fn oriented_row(r: &TrialRecord) -> [f64; N_OBJECTIVES] {
     let mut row = [0.0; N_OBJECTIVES];
-    for (slot, name) in row.iter_mut().zip(OBJECTIVES) {
-        *slot = oriented_value(name, r.objective(name));
+    for (slot, metric) in row.iter_mut().zip(OBJECTIVES) {
+        *slot = oriented_value(metric.name(), r.objective(metric.name()));
     }
     row
 }

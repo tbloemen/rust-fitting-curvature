@@ -6,24 +6,35 @@ use fitting_analysis::{
     pareto_front_mask, pareto_front_records, parse_cell_stem, parse_cell_stem_variant, TrialRecord,
     Variant,
 };
+use fitting_core::metrics::{Direction, Family, MetricValues};
 
-/// A record whose 6 objectives are all *v* except normalised stress, which is
-/// set so that its oriented value is also *v* (stress is minimised).
-///
 /// The manifold columns are populated too. They are no longer objectives, so
 /// `oriented_row` ignores them — which is part of what the row test checks.
+/// A record scoring *v* on every objective, oriented so that a larger `v` is a
+/// better record: `normalized_stress` is minimised, so it gets `1 - v`.
+///
+/// Built through `MetricValues` rather than as a struct literal, since the
+/// metric columns are one flattened block now.
+fn metrics_at(v: f64) -> MetricValues {
+    let mut m = MetricValues::MISSING;
+    for metric in fitting_core::metrics::ALL {
+        if metric.family() == Family::Spread {
+            continue;
+        }
+        m.set(
+            *metric,
+            match metric.direction() {
+                Direction::Minimize => 1.0 - v,
+                Direction::Maximize => v,
+            },
+        );
+    }
+    m
+}
+
 fn record_at(v: f64) -> TrialRecord {
     TrialRecord {
-        trustworthiness: Some(v),
-        trustworthiness_manifold: Some(v),
-        continuity: Some(v),
-        continuity_manifold: Some(v),
-        normalized_stress: Some(1.0 - v),
-        normalized_stress_manifold: Some(1.0 - v),
-        shepard_goodness: Some(v),
-        shepard_goodness_manifold: Some(v),
-        neighborhood_hit: Some(v),
-        neighborhood_hit_manifold: Some(v),
+        metrics: metrics_at(v),
         ..Default::default()
     }
 }
@@ -111,10 +122,20 @@ fn rejects_front_files_and_junk() {
 fn orientation_flips_minimised_objectives() {
     assert_eq!(oriented_value("trustworthiness", Some(0.8)), 0.8);
     assert_eq!(oriented_value("normalized_stress", Some(0.3)), 0.7);
-    // `normalized_stress_manifold` is no longer an objective, so it is not in
-    // MINIMIZE and is not flipped. It is never looked up either — this only
-    // pins that dropping it from MINIMIZE was deliberate.
-    assert_eq!(oriented_value("normalized_stress_manifold", Some(0.3)), 0.3);
+
+    // The manifold reading of a minimised metric is minimised too, and is now
+    // flipped alongside its twin. It used to be left alone, because `MINIMIZE`
+    // listed objective names and `normalized_stress_manifold` is not an
+    // objective — but `figures/exp4.rs` does look it up, to difference the two
+    // readings of one configuration. Under the old orientation that panel
+    // subtracted an unoriented manifold stress from an oriented projected one,
+    // so an embedding whose two readings agreed at 0.1 plotted a gap of −0.8
+    // instead of ~0. Orientation is a property of the metric, not of whether it
+    // happens to be searched.
+    assert_eq!(oriented_value("normalized_stress_manifold", Some(0.3)), 0.7);
+
+    // A name that is not a metric at all is not flipped — nothing to consult.
+    assert_eq!(oriented_value("not_a_metric", Some(0.3)), 0.3);
 }
 
 #[test]
@@ -185,7 +206,10 @@ fn front_records_round_trip_through_orientation() {
     let records = vec![record_at(0.5), record_at(0.9), record_at(0.7)];
     let front = pareto_front_records(&records);
     assert_eq!(front.len(), 1);
-    assert_eq!(front[0].trustworthiness, Some(0.9));
+    assert_eq!(
+        front[0].objective("trustworthiness"),
+        Some(0.9)
+    );
 }
 
 // ─── 2D front cross-section ───────────────────────────────────────────────────

@@ -7,6 +7,10 @@ edition = "2021"
 rust-version = "1.82"
 
 [dependencies]
+# The metric registry: `TrialRecord`'s metric columns, the objective list and
+# the axis abbreviations all come from it, so this crate and the optimizer can
+# no longer disagree about what a metric is called or which way it is oriented.
+fitting-core = { path = "../core", features = ["serde"] }
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 # `float_roundtrip` makes float parsing correctly rounded. serde_json's default
