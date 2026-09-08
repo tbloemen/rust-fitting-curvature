@@ -3,12 +3,12 @@
 
 use fitting_core::config::{InitMethod, ScalingLossType, TrainingConfig};
 use fitting_core::embedding::EmbeddingState;
+use fitting_core::matrices::get_default_init_scale;
 use fitting_core::metrics::{
     CLUSTER_DENSITY_MEASURE, CONTINUITY, CONTINUITY_MANIFOLD, DAVIES_BOULDIN_RATIO,
     NEIGHBORHOOD_HIT, NEIGHBORHOOD_HIT_MANIFOLD, NORMALIZED_STRESS, NORMALIZED_STRESS_MANIFOLD,
     SHEPARD_GOODNESS, SHEPARD_GOODNESS_MANIFOLD, TRUSTWORTHINESS, TRUSTWORTHINESS_MANIFOLD,
 };
-use fitting_core::matrices::get_default_init_scale;
 use fitting_core::synthetic_data::{load_synthetic, Rng};
 use fitting_core::visualisation::SphericalProjection;
 
@@ -507,18 +507,12 @@ fn test_with_projection_spherical_no_nan() {
         EmbeddingState::new(&data, 5, &cfg).with_projection(SphericalProjection::Stereographic);
     state.run(|_| true);
     let (m, _spread) = state.compute_metrics();
-    assert!(
-        !m[TRUSTWORTHINESS].is_nan(),
-        "NaN in trustworthiness_2d"
-    );
+    assert!(!m[TRUSTWORTHINESS].is_nan(), "NaN in trustworthiness_2d");
     assert!(
         !m[NORMALIZED_STRESS].is_nan(),
         "NaN in normalized_stress_2d"
     );
-    assert!(
-        !m[SHEPARD_GOODNESS].is_nan(),
-        "NaN in shepard_goodness_2d"
-    );
+    assert!(!m[SHEPARD_GOODNESS].is_nan(), "NaN in shepard_goodness_2d");
 }
 
 #[test]
@@ -530,10 +524,7 @@ fn test_with_projection_hyperbolic_no_nan() {
         .with_projection(SphericalProjection::AzimuthalEquidistant);
     state.run(|_| true);
     let (m, _spread) = state.compute_metrics();
-    assert!(
-        !m[TRUSTWORTHINESS].is_nan(),
-        "NaN in trustworthiness_2d"
-    );
+    assert!(!m[TRUSTWORTHINESS].is_nan(), "NaN in trustworthiness_2d");
     assert!(
         !m[NORMALIZED_STRESS].is_nan(),
         "NaN in normalized_stress_2d"

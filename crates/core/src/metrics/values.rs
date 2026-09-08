@@ -8,8 +8,8 @@
 
 use std::ops::Index;
 
-use crate::context::EmbeddingContext;
 use super::quality::{Metric, ALL};
+use crate::context::EmbeddingContext;
 
 /// Every metric's value for one embedding, positional in [`ALL`] order.
 ///
@@ -129,7 +129,10 @@ mod wire {
                     f.write_str("a map of metric names to numbers")
                 }
 
-                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<MetricValues, A::Error> {
+                fn visit_map<A: MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<MetricValues, A::Error> {
                     let mut out = MetricValues::MISSING;
                     while let Some(key) = map.next_key::<Cow<'de, str>>()? {
                         match Metric::by_name(&key) {

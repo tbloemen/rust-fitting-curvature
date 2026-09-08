@@ -65,7 +65,11 @@ fn index_round_trips_through_all() {
 fn an_unknown_name_does_not_parse() {
     // The retired columns still present throughout `results/`. They must read
     // as "not a metric" so deserialisation skips them rather than erroring.
-    for retired in ["knn_overlap", "knn_overlap_manifold", "class_density_measure"] {
+    for retired in [
+        "knn_overlap",
+        "knn_overlap_manifold",
+        "class_density_measure",
+    ] {
         assert_eq!(Metric::by_name(retired), None, "{retired} still parses");
     }
 }
@@ -126,7 +130,12 @@ fn only_normalized_stress_is_minimized() {
         } else {
             Direction::Maximize
         };
-        assert_eq!(m.direction(), want, "{} is oriented the wrong way", m.name());
+        assert_eq!(
+            m.direction(),
+            want,
+            "{} is oriented the wrong way",
+            m.name()
+        );
     }
 }
 
@@ -180,7 +189,11 @@ fn only_the_paired_metrics_report_a_twin() {
     // browser's metrics panel reads the rest by their bare wire name. Getting
     // this set wrong renames a key the panel is looking for, and the row simply
     // disappears from the UI with no error anywhere.
-    let twinned: Vec<&str> = ALL.iter().filter(|m| m.has_twin()).map(|m| m.name()).collect();
+    let twinned: Vec<&str> = ALL
+        .iter()
+        .filter(|m| m.has_twin())
+        .map(|m| m.name())
+        .collect();
     assert_eq!(
         twinned,
         vec![
@@ -196,7 +209,11 @@ fn only_the_paired_metrics_report_a_twin() {
             "shepard_goodness_manifold",
         ]
     );
-    for solo in ["davies_bouldin_ratio", "dunn_index", "cluster_density_measure"] {
+    for solo in [
+        "davies_bouldin_ratio",
+        "dunn_index",
+        "cluster_density_measure",
+    ] {
         assert!(
             !Metric::by_name(solo).unwrap().has_twin(),
             "{solo} claims a twin"

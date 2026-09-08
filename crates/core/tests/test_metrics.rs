@@ -1,10 +1,10 @@
 //! Tests for embedding quality metrics.
 //! Ported from Python test/test_metrics.py
 
-use fitting_core::metrics::*;
-use fitting_core::synthetic_data::Rng;
 use fitting_core::context::EmbeddingContext;
+use fitting_core::metrics::*;
 use fitting_core::spread::SpreadDiagnostics;
+use fitting_core::synthetic_data::Rng;
 use fitting_core::visualisation::SphericalProjection;
 
 // ---------------------------------------------------------------------------
@@ -591,7 +591,9 @@ fn test_compute_all_values_in_range() {
         NEIGHBORHOOD_HIT,
         NEIGHBORHOOD_HIT_MANIFOLD,
     ] {
-        let v = m.get(metric).unwrap_or_else(|| panic!("{} absent", metric.name()));
+        let v = m
+            .get(metric)
+            .unwrap_or_else(|| panic!("{} absent", metric.name()));
         assert!(
             (0.0..=1.0).contains(&v),
             "{} = {v} is outside [0, 1], which every objective is assumed to be",
@@ -662,4 +664,3 @@ fn test_normalized_stress_scale_invariant() {
         "normalized_stress must be scale-invariant: {s1} != {s2}"
     );
 }
-

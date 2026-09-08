@@ -3,8 +3,8 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use crate::metrics::MetricValues;
-use fitting_core::spread::SpreadDiagnostics;
 use crate::search_space::TrialConfig;
+use fitting_core::spread::SpreadDiagnostics;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct TrialResult {
@@ -74,11 +74,7 @@ impl TrialResult {
         }
     }
 
-    pub(crate) fn with_all_metrics(
-        mut self,
-        m: &MetricValues,
-        spread: &SpreadDiagnostics,
-    ) -> Self {
+    pub(crate) fn with_all_metrics(mut self, m: &MetricValues, spread: &SpreadDiagnostics) -> Self {
         self.metrics = *m;
         self.spread = *spread;
         self
@@ -118,10 +114,11 @@ mod tests {
     fn an_unscored_result_writes_the_metric_block_as_nulls() {
         let json = serde_json::to_value(unscored()).unwrap();
         let obj = json.as_object().unwrap();
-        let columns = crate::metrics::ALL_METRICS
-            .iter()
-            .map(|m| m.name())
-            .chain(["r_max", "r_rms", "r_gyration"]);
+        let columns = crate::metrics::ALL_METRICS.iter().map(|m| m.name()).chain([
+            "r_max",
+            "r_rms",
+            "r_gyration",
+        ]);
         for column in columns {
             assert_eq!(
                 obj.get(column),
@@ -150,7 +147,10 @@ mod tests {
         let first = keys.iter().position(|k| *k == "trustworthiness").unwrap();
         assert_eq!(keys[first - 1], "early_exaggeration_factor");
 
-        let mut want: Vec<&str> = crate::metrics::ALL_METRICS.iter().map(|m| m.name()).collect();
+        let mut want: Vec<&str> = crate::metrics::ALL_METRICS
+            .iter()
+            .map(|m| m.name())
+            .collect();
         want.extend(["r_max", "r_rms", "r_gyration", "time_ms"]);
         assert_eq!(&keys[first..first + want.len()], &want[..]);
     }

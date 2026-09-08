@@ -2,8 +2,8 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use crate::evaluate::Evaluator;
 use crate::metrics::{Metric, MetricValues};
-use fitting_core::spread::SpreadDiagnostics;
 use crate::search_space::TrialConfig;
+use fitting_core::spread::SpreadDiagnostics;
 
 // ─── Experiment variants ──────────────────────────────────────────────────────
 
@@ -75,7 +75,10 @@ pub(crate) fn eval_all_metrics(
             evaluator.compute_all_metrics(config, curvature, trial_seed(trial_idx, si), pb_iters)
         })
         .unzip();
-    (MetricValues::mean(&metrics), SpreadDiagnostics::mean(&spread))
+    (
+        MetricValues::mean(&metrics),
+        SpreadDiagnostics::mean(&spread),
+    )
 }
 
 pub(crate) fn make_progress_bar(mp: &MultiProgress, total: u64, template: &str) -> ProgressBar {

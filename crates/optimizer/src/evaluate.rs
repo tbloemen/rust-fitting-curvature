@@ -1,7 +1,7 @@
+use fitting_core::context::EmbeddingContext;
 use fitting_core::curvature_detection::{detect_geometry, GeometryVerdict};
 use fitting_core::embedding::EmbeddingState;
 use fitting_core::matrices::compute_euclidean_distance_matrix;
-use fitting_core::context::EmbeddingContext;
 use fitting_core::metrics::{Metric, MetricValues};
 use fitting_core::spread::SpreadDiagnostics;
 use fitting_core::visualisation::SphericalProjection;
@@ -59,7 +59,10 @@ impl Evaluator {
     ) -> (MetricValues, SpreadDiagnostics) {
         let (state, curvature) = self.run_embedding(config, curvature_sign, seed, pb_iters);
         let ctx = self.context(&state, curvature);
-        (MetricValues::compute(&ctx), SpreadDiagnostics::compute(&ctx))
+        (
+            MetricValues::compute(&ctx),
+            SpreadDiagnostics::compute(&ctx),
+        )
     }
 
     /// Score one configuration on a single named metric, for `--mode bayes`
@@ -79,8 +82,12 @@ impl Evaluator {
         seed: u64,
         pb_iters: &ProgressBar,
     ) -> f64 {
-        let metric = Metric::by_name(metric)
-            .unwrap_or_else(|| panic!("Unknown metric: {metric}. Options: {}", Metric::valid_names()));
+        let metric = Metric::by_name(metric).unwrap_or_else(|| {
+            panic!(
+                "Unknown metric: {metric}. Options: {}",
+                Metric::valid_names()
+            )
+        });
         let (state, curvature) = self.run_embedding(config, curvature_sign, seed, pb_iters);
         metric.compute(&self.context(&state, curvature))
     }
@@ -138,4 +145,3 @@ impl Evaluator {
 pub fn scoring_k(n: usize) -> usize {
     (30_f64.min(n as f64 * 0.1)).round() as usize
 }
-

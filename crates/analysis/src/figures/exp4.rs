@@ -44,10 +44,10 @@ use plotters::style::text_anchor::{HPos, Pos, VPos};
 
 use super::*;
 use crate::objectives::{oriented_value, N_METRIC_PAIRS};
-use fitting_core::metrics::Metric;
 use crate::pareto::pareto_front_records;
 use crate::stats::{median, quantile, spearman};
 use crate::style_mesh;
+use fitting_core::metrics::Metric;
 
 /// A cell needs at least this many usable trials for its ρ to mean anything.
 const MIN_TRIALS: usize = 10;

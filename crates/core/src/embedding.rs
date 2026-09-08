@@ -2,6 +2,7 @@ use crate::affinities::{
     compute_perplexity_affinities, compute_perplexity_affinities_from_distances,
 };
 use crate::config::{InitMethod, TrainingConfig};
+use crate::context::EmbeddingContext;
 use crate::kernels::compute_q_matrix_with_distances;
 use crate::kl_divergence::{
     compute_global_similarities, depth_norm_loss_gradient, kl_gradient, kl_loss, norm_loss_gradient,
@@ -9,11 +10,10 @@ use crate::kl_divergence::{
 use crate::manifolds;
 use crate::manifolds::Manifold;
 use crate::matrices::{compute_euclidean_distance_matrix, pca, pca_from_distances};
-use crate::context::EmbeddingContext;
 use crate::metrics::MetricValues;
-use crate::spread::SpreadDiagnostics;
 use crate::optimizer::RiemannianSGDMomentum;
 use crate::scaling_loss;
+use crate::spread::SpreadDiagnostics;
 use crate::visualisation::SphericalProjection;
 
 /// Embedding state for step-by-step iteration.
@@ -314,7 +314,10 @@ impl EmbeddingState {
         // Already derived by `embedded_distances`; deriving them a second time
         // would be both wasted work and a chance for the two to disagree.
         .with_manifold_dist(self.embedded_distances());
-        (MetricValues::compute(&ctx), SpreadDiagnostics::compute(&ctx))
+        (
+            MetricValues::compute(&ctx),
+            SpreadDiagnostics::compute(&ctx),
+        )
     }
 
     /// Run one training iteration. Returns the current phase name.

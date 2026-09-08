@@ -4,9 +4,9 @@ use std::thread;
 use crate::common::eval_all_metrics;
 use crate::evaluate::Evaluator;
 use crate::metrics::{Metric, MetricValues};
-use fitting_core::spread::SpreadDiagnostics;
 use crate::pareto::metrics_to_vec;
 use crate::search_space::TrialConfig;
+use fitting_core::spread::SpreadDiagnostics;
 
 // ─── Resume support ───────────────────────────────────────────────────────────
 

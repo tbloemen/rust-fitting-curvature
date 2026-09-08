@@ -13,8 +13,8 @@
 //! pins the expected wire names, the `ALL`-position round-trip, and the
 //! objective eligibility rules.
 
-use crate::context::EmbeddingContext;
 use super::functions;
+use crate::context::EmbeddingContext;
 
 /// Which distance matrix a metric reads — the before/after-projection
 /// distinction, which is the only thing separating a metric from its twin.
@@ -108,14 +108,30 @@ pub trait QualityMetric: Sync {
 /// Trustworthiness (Venna & Kaski 2006) on the 2-D projection.
 pub struct Trustworthiness;
 impl QualityMetric for Trustworthiness {
-    fn name(&self) -> &'static str { "trustworthiness" }
-    fn base(&self) -> &'static str { "trustworthiness" }
-    fn space(&self) -> Space { Space::Projected }
-    fn family(&self) -> Family { Family::Structure }
-    fn direction(&self) -> Direction { Direction::Maximize }
-    fn is_objective(&self) -> bool { true }
-    fn short(&self) -> &'static str { "trust" }
-    fn label(&self) -> &'static str { "Trustworthiness" }
+    fn name(&self) -> &'static str {
+        "trustworthiness"
+    }
+    fn base(&self) -> &'static str {
+        "trustworthiness"
+    }
+    fn space(&self) -> Space {
+        Space::Projected
+    }
+    fn family(&self) -> Family {
+        Family::Structure
+    }
+    fn direction(&self) -> Direction {
+        Direction::Maximize
+    }
+    fn is_objective(&self) -> bool {
+        true
+    }
+    fn short(&self) -> &'static str {
+        "trust"
+    }
+    fn label(&self) -> &'static str {
+        "Trustworthiness"
+    }
     fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::trustworthiness(c.high_dim_dist, c.dist_2d(), c.n, c.k)
     }
@@ -129,14 +145,30 @@ impl QualityMetric for Trustworthiness {
 /// evidence for having dropped it.
 pub struct TrustworthinessManifold;
 impl QualityMetric for TrustworthinessManifold {
-    fn name(&self) -> &'static str { "trustworthiness_manifold" }
-    fn base(&self) -> &'static str { "trustworthiness" }
-    fn space(&self) -> Space { Space::Manifold }
-    fn family(&self) -> Family { Family::Structure }
-    fn direction(&self) -> Direction { Direction::Maximize }
-    fn is_objective(&self) -> bool { false }
-    fn short(&self) -> &'static str { "trust_m" }
-    fn label(&self) -> &'static str { "Trustworthiness" }
+    fn name(&self) -> &'static str {
+        "trustworthiness_manifold"
+    }
+    fn base(&self) -> &'static str {
+        "trustworthiness"
+    }
+    fn space(&self) -> Space {
+        Space::Manifold
+    }
+    fn family(&self) -> Family {
+        Family::Structure
+    }
+    fn direction(&self) -> Direction {
+        Direction::Maximize
+    }
+    fn is_objective(&self) -> bool {
+        false
+    }
+    fn short(&self) -> &'static str {
+        "trust_m"
+    }
+    fn label(&self) -> &'static str {
+        "Trustworthiness"
+    }
     fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::trustworthiness(c.high_dim_dist, c.manifold_dist(), c.n, c.k)
     }
@@ -145,14 +177,30 @@ impl QualityMetric for TrustworthinessManifold {
 /// Continuity (Venna & Kaski 2006) on the 2-D projection.
 pub struct Continuity;
 impl QualityMetric for Continuity {
-    fn name(&self) -> &'static str { "continuity" }
-    fn base(&self) -> &'static str { "continuity" }
-    fn space(&self) -> Space { Space::Projected }
-    fn family(&self) -> Family { Family::Structure }
-    fn direction(&self) -> Direction { Direction::Maximize }
-    fn is_objective(&self) -> bool { true }
-    fn short(&self) -> &'static str { "cont" }
-    fn label(&self) -> &'static str { "Continuity" }
+    fn name(&self) -> &'static str {
+        "continuity"
+    }
+    fn base(&self) -> &'static str {
+        "continuity"
+    }
+    fn space(&self) -> Space {
+        Space::Projected
+    }
+    fn family(&self) -> Family {
+        Family::Structure
+    }
+    fn direction(&self) -> Direction {
+        Direction::Maximize
+    }
+    fn is_objective(&self) -> bool {
+        true
+    }
+    fn short(&self) -> &'static str {
+        "cont"
+    }
+    fn label(&self) -> &'static str {
+        "Continuity"
+    }
     fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::continuity(c.high_dim_dist, c.dist_2d(), c.n, c.k)
     }
@@ -161,14 +209,30 @@ impl QualityMetric for Continuity {
 /// Continuity read on the manifold geodesics. See [`TrustworthinessManifold`].
 pub struct ContinuityManifold;
 impl QualityMetric for ContinuityManifold {
-    fn name(&self) -> &'static str { "continuity_manifold" }
-    fn base(&self) -> &'static str { "continuity" }
-    fn space(&self) -> Space { Space::Manifold }
-    fn family(&self) -> Family { Family::Structure }
-    fn direction(&self) -> Direction { Direction::Maximize }
-    fn is_objective(&self) -> bool { false }
-    fn short(&self) -> &'static str { "cont_m" }
-    fn label(&self) -> &'static str { "Continuity" }
+    fn name(&self) -> &'static str {
+        "continuity_manifold"
+    }
+    fn base(&self) -> &'static str {
+        "continuity"
+    }
+    fn space(&self) -> Space {
+        Space::Manifold
+    }
+    fn family(&self) -> Family {
+        Family::Structure
+    }
+    fn direction(&self) -> Direction {
+        Direction::Maximize
+    }
+    fn is_objective(&self) -> bool {
+        false
+    }
+    fn short(&self) -> &'static str {
+        "cont_m"
+    }
+    fn label(&self) -> &'static str {
+        "Continuity"
+    }
     fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::continuity(c.high_dim_dist, c.manifold_dist(), c.n, c.k)
     }
@@ -185,14 +249,30 @@ impl QualityMetric for ContinuityManifold {
 /// a computational similarity, not a semantic one.
 pub struct NeighborhoodHit;
 impl QualityMetric for NeighborhoodHit {
-    fn name(&self) -> &'static str { "neighborhood_hit" }
-    fn base(&self) -> &'static str { "neighborhood_hit" }
-    fn space(&self) -> Space { Space::Projected }
-    fn family(&self) -> Family { Family::ClassSeparation }
-    fn direction(&self) -> Direction { Direction::Maximize }
-    fn is_objective(&self) -> bool { true }
-    fn short(&self) -> &'static str { "nh" }
-    fn label(&self) -> &'static str { "Neighborhood Hit" }
+    fn name(&self) -> &'static str {
+        "neighborhood_hit"
+    }
+    fn base(&self) -> &'static str {
+        "neighborhood_hit"
+    }
+    fn space(&self) -> Space {
+        Space::Projected
+    }
+    fn family(&self) -> Family {
+        Family::ClassSeparation
+    }
+    fn direction(&self) -> Direction {
+        Direction::Maximize
+    }
+    fn is_objective(&self) -> bool {
+        true
+    }
+    fn short(&self) -> &'static str {
+        "nh"
+    }
+    fn label(&self) -> &'static str {
+        "Neighborhood Hit"
+    }
     fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         match c.labels {
             Some(l) => functions::neighborhood_hit(c.dist_2d(), l, c.n, c.k),
@@ -204,14 +284,30 @@ impl QualityMetric for NeighborhoodHit {
 /// Neighborhood hit read on the manifold geodesics. See [`TrustworthinessManifold`].
 pub struct NeighborhoodHitManifold;
 impl QualityMetric for NeighborhoodHitManifold {
-    fn name(&self) -> &'static str { "neighborhood_hit_manifold" }
-    fn base(&self) -> &'static str { "neighborhood_hit" }
-    fn space(&self) -> Space { Space::Manifold }
-    fn family(&self) -> Family { Family::ClassSeparation }
-    fn direction(&self) -> Direction { Direction::Maximize }
-    fn is_objective(&self) -> bool { false }
-    fn short(&self) -> &'static str { "nh_m" }
-    fn label(&self) -> &'static str { "Neighborhood Hit" }
+    fn name(&self) -> &'static str {
+        "neighborhood_hit_manifold"
+    }
+    fn base(&self) -> &'static str {
+        "neighborhood_hit"
+    }
+    fn space(&self) -> Space {
+        Space::Manifold
+    }
+    fn family(&self) -> Family {
+        Family::ClassSeparation
+    }
+    fn direction(&self) -> Direction {
+        Direction::Maximize
+    }
+    fn is_objective(&self) -> bool {
+        false
+    }
+    fn short(&self) -> &'static str {
+        "nh_m"
+    }
+    fn label(&self) -> &'static str {
+        "Neighborhood Hit"
+    }
     fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         match c.labels {
             Some(l) => functions::neighborhood_hit(c.manifold_dist(), l, c.n, c.k),
@@ -229,14 +325,30 @@ impl QualityMetric for NeighborhoodHitManifold {
 /// *upper* bound for a diverged trial rather than the lower one.
 pub struct NormalizedStress;
 impl QualityMetric for NormalizedStress {
-    fn name(&self) -> &'static str { "normalized_stress" }
-    fn base(&self) -> &'static str { "normalized_stress" }
-    fn space(&self) -> Space { Space::Projected }
-    fn family(&self) -> Family { Family::Distance }
-    fn direction(&self) -> Direction { Direction::Minimize }
-    fn is_objective(&self) -> bool { true }
-    fn short(&self) -> &'static str { "stress" }
-    fn label(&self) -> &'static str { "Norm. Stress" }
+    fn name(&self) -> &'static str {
+        "normalized_stress"
+    }
+    fn base(&self) -> &'static str {
+        "normalized_stress"
+    }
+    fn space(&self) -> Space {
+        Space::Projected
+    }
+    fn family(&self) -> Family {
+        Family::Distance
+    }
+    fn direction(&self) -> Direction {
+        Direction::Minimize
+    }
+    fn is_objective(&self) -> bool {
+        true
+    }
+    fn short(&self) -> &'static str {
+        "stress"
+    }
+    fn label(&self) -> &'static str {
+        "Norm. Stress"
+    }
     fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::normalized_stress(c.high_dim_dist, c.dist_2d(), c.n)
     }
@@ -249,14 +361,30 @@ impl QualityMetric for NormalizedStress {
 /// for display. The two readings separate only under curvature.
 pub struct NormalizedStressManifold;
 impl QualityMetric for NormalizedStressManifold {
-    fn name(&self) -> &'static str { "normalized_stress_manifold" }
-    fn base(&self) -> &'static str { "normalized_stress" }
-    fn space(&self) -> Space { Space::Manifold }
-    fn family(&self) -> Family { Family::Distance }
-    fn direction(&self) -> Direction { Direction::Minimize }
-    fn is_objective(&self) -> bool { false }
-    fn short(&self) -> &'static str { "stress_m" }
-    fn label(&self) -> &'static str { "Norm. Stress" }
+    fn name(&self) -> &'static str {
+        "normalized_stress_manifold"
+    }
+    fn base(&self) -> &'static str {
+        "normalized_stress"
+    }
+    fn space(&self) -> Space {
+        Space::Manifold
+    }
+    fn family(&self) -> Family {
+        Family::Distance
+    }
+    fn direction(&self) -> Direction {
+        Direction::Minimize
+    }
+    fn is_objective(&self) -> bool {
+        false
+    }
+    fn short(&self) -> &'static str {
+        "stress_m"
+    }
+    fn label(&self) -> &'static str {
+        "Norm. Stress"
+    }
     fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::normalized_stress(c.high_dim_dist, c.manifold_dist(), c.n)
     }
@@ -265,14 +393,30 @@ impl QualityMetric for NormalizedStressManifold {
 /// Shepard goodness (Espadoto et al.) on the 2-D projection.
 pub struct ShepardGoodness;
 impl QualityMetric for ShepardGoodness {
-    fn name(&self) -> &'static str { "shepard_goodness" }
-    fn base(&self) -> &'static str { "shepard_goodness" }
-    fn space(&self) -> Space { Space::Projected }
-    fn family(&self) -> Family { Family::Distance }
-    fn direction(&self) -> Direction { Direction::Maximize }
-    fn is_objective(&self) -> bool { true }
-    fn short(&self) -> &'static str { "shep" }
-    fn label(&self) -> &'static str { "Shepard Goodness" }
+    fn name(&self) -> &'static str {
+        "shepard_goodness"
+    }
+    fn base(&self) -> &'static str {
+        "shepard_goodness"
+    }
+    fn space(&self) -> Space {
+        Space::Projected
+    }
+    fn family(&self) -> Family {
+        Family::Distance
+    }
+    fn direction(&self) -> Direction {
+        Direction::Maximize
+    }
+    fn is_objective(&self) -> bool {
+        true
+    }
+    fn short(&self) -> &'static str {
+        "shep"
+    }
+    fn label(&self) -> &'static str {
+        "Shepard Goodness"
+    }
     fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::shepard_goodness(c.high_dim_dist, c.dist_2d(), c.n)
     }
@@ -281,14 +425,30 @@ impl QualityMetric for ShepardGoodness {
 /// Shepard goodness on the manifold geodesics. See [`TrustworthinessManifold`].
 pub struct ShepardGoodnessManifold;
 impl QualityMetric for ShepardGoodnessManifold {
-    fn name(&self) -> &'static str { "shepard_goodness_manifold" }
-    fn base(&self) -> &'static str { "shepard_goodness" }
-    fn space(&self) -> Space { Space::Manifold }
-    fn family(&self) -> Family { Family::Distance }
-    fn direction(&self) -> Direction { Direction::Maximize }
-    fn is_objective(&self) -> bool { false }
-    fn short(&self) -> &'static str { "shep_m" }
-    fn label(&self) -> &'static str { "Shepard Goodness" }
+    fn name(&self) -> &'static str {
+        "shepard_goodness_manifold"
+    }
+    fn base(&self) -> &'static str {
+        "shepard_goodness"
+    }
+    fn space(&self) -> Space {
+        Space::Manifold
+    }
+    fn family(&self) -> Family {
+        Family::Distance
+    }
+    fn direction(&self) -> Direction {
+        Direction::Maximize
+    }
+    fn is_objective(&self) -> bool {
+        false
+    }
+    fn short(&self) -> &'static str {
+        "shep_m"
+    }
+    fn label(&self) -> &'static str {
+        "Shepard Goodness"
+    }
     fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::shepard_goodness(c.high_dim_dist, c.manifold_dist(), c.n)
     }
@@ -301,14 +461,30 @@ impl QualityMetric for ShepardGoodnessManifold {
 /// A ratio, so unbounded above — see [`QualityMetric::is_objective`].
 pub struct DaviesBouldinRatio;
 impl QualityMetric for DaviesBouldinRatio {
-    fn name(&self) -> &'static str { "davies_bouldin_ratio" }
-    fn base(&self) -> &'static str { "davies_bouldin_ratio" }
-    fn space(&self) -> Space { Space::Projected }
-    fn family(&self) -> Family { Family::ClassSeparation }
-    fn direction(&self) -> Direction { Direction::Maximize }
-    fn is_objective(&self) -> bool { false }
-    fn short(&self) -> &'static str { "db" }
-    fn label(&self) -> &'static str { "DB Ratio" }
+    fn name(&self) -> &'static str {
+        "davies_bouldin_ratio"
+    }
+    fn base(&self) -> &'static str {
+        "davies_bouldin_ratio"
+    }
+    fn space(&self) -> Space {
+        Space::Projected
+    }
+    fn family(&self) -> Family {
+        Family::ClassSeparation
+    }
+    fn direction(&self) -> Direction {
+        Direction::Maximize
+    }
+    fn is_objective(&self) -> bool {
+        false
+    }
+    fn short(&self) -> &'static str {
+        "db"
+    }
+    fn label(&self) -> &'static str {
+        "DB Ratio"
+    }
     fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         match c.labels {
             Some(l) => functions::davies_bouldin_ratio_from(c.high_dim_dist, c.dist_2d(), l, c.n),
@@ -322,14 +498,30 @@ impl QualityMetric for DaviesBouldinRatio {
 /// A ratio, so unbounded above — see [`QualityMetric::is_objective`].
 pub struct DunnIndex;
 impl QualityMetric for DunnIndex {
-    fn name(&self) -> &'static str { "dunn_index" }
-    fn base(&self) -> &'static str { "dunn_index" }
-    fn space(&self) -> Space { Space::Projected }
-    fn family(&self) -> Family { Family::ClassSeparation }
-    fn direction(&self) -> Direction { Direction::Maximize }
-    fn is_objective(&self) -> bool { false }
-    fn short(&self) -> &'static str { "dunn" }
-    fn label(&self) -> &'static str { "Dunn Index" }
+    fn name(&self) -> &'static str {
+        "dunn_index"
+    }
+    fn base(&self) -> &'static str {
+        "dunn_index"
+    }
+    fn space(&self) -> Space {
+        Space::Projected
+    }
+    fn family(&self) -> Family {
+        Family::ClassSeparation
+    }
+    fn direction(&self) -> Direction {
+        Direction::Maximize
+    }
+    fn is_objective(&self) -> bool {
+        false
+    }
+    fn short(&self) -> &'static str {
+        "dunn"
+    }
+    fn label(&self) -> &'static str {
+        "Dunn Index"
+    }
     fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         match c.labels {
             Some(l) => functions::dunn_index(c.dist_2d(), l, c.n),
@@ -345,14 +537,30 @@ impl QualityMetric for DunnIndex {
 /// formula. See [`QualityMetric::is_objective`].
 pub struct ClusterDensityMeasure;
 impl QualityMetric for ClusterDensityMeasure {
-    fn name(&self) -> &'static str { "cluster_density_measure" }
-    fn base(&self) -> &'static str { "cluster_density_measure" }
-    fn space(&self) -> Space { Space::Projected }
-    fn family(&self) -> Family { Family::ClassSeparation }
-    fn direction(&self) -> Direction { Direction::Maximize }
-    fn is_objective(&self) -> bool { false }
-    fn short(&self) -> &'static str { "cldm" }
-    fn label(&self) -> &'static str { "Cluster Density" }
+    fn name(&self) -> &'static str {
+        "cluster_density_measure"
+    }
+    fn base(&self) -> &'static str {
+        "cluster_density_measure"
+    }
+    fn space(&self) -> Space {
+        Space::Projected
+    }
+    fn family(&self) -> Family {
+        Family::ClassSeparation
+    }
+    fn direction(&self) -> Direction {
+        Direction::Maximize
+    }
+    fn is_objective(&self) -> bool {
+        false
+    }
+    fn short(&self) -> &'static str {
+        "cldm"
+    }
+    fn label(&self) -> &'static str {
+        "Cluster Density"
+    }
     fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         match c.labels {
             Some(l) => functions::cluster_density_measure(c.coords_2d(), l, c.n),
@@ -515,10 +723,7 @@ impl Metric {
 
     /// The `--metric` help text, so it cannot drift from what parses.
     pub fn valid_names() -> String {
-        ALL.iter()
-            .map(|m| m.name())
-            .collect::<Vec<_>>()
-            .join(", ")
+        ALL.iter().map(|m| m.name()).collect::<Vec<_>>().join(", ")
     }
 
     /// Whether this metric's base has a second reading on the other side of the

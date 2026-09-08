@@ -203,10 +203,7 @@ fn front_records_round_trip_through_orientation() {
     let records = vec![record_at(0.5), record_at(0.9), record_at(0.7)];
     let front = pareto_front_records(&records);
     assert_eq!(front.len(), 1);
-    assert_eq!(
-        front[0].objective("trustworthiness"),
-        Some(0.9)
-    );
+    assert_eq!(front[0].objective("trustworthiness"), Some(0.9));
 }
 
 // ─── 2D front cross-section ───────────────────────────────────────────────────

@@ -7,9 +7,9 @@ use crate::common::{eval_all_metrics, make_progress_bar, parse_experiment, parse
 use crate::evaluate::Evaluator;
 use crate::gp::{GpOptimizer, GpState};
 use crate::metrics::MetricValues;
-use fitting_core::spread::SpreadDiagnostics;
 use crate::search_space::{param_bounds, ParamSpec, SearchSpace, TrialConfig};
 use crate::trial_result::{write_result, TrialResult};
+use fitting_core::spread::SpreadDiagnostics;
 
 // ─── Bayesian optimisation (Algorithm 1, Frazier 2018) ───────────────────────
 
@@ -198,7 +198,8 @@ pub(crate) fn run_bayes(
         });
 
         // Observe all results and update the GP before the next round.
-        for (config, (actual_curvature, all, spread, elapsed)) in configs.iter().zip(results.iter()) {
+        for (config, (actual_curvature, all, spread, elapsed)) in configs.iter().zip(results.iter())
+        {
             let mean = all[metric];
             optimizer.observe(config.clone(), mean);
             completed += 1;

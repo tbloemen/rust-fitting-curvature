@@ -103,8 +103,9 @@ fn flatten_puts_the_metrics_at_the_top_level_in_field_order() {
     };
     let json = serde_json::to_string(&r).unwrap();
     // Named fields keep their positions; the metric block lands between them.
-    assert!(json
-        .starts_with(r#"{"dataset_name":"tree","learning_rate":0.5,"trustworthiness":0.0,"#));
+    assert!(
+        json.starts_with(r#"{"dataset_name":"tree","learning_rate":0.5,"trustworthiness":0.0,"#)
+    );
     assert!(json.ends_with(r#""cluster_density_measure":12.0,"time_ms":7}"#));
     assert_eq!(serde_json::from_str::<Record>(&json).unwrap(), r);
 }
@@ -132,9 +133,14 @@ fn float_parsing_stays_correctly_rounded_through_flatten() {
     // pins that the buffering does not fall back to the fast, lossy parser.
     let text = "0.30863871419973954";
     let want: f64 = text.parse().unwrap();
-    let json = format!(r#"{{"dataset_name":"t","learning_rate":0.0,"normalized_stress":{text},"time_ms":0}}"#);
+    let json = format!(
+        r#"{{"dataset_name":"t","learning_rate":0.0,"normalized_stress":{text},"time_ms":0}}"#
+    );
     let r: Record = serde_json::from_str(&json).unwrap();
-    let got = r.metrics.get(fitting_core::metrics::NORMALIZED_STRESS).unwrap();
+    let got = r
+        .metrics
+        .get(fitting_core::metrics::NORMALIZED_STRESS)
+        .unwrap();
     assert_eq!(
         got.to_bits(),
         want.to_bits(),
@@ -185,7 +191,10 @@ fn the_two_blocks_do_not_claim_each_others_columns() {
     let back: TrialLine = serde_json::from_str(&json).unwrap();
     assert_eq!(back, line);
     assert_eq!(back.spread.r_rms(), Some(3.0));
-    assert_eq!(back.metrics.get(fitting_core::metrics::TRUSTWORTHINESS), Some(0.0));
+    assert_eq!(
+        back.metrics.get(fitting_core::metrics::TRUSTWORTHINESS),
+        Some(0.0)
+    );
 }
 
 #[test]
@@ -198,8 +207,14 @@ fn a_pre_registry_line_loads_into_both_blocks() {
         .replace('\n', "");
     let got: TrialLine = serde_json::from_str(&line).unwrap();
 
-    assert_eq!(got.metrics.get(fitting_core::metrics::TRUSTWORTHINESS), Some(0.97));
-    assert_eq!(got.metrics.get(fitting_core::metrics::SHEPARD_GOODNESS), None);
+    assert_eq!(
+        got.metrics.get(fitting_core::metrics::TRUSTWORTHINESS),
+        Some(0.97)
+    );
+    assert_eq!(
+        got.metrics.get(fitting_core::metrics::SHEPARD_GOODNESS),
+        None
+    );
     assert_eq!(got.spread.r_max(), Some(1.0));
     assert_eq!(got.spread.r_rms(), Some(2.0));
     assert_eq!(got.spread.r_gyration(), None, "absent, not zero");

@@ -92,7 +92,11 @@ impl<'a> EmbeddingContext<'a> {
     /// Geodesic distances on the manifold: the *before projection* reading.
     pub fn manifold_dist(&self) -> &[f64] {
         self.manifold_dist.get_or_init(|| {
-            create_manifold(self.curvature).pairwise_distances(self.points, self.n, self.ambient_dim)
+            create_manifold(self.curvature).pairwise_distances(
+                self.points,
+                self.n,
+                self.ambient_dim,
+            )
         })
     }
 
