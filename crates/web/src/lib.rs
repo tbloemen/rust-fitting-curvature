@@ -373,6 +373,69 @@ impl EmbeddingRunner {
     }
 }
 
+/// The metric registry, for the UI to build its tables from.
+///
+/// Returns one entry per metric in `metrics::ALL` order:
+///
+/// ```js
+/// { key, base, label, short, family, space, dir, objective, dual }
+/// ```
+///
+/// `key` is what [`EmbeddingRunner::compute_metrics`] puts on its result
+/// object, and `key`/`dir`/`label` are what the metrics panel and the Pareto
+/// selector used to hard-code. They fell out of date the moment a metric was
+/// added or removed — `www/index.js` was still listing a `knn_overlap` row long
+/// after the metric was deleted — which is the reason this exists.
+///
+/// A free function, not a method: the Pareto selector is populated from
+/// front JSON before any `EmbeddingRunner` has been constructed.
+#[wasm_bindgen]
+pub fn metric_registry() -> Result<JsValue, JsValue> {
+    let arr = js_sys::Array::new();
+    for m in metrics::ALL {
+        let o = js_sys::Object::new();
+        set_str(&o, "key", &web_name(*m))?;
+        set_str(&o, "base", m.base())?;
+        set_str(&o, "label", m.label())?;
+        set_str(&o, "short", m.short())?;
+        set_str(&o, "family", m.family().name())?;
+        set_str(
+            &o,
+            "space",
+            match m.space() {
+                metrics::Space::Projected => "projected",
+                metrics::Space::Manifold => "manifold",
+                metrics::Space::Ambient => "ambient",
+            },
+        )?;
+        // The arrow the panel prints beside the value. A spread diagnostic is
+        // not optimised in either direction, so it gets neither arrow.
+        set_str(
+            &o,
+            "dir",
+            match (m.family(), m.direction()) {
+                (metrics::Family::Spread, _) => "-",
+                (_, metrics::Direction::Maximize) => "\u{2191}",
+                (_, metrics::Direction::Minimize) => "\u{2193}",
+            },
+        )?;
+        set_bool(&o, "objective", m.is_objective())?;
+        set_bool(&o, "dual", m.has_twin())?;
+        arr.push(&o);
+    }
+    Ok(arr.into())
+}
+
+fn set_str(obj: &js_sys::Object, key: &str, value: &str) -> Result<(), JsValue> {
+    js_sys::Reflect::set(obj, &JsValue::from_str(key), &JsValue::from_str(value))?;
+    Ok(())
+}
+
+fn set_bool(obj: &js_sys::Object, key: &str, value: bool) -> Result<(), JsValue> {
+    js_sys::Reflect::set(obj, &JsValue::from_str(key), &JsValue::from_bool(value))?;
+    Ok(())
+}
+
 /// The browser's name for a metric.
 ///
 /// The browser labels the projected reading `_2d` where the JSONL calls it by

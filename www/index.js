@@ -1,6 +1,7 @@
 import {
   EmbeddingRunner,
   get_default_config,
+  metric_registry,
   default as init,
 } from "fitting-web";
 import {
@@ -18,17 +19,63 @@ import PARAMS from "@config/params.json";
 
 const PARAM_CONFIG = Object.fromEntries(PARAMS.map((p) => [p.name, p]));
 
-// The five qParEGO objectives, in the order `default_pareto_metrics` writes them
-// (crates/optimizer/src/pareto.rs). All are measured after projection to 2D;
-// the manifold variants are still recorded on each trial but are no longer
-// optimised, so a front's `metrics` object does not carry them.
-const PARETO_METRICS_LIST = [
-  { key: "trustworthiness", label: "Trustworthiness" },
-  { key: "continuity", label: "Continuity" },
-  { key: "normalized_stress", label: "Normalized Stress" },
-  { key: "shepard_goodness", label: "Shepard Goodness" },
-  { key: "neighborhood_hit", label: "Neighborhood Hit" },
-];
+// The metric registry, read from the WASM module at startup. Everything the UI
+// used to hard-code about a metric — its result-object key, its label, which
+// way is better, whether it has a manifold twin, and which panel group it
+// belongs to — comes from `crates/core/src/metrics/quality.rs` now. These two
+// tables were hand-written and drifted: the metrics panel was still listing a
+// "KNN Overlap" row long after that metric was deleted.
+//
+// Populated by `loadMetricRegistry()` once `init()` has resolved; nothing reads
+// them before that.
+let METRIC_REGISTRY = [];
+let PARETO_METRICS_LIST = [];
+let METRIC_GROUPS = [];
+
+// Panel headings per family. A group of metrics that have manifold twins gets
+// the two-column Manifold/2D layout; one whose metrics are projection-only is
+// labelled as such.
+const FAMILY_TITLES = {
+  structure: "Local Structure",
+  distance: "Distance Preservation",
+  class_separation: "Class Separation",
+  spread: "Spread",
+};
+
+function loadMetricRegistry() {
+  METRIC_REGISTRY = metric_registry();
+
+  PARETO_METRICS_LIST = METRIC_REGISTRY.filter((m) => m.objective).map((m) => ({
+    // A projected metric's registry key carries the browser's `_2d` suffix;
+    // the Pareto front JSON is written by the optimizer and uses wire names.
+    key: m.base,
+    label: m.label,
+  }));
+
+  // Group by (family, has-a-twin), in registry order. The split on `dual` is
+  // what the two-column layout needs, and it is also why `neighborhood_hit`
+  // gets its own heading rather than sitting under Local Structure: it is a
+  // class-separation metric that happens to be a k-NN statistic.
+  const groups = new Map();
+  for (const m of METRIC_REGISTRY) {
+    if (m.space === "manifold") continue; // the twin is rendered by its base
+    const id = `${m.family}:${m.dual}`;
+    if (!groups.has(id)) {
+      const suffix = m.dual || m.family === "spread" ? "" : " (2D)";
+      groups.set(id, {
+        title: (FAMILY_TITLES[m.family] ?? m.family) + suffix,
+        dual: m.dual,
+        metrics: [],
+      });
+    }
+    groups.get(id).metrics.push({
+      key: m.dual ? m.base : m.key,
+      label: m.label,
+      dir: m.dir,
+    });
+  }
+  METRIC_GROUPS = [...groups.values()];
+}
 
 // Tab10 palette — matches visualisation.rs tab10_color
 const TAB10 = [
@@ -88,6 +135,7 @@ initialize();
 
 async function initialize() {
   await init();
+  loadMetricRegistry();
   applyDefaultConfig();
   main();
 }
@@ -724,49 +772,6 @@ function downloadSvg() {
     console.error(e);
   }
 }
-
-// Metric groups: each dual-variant metric shows manifold + 2D columns.
-// Single-variant metrics (labels-only, 2D-only) show one value column.
-const METRIC_GROUPS = [
-  {
-    title: "Local Structure",
-    dual: true,
-    metrics: [
-      { key: "trustworthiness", label: "Trustworthiness", dir: "↑" },
-      { key: "continuity", label: "Continuity", dir: "↑" },
-      { key: "neighborhood_hit", label: "Neighborhood Hit", dir: "↑" },
-    ],
-  },
-  {
-    title: "Distance Preservation",
-    dual: true,
-    metrics: [
-      { key: "normalized_stress", label: "Norm. Stress", dir: "↓" },
-      { key: "shepard_goodness", label: "Shepard Goodness", dir: "↑" },
-    ],
-  },
-  {
-    title: "Class Separation (2D)",
-    dual: false,
-    metrics: [
-      { key: "cluster_density_measure", label: "Cluster Density", dir: "↑" },
-      { key: "davies_bouldin_ratio", label: "DB Ratio", dir: "↑" },
-      { key: "dunn_index", label: "Dunn Index", dir: "↑" },
-    ],
-  },
-  // The spread diagnostics κ = |K|·R² is gauged against. Not optimised, and
-  // r_gyration is the one to read: r_max/r_rms are measured from a fixed pole,
-  // which is meaningful on the hyperboloid and vacuous on the sphere.
-  {
-    title: "Spread",
-    dual: false,
-    metrics: [
-      { key: "r_gyration", label: "R gyration", dir: "-" },
-      { key: "r_rms", label: "R rms", dir: "-" },
-      { key: "r_max", label: "R max", dir: "-" },
-    ],
-  },
-];
 
 // Shared inline styles for metric rows. Inline styles are used because
 // .metrics-panel lives inside .canvas-wrapper which sets line-height:0;
