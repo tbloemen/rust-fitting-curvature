@@ -291,7 +291,7 @@ pub fn davies_bouldin_ratio(
 /// already holds.
 ///
 /// The wrapper above derives that matrix from coordinates on every call, which
-/// is a wasted `O(n²)` for a caller — [`super::MetricContext`] — that has it
+/// is a wasted `O(n²)` for a caller — [`super::EmbeddingContext`] — that has it
 /// cached. The two agree bit-for-bit: `euclidean_dist_2d` and
 /// `matrices::compute_euclidean_distance_matrix` differ only by a leading
 /// `0.0 +`, which is exact.

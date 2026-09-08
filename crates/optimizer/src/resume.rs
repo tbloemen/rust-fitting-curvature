@@ -4,7 +4,7 @@ use std::thread;
 use crate::common::eval_all_metrics;
 use crate::evaluate::Evaluator;
 use crate::metrics::{Metric, MetricValues};
-use fitting_core::metrics::{R_MAX, R_RMS};
+use fitting_core::spread::SpreadDiagnostics;
 use crate::pareto::metrics_to_vec;
 use crate::search_space::TrialConfig;
 
@@ -20,6 +20,17 @@ pub(crate) struct PriorEval {
     pub(crate) metric_vec: Vec<f64>,
     pub(crate) r_max: f64,
     pub(crate) r_rms: f64,
+}
+
+/// The two flattened blocks a results line carries, which is all `--resume`
+/// reads off it. Everything else on the line — hyperparameters, dataset,
+/// timings — is re-derived by replaying `suggest_batch`, so it is ignored here.
+#[derive(serde::Deserialize)]
+struct PriorLine {
+    #[serde(flatten)]
+    metrics: MetricValues,
+    #[serde(flatten)]
+    spread: SpreadDiagnostics,
 }
 
 /// Load prior pareto trials from `path`, in file order (which is exactly the
@@ -47,12 +58,12 @@ pub(crate) fn load_prior_evals(path: &str, metrics: &[Metric]) -> Vec<PriorEval>
         // deserialise as `None`, replay as the worst-case substitute, and
         // silently give a resumed run a different GP — no error. There is no
         // longer a second list to fall out of step with the first.
-        match serde_json::from_str::<MetricValues>(line) {
-            Ok(all) => {
+        match serde_json::from_str::<PriorLine>(line) {
+            Ok(prior) => {
                 out.push(PriorEval {
-                    metric_vec: metrics_to_vec(&all, metrics),
-                    r_max: all.get(R_MAX).unwrap_or(f64::NAN),
-                    r_rms: all.get(R_RMS).unwrap_or(f64::NAN),
+                    metric_vec: metrics_to_vec(&prior.metrics, metrics),
+                    r_max: prior.spread.r_max().unwrap_or(f64::NAN),
+                    r_rms: prior.spread.r_rms().unwrap_or(f64::NAN),
                 });
             }
             Err(e) => {
@@ -79,6 +90,7 @@ pub(crate) enum BatchOutcome {
     /// Freshly evaluated — carries everything needed to log a JSONL line.
     Fresh {
         all: MetricValues,
+        spread: SpreadDiagnostics,
         actual_curvature: f64,
         elapsed_ms: u64,
     },
@@ -101,7 +113,7 @@ pub(crate) fn eval_or_reuse_batch(
 ) -> Vec<BatchOutcome> {
     let reused = prior.len().saturating_sub(base_global).min(configs.len());
 
-    let fresh_results: Vec<(f64, MetricValues, u64)> = thread::scope(|s| {
+    let fresh_results: Vec<(f64, MetricValues, SpreadDiagnostics, u64)> = thread::scope(|s| {
         configs[reused..]
             .iter()
             .enumerate()
@@ -111,7 +123,7 @@ pub(crate) fn eval_or_reuse_batch(
                 s.spawn(move || {
                     let pb_iters = ProgressBar::hidden();
                     let start = std::time::Instant::now();
-                    let all = eval_all_metrics(
+                    let (all, spread) = eval_all_metrics(
                         evaluator,
                         config,
                         curvature_sign,
@@ -120,7 +132,7 @@ pub(crate) fn eval_or_reuse_batch(
                         &pb_iters,
                     );
                     let elapsed = start.elapsed().as_millis() as u64;
-                    (actual_curvature, all, elapsed)
+                    (actual_curvature, all, spread, elapsed)
                 })
             })
             .collect::<Vec<_>>()
@@ -138,9 +150,10 @@ pub(crate) fn eval_or_reuse_batch(
             r_rms: p.r_rms,
         });
     }
-    for (actual_curvature, all, elapsed_ms) in fresh_results {
+    for (actual_curvature, all, spread, elapsed_ms) in fresh_results {
         outcomes.push(BatchOutcome::Fresh {
             all,
+            spread,
             actual_curvature,
             elapsed_ms,
         });

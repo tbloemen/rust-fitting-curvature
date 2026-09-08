@@ -357,16 +357,29 @@ impl EmbeddingRunner {
     /// Compute all quality metrics after training.
     ///
     /// Returns a JS object keyed by [`web_name`], so a metric with two
-    /// readings appears as `{base}_manifold` and `{base}_2d`. A metric that is
+    /// readings appears as `{base}_manifold` and `{base}_2d`, plus the three
+    /// spread diagnostics under their own names. A metric that is
     /// undefined for this state — every label-aware one, on unlabelled data —
     /// is omitted rather than sent as NaN, which is what lets the panel filter
     /// on `undefined`.
     pub fn compute_metrics(&self) -> Result<JsValue, JsValue> {
-        let values = self.state.compute_metrics();
+        let (values, spread) = self.state.compute_metrics();
         let obj = js_sys::Object::new();
         for m in metrics::ALL {
             if let Some(v) = values.get(*m) {
                 set_prop(&obj, &web_name(*m), v)?;
+            }
+        }
+        // The spread diagnostics are not metrics and do not come off the
+        // registry; three named quantities, listed once here and once in the
+        // panel's Spread group.
+        for (key, v) in [
+            ("r_max", spread.r_max()),
+            ("r_rms", spread.r_rms()),
+            ("r_gyration", spread.r_gyration()),
+        ] {
+            if let Some(v) = v {
+                set_prop(&obj, key, v)?;
             }
         }
         Ok(obj.into())
@@ -375,7 +388,9 @@ impl EmbeddingRunner {
 
 /// The metric registry, for the UI to build its tables from.
 ///
-/// Returns one entry per metric in `metrics::ALL` order:
+/// Quality metrics only — the spread diagnostics are not metrics and the panel
+/// lists those three explicitly. Returns one entry per metric in
+/// `metrics::ALL` order:
 ///
 /// ```js
 /// { key, base, label, short, family, space, dir, objective, dual }
@@ -405,18 +420,15 @@ pub fn metric_registry() -> Result<JsValue, JsValue> {
             match m.space() {
                 metrics::Space::Projected => "projected",
                 metrics::Space::Manifold => "manifold",
-                metrics::Space::Ambient => "ambient",
             },
         )?;
-        // The arrow the panel prints beside the value. A spread diagnostic is
-        // not optimised in either direction, so it gets neither arrow.
+        // The arrow the panel prints beside the value.
         set_str(
             &o,
             "dir",
-            match (m.family(), m.direction()) {
-                (metrics::Family::Spread, _) => "-",
-                (_, metrics::Direction::Maximize) => "\u{2191}",
-                (_, metrics::Direction::Minimize) => "\u{2193}",
+            match m.direction() {
+                metrics::Direction::Maximize => "\u{2191}",
+                metrics::Direction::Minimize => "\u{2193}",
             },
         )?;
         set_bool(&o, "objective", m.is_objective())?;
@@ -450,7 +462,7 @@ fn web_name(m: metrics::Metric) -> String {
         // read.
         metrics::Space::Projected if m.has_twin() => format!("{}_2d", m.base()),
         metrics::Space::Manifold => format!("{}_manifold", m.base()),
-        _ => m.name().to_string(),
+        metrics::Space::Projected => m.name().to_string(),
     }
 }
 

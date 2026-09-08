@@ -590,8 +590,8 @@ fn front_entry(r: &TrialRecord) -> FrontEntry {
         norm_loss_weight: r.norm_loss_weight,
         early_exaggeration_factor: r.early_exaggeration_factor,
         curvature_magnitude: r.curvature_magnitude.unwrap_or(0.0),
-        r_max: r.metrics.get(fitting_core::metrics::R_MAX),
-        r_rms: r.metrics.get(fitting_core::metrics::R_RMS),
+        r_max: r.spread.r_max(),
+        r_rms: r.spread.r_rms(),
         metrics,
     }
 }

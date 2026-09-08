@@ -45,7 +45,7 @@ pub(crate) fn run_random(
         };
         let mut config = sample_space.sample(&mut rng);
         config.curvature_magnitude = ParamSpec::Fixed(curvature.abs());
-        let agg = eval_all_metrics(
+        let (agg, spread) = eval_all_metrics(
             &evaluator,
             &config,
             curvature_sign,
@@ -63,7 +63,7 @@ pub(crate) fn run_random(
             curvature,
             elapsed,
         )
-        .with_all_metrics(&agg);
+        .with_all_metrics(&agg, &spread);
         write_result(&result, out_path);
 
         pb.set_message(format!(

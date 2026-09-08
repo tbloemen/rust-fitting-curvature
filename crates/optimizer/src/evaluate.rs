@@ -1,7 +1,9 @@
 use fitting_core::curvature_detection::{detect_geometry, GeometryVerdict};
 use fitting_core::embedding::EmbeddingState;
 use fitting_core::matrices::compute_euclidean_distance_matrix;
-use fitting_core::metrics::{Metric, MetricContext, MetricValues};
+use fitting_core::context::EmbeddingContext;
+use fitting_core::metrics::{Metric, MetricValues};
+use fitting_core::spread::SpreadDiagnostics;
 use fitting_core::visualisation::SphericalProjection;
 use indicatif::ProgressBar;
 
@@ -54,9 +56,10 @@ impl Evaluator {
         curvature_sign: f64,
         seed: u64,
         pb_iters: &ProgressBar,
-    ) -> MetricValues {
+    ) -> (MetricValues, SpreadDiagnostics) {
         let (state, curvature) = self.run_embedding(config, curvature_sign, seed, pb_iters);
-        MetricValues::compute(&self.context(&state, curvature))
+        let ctx = self.context(&state, curvature);
+        (MetricValues::compute(&ctx), SpreadDiagnostics::compute(&ctx))
     }
 
     /// Score one configuration on a single named metric, for `--mode bayes`
@@ -66,7 +69,7 @@ impl Evaluator {
     /// same things `metrics_from_embedding` did a few lines below, behind its
     /// own pair of lazy closures and closing on a `panic!` whose message listed
     /// the valid names a fourth time. All of that is the registry's job now,
-    /// and `MetricContext` keeps the compute-only-what-is-asked-for property
+    /// and `EmbeddingContext` keeps the compute-only-what-is-asked-for property
     /// the closures were there for.
     pub fn evaluate_with_metric(
         &self,
@@ -116,8 +119,8 @@ impl Evaluator {
     /// convention, and differ from the interactive viewer's. Both callers here
     /// go through this one function so they cannot drift apart, which is what
     /// the seam `metrics_from_embedding` documents was always for.
-    fn context<'a>(&'a self, state: &'a EmbeddingState, curvature: f64) -> MetricContext<'a> {
-        MetricContext::new(
+    fn context<'a>(&'a self, state: &'a EmbeddingState, curvature: f64) -> EmbeddingContext<'a> {
+        EmbeddingContext::new(
             &self.high_dim_dist,
             &state.points,
             Some(&self.dataset.labels),

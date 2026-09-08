@@ -2,6 +2,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use crate::evaluate::Evaluator;
 use crate::metrics::{Metric, MetricValues};
+use fitting_core::spread::SpreadDiagnostics;
 use crate::search_space::TrialConfig;
 
 // ─── Experiment variants ──────────────────────────────────────────────────────
@@ -68,13 +69,13 @@ pub(crate) fn eval_all_metrics(
     n_seeds: usize,
     trial_idx: usize,
     pb_iters: &ProgressBar,
-) -> MetricValues {
-    let samples: Vec<MetricValues> = (0..n_seeds)
+) -> (MetricValues, SpreadDiagnostics) {
+    let (metrics, spread): (Vec<MetricValues>, Vec<SpreadDiagnostics>) = (0..n_seeds)
         .map(|si| {
             evaluator.compute_all_metrics(config, curvature, trial_seed(trial_idx, si), pb_iters)
         })
-        .collect();
-    MetricValues::mean(&samples)
+        .unzip();
+    (MetricValues::mean(&metrics), SpreadDiagnostics::mean(&spread))
 }
 
 pub(crate) fn make_progress_bar(mp: &MultiProgress, total: u64, template: &str) -> ProgressBar {
@@ -88,9 +89,7 @@ pub(crate) fn make_progress_bar(mp: &MultiProgress, total: u64, template: &str) 
 }
 
 pub(crate) fn parse_metric(name: &str) -> Metric {
-    Metric::by_name(name)
-        .filter(|m| Metric::optimizable().any(|o| o == *m))
-        .unwrap_or_else(|| {
+    Metric::by_name(name).unwrap_or_else(|| {
         eprintln!(
             "Unknown metric '{}'. Valid options: {}",
             name,

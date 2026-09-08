@@ -14,7 +14,7 @@ use fitting_core::metrics::{Direction, Family, Metric, Space, ALL, OBJECTIVES};
 /// from `ALL`, added to it, or moved within it changes the schema of every new
 /// results line — so that has to be a deliberate edit here, not a silent
 /// consequence of editing `ALL`.
-const EXPECTED: [&str; 16] = [
+const EXPECTED: [&str; 13] = [
     "trustworthiness",
     "trustworthiness_manifold",
     "continuity",
@@ -28,9 +28,6 @@ const EXPECTED: [&str; 16] = [
     "davies_bouldin_ratio",
     "dunn_index",
     "cluster_density_measure",
-    "r_max",
-    "r_rms",
-    "r_gyration",
 ];
 
 #[test]
@@ -133,17 +130,24 @@ fn only_normalized_stress_is_minimized() {
     }
 }
 
+/// The spread diagnostics are not metrics, so `--metric r_max` is rejected
+/// for the honest reason: there is no such metric.
+///
+/// They were briefly registry entries, which forced a `Family::Spread` that
+/// emitted no region, a `Space::Ambient` meaning "neither", a `direction()`
+/// with no meaning, and a `Metric::optimizable()` filter whose only job was to
+/// take them back out again. They live in `fitting_core::spread` now.
 #[test]
-fn the_spread_diagnostics_are_not_optimizable() {
-    // `--metric r_max` must be rejected: they are logged to gauge κ, never fit.
-    let optimizable: Vec<&str> = Metric::optimizable().map(|m| m.name()).collect();
+fn the_spread_diagnostics_are_not_metrics() {
     for d in ["r_max", "r_rms", "r_gyration"] {
-        assert!(!optimizable.contains(&d), "{d} is offered to --metric");
-        assert_eq!(Metric::by_name(d).map(|m| m.family()), Some(Family::Spread));
+        assert_eq!(Metric::by_name(d), None, "{d} still parses as a metric");
+        assert!(
+            !Metric::valid_names().contains(d),
+            "{d} is offered to --metric"
+        );
     }
-    assert_eq!(optimizable.len(), 13);
+    assert_eq!(ALL.len(), 13);
     assert!(Metric::valid_names().contains("trustworthiness"));
-    assert!(!Metric::valid_names().contains("r_max"));
 }
 
 #[test]
@@ -192,14 +196,7 @@ fn only_the_paired_metrics_report_a_twin() {
             "shepard_goodness_manifold",
         ]
     );
-    for solo in [
-        "davies_bouldin_ratio",
-        "dunn_index",
-        "cluster_density_measure",
-        "r_max",
-        "r_rms",
-        "r_gyration",
-    ] {
+    for solo in ["davies_bouldin_ratio", "dunn_index", "cluster_density_measure"] {
         assert!(
             !Metric::by_name(solo).unwrap().has_twin(),
             "{solo} claims a twin"

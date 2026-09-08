@@ -8,7 +8,7 @@
 
 use std::ops::Index;
 
-use super::context::MetricContext;
+use crate::context::EmbeddingContext;
 use super::quality::{Metric, ALL};
 
 /// Every metric's value for one embedding, positional in [`ALL`] order.
@@ -38,7 +38,7 @@ impl MetricValues {
 
     /// Score every metric in [`ALL`]. The context derives each distance matrix
     /// at most once, however many metrics read it.
-    pub fn compute(ctx: &MetricContext<'_>) -> Self {
+    pub fn compute(ctx: &EmbeddingContext<'_>) -> Self {
         let mut out = Self::MISSING;
         for (slot, metric) in out.0.iter_mut().zip(ALL) {
             *slot = metric.compute(ctx);

@@ -20,7 +20,7 @@ import PARAMS from "@config/params.json";
 const PARAM_CONFIG = Object.fromEntries(PARAMS.map((p) => [p.name, p]));
 
 // The metric registry, read from the WASM module at startup. Everything the UI
-// used to hard-code about a metric — its result-object key, its label, which
+// used to hard-code about a quality metric — its result-object key, its label, which
 // way is better, whether it has a manifold twin, and which panel group it
 // belongs to — comes from `crates/core/src/metrics/quality.rs` now. These two
 // tables were hand-written and drifted: the metrics panel was still listing a
@@ -39,7 +39,20 @@ const FAMILY_TITLES = {
   structure: "Local Structure",
   distance: "Distance Preservation",
   class_separation: "Class Separation",
-  spread: "Spread",
+};
+
+// How far the embedding reaches. Not metrics and not in the registry — see
+// crates/core/src/spread.rs — so this group is listed rather than derived.
+// r_gyration is the one to read: r_max and r_rms are measured from a fixed
+// pole, which is meaningful on the hyperboloid and vacuous on the sphere.
+const SPREAD_GROUP = {
+  title: "Spread",
+  dual: false,
+  metrics: [
+    { key: "r_gyration", label: "R gyration", dir: "-" },
+    { key: "r_rms", label: "R rms", dir: "-" },
+    { key: "r_max", label: "R max", dir: "-" },
+  ],
 };
 
 function loadMetricRegistry() {
@@ -61,9 +74,8 @@ function loadMetricRegistry() {
     if (m.space === "manifold") continue; // the twin is rendered by its base
     const id = `${m.family}:${m.dual}`;
     if (!groups.has(id)) {
-      const suffix = m.dual || m.family === "spread" ? "" : " (2D)";
       groups.set(id, {
-        title: (FAMILY_TITLES[m.family] ?? m.family) + suffix,
+        title: (FAMILY_TITLES[m.family] ?? m.family) + (m.dual ? "" : " (2D)"),
         dual: m.dual,
         metrics: [],
       });
@@ -74,7 +86,7 @@ function loadMetricRegistry() {
       dir: m.dir,
     });
   }
-  METRIC_GROUPS = [...groups.values()];
+  METRIC_GROUPS = [...groups.values(), SPREAD_GROUP];
 }
 
 // Tab10 palette — matches visualisation.rs tab10_color

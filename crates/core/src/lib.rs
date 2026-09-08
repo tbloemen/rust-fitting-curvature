@@ -1,5 +1,6 @@
 pub mod affinities;
 pub mod config;
+pub mod context;
 pub mod curvature_detection;
 pub mod data;
 pub mod embedding;
@@ -11,5 +12,6 @@ pub mod metrics;
 pub mod optimizer;
 pub mod rng;
 pub mod scaling_loss;
+pub mod spread;
 pub mod synthetic_data;
 pub mod visualisation;

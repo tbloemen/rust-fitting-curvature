@@ -8,7 +8,7 @@ use fitting_analysis::r2::{
     cell_summary, front_utilities, r2, recommendation, Weights, REGION_ALL,
 };
 use fitting_analysis::TrialRecord;
-use fitting_core::metrics::{Direction, Family, MetricValues, CONTINUITY, TRUSTWORTHINESS};
+use fitting_core::metrics::{Direction, MetricValues, CONTINUITY, TRUSTWORTHINESS};
 
 /// A front point that scores *v* on every objective.
 fn flat(v: f64) -> [f64; N_OBJECTIVES] {
@@ -309,9 +309,6 @@ fn recommendation_ties_resolve_to_the_lowest_front_index() {
 fn metrics_at(v: f64) -> MetricValues {
     let mut m = MetricValues::MISSING;
     for metric in fitting_core::metrics::ALL {
-        if metric.family() == Family::Spread {
-            continue;
-        }
         m.set(
             *metric,
             match metric.direction() {

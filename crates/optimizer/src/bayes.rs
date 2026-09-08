@@ -7,6 +7,7 @@ use crate::common::{eval_all_metrics, make_progress_bar, parse_experiment, parse
 use crate::evaluate::Evaluator;
 use crate::gp::{GpOptimizer, GpState};
 use crate::metrics::MetricValues;
+use fitting_core::spread::SpreadDiagnostics;
 use crate::search_space::{param_bounds, ParamSpec, SearchSpace, TrialConfig};
 use crate::trial_result::{write_result, TrialResult};
 
@@ -167,7 +168,7 @@ pub(crate) fn run_bayes(
         let configs = optimizer.suggest_batch(this_batch, &mut rng);
 
         // Evaluate all configs in this batch in parallel, then collect results.
-        let results: Vec<(f64, MetricValues, u64)> = thread::scope(|s| {
+        let results: Vec<(f64, MetricValues, SpreadDiagnostics, u64)> = thread::scope(|s| {
             configs
                 .iter()
                 .enumerate()
@@ -178,7 +179,7 @@ pub(crate) fn run_bayes(
                     s.spawn(move || {
                         let pb_iters = ProgressBar::hidden();
                         let start = std::time::Instant::now();
-                        let all = eval_all_metrics(
+                        let (all, spread) = eval_all_metrics(
                             evaluator,
                             config,
                             curvature_sign,
@@ -187,7 +188,7 @@ pub(crate) fn run_bayes(
                             &pb_iters,
                         );
                         let elapsed = start.elapsed().as_millis() as u64;
-                        (actual_curvature, all, elapsed)
+                        (actual_curvature, all, spread, elapsed)
                     })
                 })
                 .collect::<Vec<_>>()
@@ -197,7 +198,7 @@ pub(crate) fn run_bayes(
         });
 
         // Observe all results and update the GP before the next round.
-        for (config, (actual_curvature, all, elapsed)) in configs.iter().zip(results.iter()) {
+        for (config, (actual_curvature, all, spread, elapsed)) in configs.iter().zip(results.iter()) {
             let mean = all[metric];
             optimizer.observe(config.clone(), mean);
             completed += 1;
@@ -210,7 +211,7 @@ pub(crate) fn run_bayes(
                 *actual_curvature,
                 *elapsed,
             )
-            .with_all_metrics(all);
+            .with_all_metrics(all, spread);
             result.geometry = Some(geometry.to_string());
             if optimize_curvature {
                 result.curvature_magnitude = Some(config.curvature_magnitude.value());

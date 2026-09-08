@@ -1,5 +1,7 @@
-//! The inputs every metric reads, with each derived matrix computed at most
-//! once.
+//! One embedding, with every matrix derivable from it computed at most once.
+//!
+//! Read by both [`crate::metrics`] and [`crate::spread`], which is why it sits
+//! above them rather than inside either.
 //!
 //! Before this existed, three callers derived the same matrices three ways:
 //! `evaluate::metrics_from_embedding` went through
@@ -16,14 +18,14 @@ use crate::manifolds::create_manifold;
 use crate::matrices::compute_euclidean_distance_matrix;
 use crate::visualisation::{project_to_2d, SphericalProjection};
 
-/// Everything a metric may read about one embedding.
+/// Everything a metric or diagnostic may read about one embedding.
 ///
 /// `k` and `projection` are **inputs, not constants**, because the two callers
 /// genuinely differ and that difference is load-bearing: the optimizer scores
 /// with `k = min(30, 0.1n)` under `AzimuthalEquidistant`, while the interactive
 /// `EmbeddingState` uses `k = perplexity` under the projection the user picked.
 /// Folding either into the registry would silently move published numbers.
-pub struct MetricContext<'a> {
+pub struct EmbeddingContext<'a> {
     /// Pairwise distances in the input space, flat row-major `n × n`.
     pub high_dim_dist: &'a [f64],
     /// Row-major `n × ambient_dim`, on the manifold of `curvature`.
@@ -44,7 +46,7 @@ pub struct MetricContext<'a> {
     origin_dist: OnceCell<Vec<f64>>,
 }
 
-impl<'a> MetricContext<'a> {
+impl<'a> EmbeddingContext<'a> {
     /// Eight arguments is what scoring an embedding genuinely takes, and a
     /// builder would make `k` and `projection` skippable — the two inputs that
     /// silently move published numbers when a caller forgets them.
@@ -115,8 +117,8 @@ impl<'a> MetricContext<'a> {
             .get_or_init(|| compute_euclidean_distance_matrix(self.coords_2d(), self.n, 2))
     }
 
-    /// Geodesic distance from the manifold origin, per point. Only the spread
-    /// diagnostics read this.
+    /// Geodesic distance from the manifold origin, per point. Only
+    /// [`crate::spread::SpreadDiagnostics`] reads this.
     pub fn origin_dist(&self) -> &[f64] {
         self.origin_dist.get_or_init(|| {
             create_manifold(self.curvature).distances_from_origin(

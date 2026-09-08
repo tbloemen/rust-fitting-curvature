@@ -460,7 +460,7 @@ fn test_compute_metrics_manual_call() {
     let data = create_test_data(50, 5, 42);
     let mut state = EmbeddingState::new(&data, 5, &small_config(50, 30));
     state.run(|_| true);
-    let m = state.compute_metrics();
+    let (m, _spread) = state.compute_metrics();
     assert!((0.0..=1.0).contains(&m[TRUSTWORTHINESS_MANIFOLD]));
     assert!((0.0..=1.0).contains(&m[TRUSTWORTHINESS]));
     assert!(m.get(NEIGHBORHOOD_HIT_MANIFOLD).is_none());
@@ -472,7 +472,7 @@ fn test_compute_metrics_with_labels_gives_some() {
     let labels: Vec<u32> = (0..60u32).map(|i| i / 20).collect();
     let mut state = EmbeddingState::new(&data, 5, &small_config(60, 30)).with_labels(labels);
     state.run(|_| true);
-    let m = state.compute_metrics();
+    let (m, _spread) = state.compute_metrics();
     assert!(m.get(NEIGHBORHOOD_HIT_MANIFOLD).is_some());
     assert!(m.get(NEIGHBORHOOD_HIT).is_some());
     assert!(m.get(CLUSTER_DENSITY_MEASURE).is_some());
@@ -485,7 +485,7 @@ fn test_compute_metrics_values_in_range() {
     let labels: Vec<u32> = (0..50u32).map(|i| i / 25).collect();
     let mut state = EmbeddingState::new(&data, 5, &small_config(50, 20)).with_labels(labels);
     state.run(|_| true);
-    let m = state.compute_metrics();
+    let (m, _spread) = state.compute_metrics();
     assert!((0.0..=1.0).contains(&m[TRUSTWORTHINESS_MANIFOLD]));
     assert!((0.0..=1.0).contains(&m[TRUSTWORTHINESS]));
     assert!((0.0..=1.0).contains(&m[CONTINUITY_MANIFOLD]));
@@ -506,7 +506,7 @@ fn test_with_projection_spherical_no_nan() {
     let mut state =
         EmbeddingState::new(&data, 5, &cfg).with_projection(SphericalProjection::Stereographic);
     state.run(|_| true);
-    let m = state.compute_metrics();
+    let (m, _spread) = state.compute_metrics();
     assert!(
         !m[TRUSTWORTHINESS].is_nan(),
         "NaN in trustworthiness_2d"
@@ -529,7 +529,7 @@ fn test_with_projection_hyperbolic_no_nan() {
     let mut state = EmbeddingState::new(&data, 5, &cfg)
         .with_projection(SphericalProjection::AzimuthalEquidistant);
     state.run(|_| true);
-    let m = state.compute_metrics();
+    let (m, _spread) = state.compute_metrics();
     assert!(
         !m[TRUSTWORTHINESS].is_nan(),
         "NaN in trustworthiness_2d"
@@ -556,7 +556,7 @@ fn test_manifold_and_projected_readings_differ_under_curvature() {
     cfg.curvature = -1.0;
     let mut state = EmbeddingState::new(&data, 5, &cfg);
     state.run(|_| true);
-    let m = state.compute_metrics();
+    let (m, _spread) = state.compute_metrics();
 
     assert!(
         (m[NORMALIZED_STRESS] - m[NORMALIZED_STRESS_MANIFOLD]).abs() > 1e-9,
@@ -576,7 +576,7 @@ fn test_the_two_readings_coincide_in_flat_space() {
     let data = create_test_data(50, 5, 42);
     let mut state = EmbeddingState::new(&data, 5, &small_config(50, 30));
     state.run(|_| true);
-    let m = state.compute_metrics();
+    let (m, _spread) = state.compute_metrics();
 
     assert!(
         (m[NORMALIZED_STRESS] - m[NORMALIZED_STRESS_MANIFOLD]).abs() < 1e-9,
@@ -612,7 +612,7 @@ fn test_compute_metrics_from_distances() {
     };
     let mut state = EmbeddingState::from_distances(&dist, n, &cfg);
     state.run(|_| true);
-    let m = state.compute_metrics();
+    let (m, _spread) = state.compute_metrics();
     assert!(!m[TRUSTWORTHINESS_MANIFOLD].is_nan());
     assert!(!m[TRUSTWORTHINESS].is_nan());
 }

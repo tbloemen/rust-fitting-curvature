@@ -3,6 +3,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use crate::metrics::MetricValues;
+use fitting_core::spread::SpreadDiagnostics;
 use crate::search_space::TrialConfig;
 
 #[derive(Debug, Serialize)]
@@ -31,6 +32,11 @@ pub(crate) struct TrialResult {
     /// `metrics::ALL` order and that order is this struct's old field order.
     #[serde(flatten)]
     pub(crate) metrics: MetricValues,
+    /// How far the embedding reaches. Flattened second so `r_max`, `r_rms` and
+    /// `r_gyration` land after the metric block and before `time_ms`, which is
+    /// where they have always been.
+    #[serde(flatten)]
+    pub(crate) spread: SpreadDiagnostics,
 
     pub(crate) time_ms: u64,
 
@@ -62,13 +68,19 @@ impl TrialResult {
             norm_loss_weight: config.norm_loss_weight.value(),
             early_exaggeration_factor: config.early_exaggeration_factor.value(),
             metrics: MetricValues::MISSING,
+            spread: SpreadDiagnostics::MISSING,
             time_ms,
             scan_param: None,
         }
     }
 
-    pub(crate) fn with_all_metrics(mut self, m: &MetricValues) -> Self {
+    pub(crate) fn with_all_metrics(
+        mut self,
+        m: &MetricValues,
+        spread: &SpreadDiagnostics,
+    ) -> Self {
         self.metrics = *m;
+        self.spread = *spread;
         self
     }
 }
@@ -94,7 +106,7 @@ mod tests {
         TrialResult::new(&config, "tree", 100, 1, 0.0, 5)
     }
 
-    /// A result that was never scored must still carry the whole metric block,
+    /// A result that was never scored must still carry both blocks whole,
     /// every column `null`.
     ///
     /// `--mode scan` builds results this way — it calls `TrialResult::new` and
@@ -106,30 +118,40 @@ mod tests {
     fn an_unscored_result_writes_the_metric_block_as_nulls() {
         let json = serde_json::to_value(unscored()).unwrap();
         let obj = json.as_object().unwrap();
-        for m in crate::metrics::ALL_METRICS {
+        let columns = crate::metrics::ALL_METRICS
+            .iter()
+            .map(|m| m.name())
+            .chain(["r_max", "r_rms", "r_gyration"]);
+        for column in columns {
             assert_eq!(
-                obj.get(m.name()),
+                obj.get(column),
                 Some(&serde_json::Value::Null),
-                "{} is missing or not null",
-                m.name()
+                "{column} is missing or not null"
             );
         }
     }
 
-    /// The metric block sits between the hyperparameters and `time_ms`, which
-    /// is where the individual `Option<f64>` columns used to be. Key order is
-    /// what makes a byte-diff against a pre-refactor results file meaningful.
+    /// The two flattened blocks sit between the hyperparameters and `time_ms`,
+    /// metrics first and spread second, which is where the individual
+    /// `Option<f64>` columns used to be. Key order is what makes a byte-diff
+    /// against an existing results file mean anything.
     #[test]
-    fn the_metric_block_keeps_its_position_in_the_line() {
-        let json = serde_json::to_string(&unscored().with_all_metrics(&MetricValues::MISSING))
-            .unwrap();
+    fn the_flattened_blocks_keep_their_position_in_the_line() {
+        let json = serde_json::to_string(
+            &unscored().with_all_metrics(&MetricValues::MISSING, &SpreadDiagnostics::MISSING),
+        )
+        .unwrap();
         let keys: Vec<&str> = json
             .trim_matches(|c| c == '{' || c == '}')
             .split(',')
             .map(|kv| kv.split(':').next().unwrap().trim_matches('"'))
             .collect();
+
         let first = keys.iter().position(|k| *k == "trustworthiness").unwrap();
         assert_eq!(keys[first - 1], "early_exaggeration_factor");
-        assert_eq!(keys[first + crate::metrics::ALL_METRICS.len()], "time_ms");
+
+        let mut want: Vec<&str> = crate::metrics::ALL_METRICS.iter().map(|m| m.name()).collect();
+        want.extend(["r_max", "r_rms", "r_gyration", "time_ms"]);
+        assert_eq!(&keys[first..first + want.len()], &want[..]);
     }
 }

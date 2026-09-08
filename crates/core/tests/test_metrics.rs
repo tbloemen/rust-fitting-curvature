@@ -3,6 +3,8 @@
 
 use fitting_core::metrics::*;
 use fitting_core::synthetic_data::Rng;
+use fitting_core::context::EmbeddingContext;
+use fitting_core::spread::SpreadDiagnostics;
 use fitting_core::visualisation::SphericalProjection;
 
 // ---------------------------------------------------------------------------
@@ -490,9 +492,9 @@ fn flat_context<'a>(
     pts_2d: &'a [f64],
     labels: Option<&'a [u32]>,
     k: usize,
-) -> MetricContext<'a> {
+) -> EmbeddingContext<'a> {
     let n = pts_2d.len() / 2;
-    MetricContext::new(
+    EmbeddingContext::new(
         high_dim_dist,
         pts_2d,
         labels,
@@ -600,19 +602,47 @@ fn test_compute_all_values_in_range() {
     assert!(m[NORMALIZED_STRESS_MANIFOLD] >= 0.0);
 }
 
+/// The spread diagnostics are measured from the same context as the metrics,
+/// but they are not metrics — they have no direction, no family and no
+/// objective status, which is why they are their own type.
 #[test]
-fn test_the_spread_diagnostics_are_scored_alongside_the_rest() {
-    // They are registry entries, not special cases — that is what lets the
-    // resume path deserialise one vector rather than rebuilding a struct.
+fn test_spread_diagnostics_measure_the_configurations_extent() {
     let (pts_2d, _) = make_clustered_2d(3, 10, 1.0, 7);
     let d = euclidean_dist_2d(&pts_2d, pts_2d.len() / 2);
-    let m = MetricValues::compute(&flat_context(&d, &pts_2d, None, 5));
+    let spread = SpreadDiagnostics::compute(&flat_context(&d, &pts_2d, None, 5));
 
-    let r_max = m.get(R_MAX).expect("r_max");
-    let r_rms = m.get(R_RMS).expect("r_rms");
-    let r_gyr = m.get(R_GYRATION).expect("r_gyration");
+    let r_max = spread.r_max().expect("r_max");
+    let r_rms = spread.r_rms().expect("r_rms");
+    let r_gyration = spread.r_gyration().expect("r_gyration");
     assert!(r_max >= r_rms, "r_max {r_max} < r_rms {r_rms}");
-    assert!(r_gyr > 0.0, "a spread-out configuration has nonzero gyration");
+    assert!(
+        r_gyration > 0.0,
+        "a spread-out configuration has nonzero gyration"
+    );
+}
+
+/// `r_gyration` *is* the RMS distance to the centroid in flat space, so on a
+/// Euclidean context it must agree with `r_rms` measured from an origin the
+/// data is centred on. They separate only under curvature.
+#[test]
+fn test_a_collapsed_configuration_has_no_spread() {
+    let pts_2d = vec![0.0; 24];
+    let d = euclidean_dist_2d(&pts_2d, 12);
+    let spread = SpreadDiagnostics::compute(&flat_context(&d, &pts_2d, None, 3));
+
+    assert_eq!(spread.r_max(), Some(0.0));
+    assert_eq!(spread.r_rms(), Some(0.0));
+    assert_eq!(spread.r_gyration(), Some(0.0));
+}
+
+/// Absent is absent: nothing measured reads back as `None` rather than as a
+/// zero that would look like a genuinely collapsed embedding.
+#[test]
+fn test_missing_spread_is_absent_not_zero() {
+    let missing = SpreadDiagnostics::MISSING;
+    assert_eq!(missing.r_max(), None);
+    assert_eq!(missing.r_rms(), None);
+    assert_eq!(missing.r_gyration(), None);
 }
 
 #[test]

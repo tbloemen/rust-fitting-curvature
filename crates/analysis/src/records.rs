@@ -16,7 +16,8 @@ use std::path::Path;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use fitting_core::metrics::{Metric, MetricValues, R_GYRATION, R_RMS};
+use fitting_core::metrics::{Metric, MetricValues};
+use fitting_core::spread::SpreadDiagnostics;
 
 use crate::error::{Error, IoContext, Result};
 
@@ -59,6 +60,12 @@ pub struct TrialRecord {
     #[serde(flatten)]
     pub metrics: MetricValues,
 
+    /// How far the embedding reached. Not metrics — see
+    /// [`fitting_core::spread`] — but written on the same line, so read off it
+    /// the same way.
+    #[serde(flatten)]
+    pub spread: SpreadDiagnostics,
+
     /// Present only on `--mode scan` sweeps, which are excluded from analysis.
     #[serde(default)]
     pub scan_param: Option<String>,
@@ -85,8 +92,12 @@ impl TrialRecord {
             "early_exaggeration_factor" => self.early_exaggeration_factor,
             "curvature_magnitude" => self.curvature_magnitude,
             "curvature" => self.curvature,
-            // The spread diagnostics are registry metrics; the figures ask
-            // for them through `param` alongside the hyperparameters.
+            // The figures ask for the spread diagnostics through `param`
+            // alongside the hyperparameters — `bin/r2.rs`'s `PARAMS` names
+            // `r_rms` — so they are resolved here, not through the registry.
+            "r_max" => self.spread.r_max(),
+            "r_rms" => self.spread.r_rms(),
+            "r_gyration" => self.spread.r_gyration(),
             other => Metric::by_name(other).and_then(|m| self.metrics.get(m)),
         }
     }
@@ -105,7 +116,7 @@ impl TrialRecord {
         let k = self
             .curvature_magnitude
             .or_else(|| self.curvature.map(f64::abs))?;
-        let r = self.metrics.get(R_RMS)?;
+        let r = self.spread.r_rms()?;
         if !(k.is_finite() && r.is_finite()) {
             return None;
         }
@@ -133,7 +144,7 @@ impl TrialRecord {
         let k = self
             .curvature_magnitude
             .or_else(|| self.curvature.map(f64::abs))?;
-        let r = self.metrics.get(R_GYRATION)?;
+        let r = self.spread.r_gyration()?;
         if !(k.is_finite() && r.is_finite()) {
             return None;
         }

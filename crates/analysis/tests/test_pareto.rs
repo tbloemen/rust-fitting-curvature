@@ -6,7 +6,7 @@ use fitting_analysis::{
     pareto_front_mask, pareto_front_records, parse_cell_stem, parse_cell_stem_variant, TrialRecord,
     Variant,
 };
-use fitting_core::metrics::{Direction, Family, MetricValues};
+use fitting_core::metrics::{Direction, MetricValues};
 
 /// The manifold columns are populated too. They are no longer objectives, so
 /// `oriented_row` ignores them — which is part of what the row test checks.
@@ -18,9 +18,6 @@ use fitting_core::metrics::{Direction, Family, MetricValues};
 fn metrics_at(v: f64) -> MetricValues {
     let mut m = MetricValues::MISSING;
     for metric in fitting_core::metrics::ALL {
-        if metric.family() == Family::Spread {
-            continue;
-        }
         m.set(
             *metric,
             match metric.direction() {

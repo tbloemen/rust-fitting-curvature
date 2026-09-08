@@ -4,7 +4,6 @@ use crate::common::{make_progress_bar, parse_experiment};
 use crate::evaluate::Evaluator;
 use crate::gp::{MultiTrial, ParEgoOptimizer};
 use crate::metrics::{Direction, Metric, MetricValues, OBJECTIVES};
-use fitting_core::metrics::{R_MAX, R_RMS};
 use crate::resume::{eval_or_reuse_batch, load_prior_evals, BatchOutcome};
 use crate::trial_result::{write_result, TrialResult};
 use indicatif::MultiProgress;
@@ -119,11 +118,17 @@ pub fn run_pareto(
                 }
                 BatchOutcome::Fresh {
                     all,
+                    spread,
                     actual_curvature,
                     elapsed_ms,
                 } => {
                     let metric_vec = metrics_to_vec(&all, optimizer.metrics.as_slice());
-                    optimizer.observe(config.clone(), metric_vec, all[R_MAX], all[R_RMS]);
+                    optimizer.observe(
+                        config.clone(),
+                        metric_vec,
+                        spread.r_max().unwrap_or(f64::NAN),
+                        spread.r_rms().unwrap_or(f64::NAN),
+                    );
 
                     let mut result = TrialResult::new(
                         config,
@@ -133,7 +138,7 @@ pub fn run_pareto(
                         actual_curvature,
                         elapsed_ms,
                     )
-                    .with_all_metrics(&all);
+                    .with_all_metrics(&all, &spread);
                     result.geometry = Some(geometry.to_string());
                     if optimize_curvature {
                         result.curvature_magnitude = Some(config.curvature_magnitude.value());
@@ -190,11 +195,17 @@ pub fn run_pareto(
                 }
                 BatchOutcome::Fresh {
                     all,
+                    spread,
                     actual_curvature,
                     elapsed_ms,
                 } => {
                     let metric_vec = metrics_to_vec(&all, optimizer.metrics.as_slice());
-                    optimizer.observe(config.clone(), metric_vec, all[R_MAX], all[R_RMS]);
+                    optimizer.observe(
+                        config.clone(),
+                        metric_vec,
+                        spread.r_max().unwrap_or(f64::NAN),
+                        spread.r_rms().unwrap_or(f64::NAN),
+                    );
 
                     let mut result = TrialResult::new(
                         config,
@@ -204,7 +215,7 @@ pub fn run_pareto(
                         actual_curvature,
                         elapsed_ms,
                     )
-                    .with_all_metrics(&all);
+                    .with_all_metrics(&all, &spread);
                     result.geometry = Some(geometry.to_string());
                     if optimize_curvature {
                         result.curvature_magnitude = Some(config.curvature_magnitude.value());

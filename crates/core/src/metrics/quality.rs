@@ -13,29 +13,33 @@
 //! pins the expected wire names, the `ALL`-position round-trip, and the
 //! objective eligibility rules.
 
-use super::context::MetricContext;
+use crate::context::EmbeddingContext;
 use super::functions;
 
 /// Which distance matrix a metric reads — the before/after-projection
 /// distinction, which is the only thing separating a metric from its twin.
+///
+/// A genuine binary. It briefly had an `Ambient` variant meaning "neither",
+/// which existed solely for the spread diagnostics; those are
+/// [`crate::spread::SpreadDiagnostics`] now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Space {
     /// Euclidean distances in the projected plane: what the reader sees.
     Projected,
     /// Geodesic distances on the manifold: what the optimiser fits.
     Manifold,
-    /// Neither — a property of the configuration itself.
-    Ambient,
 }
 
 /// The preference families the analysis groups objectives into.
+///
+/// Every variant is a real region `r2::build_regions` emits. It briefly had a
+/// `Spread` variant that was not, added to give the spread diagnostics an
+/// answer; see [`crate::spread`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Family {
     Structure,
     Distance,
     ClassSeparation,
-    /// Not an objective family: the spread diagnostics κ is gauged against.
-    Spread,
 }
 
 impl Family {
@@ -45,7 +49,6 @@ impl Family {
             Family::Structure => "structure",
             Family::Distance => "distance",
             Family::ClassSeparation => "class_separation",
-            Family::Spread => "spread",
         }
     }
 }
@@ -97,7 +100,7 @@ pub trait QualityMetric: Sync {
     /// `f64::NAN` when undefined for this input — in practice, a label-aware
     /// metric on unlabelled data. NaN is the single "absent" representation
     /// across the workspace and serialises as `null`.
-    fn compute(&self, c: &MetricContext<'_>) -> f64;
+    fn compute(&self, c: &EmbeddingContext<'_>) -> f64;
 }
 
 // ─── A. Local structure preservation ─────────────────────────────────────────
@@ -113,7 +116,7 @@ impl QualityMetric for Trustworthiness {
     fn is_objective(&self) -> bool { true }
     fn short(&self) -> &'static str { "trust" }
     fn label(&self) -> &'static str { "Trustworthiness" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::trustworthiness(c.high_dim_dist, c.dist_2d(), c.n, c.k)
     }
 }
@@ -134,7 +137,7 @@ impl QualityMetric for TrustworthinessManifold {
     fn is_objective(&self) -> bool { false }
     fn short(&self) -> &'static str { "trust_m" }
     fn label(&self) -> &'static str { "Trustworthiness" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::trustworthiness(c.high_dim_dist, c.manifold_dist(), c.n, c.k)
     }
 }
@@ -150,7 +153,7 @@ impl QualityMetric for Continuity {
     fn is_objective(&self) -> bool { true }
     fn short(&self) -> &'static str { "cont" }
     fn label(&self) -> &'static str { "Continuity" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::continuity(c.high_dim_dist, c.dist_2d(), c.n, c.k)
     }
 }
@@ -166,7 +169,7 @@ impl QualityMetric for ContinuityManifold {
     fn is_objective(&self) -> bool { false }
     fn short(&self) -> &'static str { "cont_m" }
     fn label(&self) -> &'static str { "Continuity" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::continuity(c.high_dim_dist, c.manifold_dist(), c.n, c.k)
     }
 }
@@ -190,7 +193,7 @@ impl QualityMetric for NeighborhoodHit {
     fn is_objective(&self) -> bool { true }
     fn short(&self) -> &'static str { "nh" }
     fn label(&self) -> &'static str { "Neighborhood Hit" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         match c.labels {
             Some(l) => functions::neighborhood_hit(c.dist_2d(), l, c.n, c.k),
             None => f64::NAN,
@@ -209,7 +212,7 @@ impl QualityMetric for NeighborhoodHitManifold {
     fn is_objective(&self) -> bool { false }
     fn short(&self) -> &'static str { "nh_m" }
     fn label(&self) -> &'static str { "Neighborhood Hit" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         match c.labels {
             Some(l) => functions::neighborhood_hit(c.manifold_dist(), l, c.n, c.k),
             None => f64::NAN,
@@ -234,7 +237,7 @@ impl QualityMetric for NormalizedStress {
     fn is_objective(&self) -> bool { true }
     fn short(&self) -> &'static str { "stress" }
     fn label(&self) -> &'static str { "Norm. Stress" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::normalized_stress(c.high_dim_dist, c.dist_2d(), c.n)
     }
 }
@@ -254,7 +257,7 @@ impl QualityMetric for NormalizedStressManifold {
     fn is_objective(&self) -> bool { false }
     fn short(&self) -> &'static str { "stress_m" }
     fn label(&self) -> &'static str { "Norm. Stress" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::normalized_stress(c.high_dim_dist, c.manifold_dist(), c.n)
     }
 }
@@ -270,7 +273,7 @@ impl QualityMetric for ShepardGoodness {
     fn is_objective(&self) -> bool { true }
     fn short(&self) -> &'static str { "shep" }
     fn label(&self) -> &'static str { "Shepard Goodness" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::shepard_goodness(c.high_dim_dist, c.dist_2d(), c.n)
     }
 }
@@ -286,7 +289,7 @@ impl QualityMetric for ShepardGoodnessManifold {
     fn is_objective(&self) -> bool { false }
     fn short(&self) -> &'static str { "shep_m" }
     fn label(&self) -> &'static str { "Shepard Goodness" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         functions::shepard_goodness(c.high_dim_dist, c.manifold_dist(), c.n)
     }
 }
@@ -306,7 +309,7 @@ impl QualityMetric for DaviesBouldinRatio {
     fn is_objective(&self) -> bool { false }
     fn short(&self) -> &'static str { "db" }
     fn label(&self) -> &'static str { "DB Ratio" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         match c.labels {
             Some(l) => functions::davies_bouldin_ratio_from(c.high_dim_dist, c.dist_2d(), l, c.n),
             None => f64::NAN,
@@ -327,7 +330,7 @@ impl QualityMetric for DunnIndex {
     fn is_objective(&self) -> bool { false }
     fn short(&self) -> &'static str { "dunn" }
     fn label(&self) -> &'static str { "Dunn Index" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         match c.labels {
             Some(l) => functions::dunn_index(c.dist_2d(), l, c.n),
             None => f64::NAN,
@@ -350,78 +353,11 @@ impl QualityMetric for ClusterDensityMeasure {
     fn is_objective(&self) -> bool { false }
     fn short(&self) -> &'static str { "cldm" }
     fn label(&self) -> &'static str { "Cluster Density" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
         match c.labels {
             Some(l) => functions::cluster_density_measure(c.coords_2d(), l, c.n),
             None => f64::NAN,
         }
-    }
-}
-
-// ─── E. Spread diagnostics ───────────────────────────────────────────────────
-//
-// Never optimised; logged so κ = |K|·R² can be gauged. `direction()` is
-// therefore inert for all three, and answers `Maximize` only because the trait
-// requires an answer.
-
-/// Largest geodesic distance from the manifold origin.
-pub struct RMax;
-impl QualityMetric for RMax {
-    fn name(&self) -> &'static str { "r_max" }
-    fn base(&self) -> &'static str { "r_max" }
-    fn space(&self) -> Space { Space::Ambient }
-    fn family(&self) -> Family { Family::Spread }
-    fn direction(&self) -> Direction { Direction::Maximize }
-    fn is_objective(&self) -> bool { false }
-    fn short(&self) -> &'static str { "r_max" }
-    fn label(&self) -> &'static str { "R max" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
-        c.origin_dist().iter().cloned().fold(0.0_f64, f64::max)
-    }
-}
-
-/// RMS geodesic distance from the manifold origin — the `R_rms` of `@eq:kappa`.
-///
-/// Meaningful on the hyperboloid, which is re-centred every iteration, and
-/// **wrong on the sphere**: `Sphere::center` is a no-op and `lift_pca_to_manifold`
-/// writes the constrained coordinate to the last ambient slot while
-/// `Sphere::distances_from_origin` reads the first, so PCA init lands every
-/// point ~90° from the pole κ is gauged against. Use [`RGyration`] there.
-pub struct RRms;
-impl QualityMetric for RRms {
-    fn name(&self) -> &'static str { "r_rms" }
-    fn base(&self) -> &'static str { "r_rms" }
-    fn space(&self) -> Space { Space::Ambient }
-    fn family(&self) -> Family { Family::Spread }
-    fn direction(&self) -> Direction { Direction::Maximize }
-    fn is_objective(&self) -> bool { false }
-    fn short(&self) -> &'static str { "r_rms" }
-    fn label(&self) -> &'static str { "R rms" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
-        let d = c.origin_dist();
-        if d.is_empty() {
-            return 0.0;
-        }
-        (d.iter().map(|x| x * x).sum::<f64>() / d.len() as f64).sqrt()
-    }
-}
-
-/// Origin-free spread: the radius of gyration over the pairwise geodesics.
-///
-/// The gauge to read κ against, precisely because it needs no pole. See
-/// [`functions::gyration_radius`].
-pub struct RGyration;
-impl QualityMetric for RGyration {
-    fn name(&self) -> &'static str { "r_gyration" }
-    fn base(&self) -> &'static str { "r_gyration" }
-    fn space(&self) -> Space { Space::Ambient }
-    fn family(&self) -> Family { Family::Spread }
-    fn direction(&self) -> Direction { Direction::Maximize }
-    fn is_objective(&self) -> bool { false }
-    fn short(&self) -> &'static str { "r_gyr" }
-    fn label(&self) -> &'static str { "R gyration" }
-    fn compute(&self, c: &MetricContext<'_>) -> f64 {
-        functions::gyration_radius(c.manifold_dist(), c.n)
     }
 }
 
@@ -479,9 +415,6 @@ pub const ALL: &[Metric] = &[
     Metric(&DaviesBouldinRatio),
     Metric(&DunnIndex),
     Metric(&ClusterDensityMeasure),
-    Metric(&RMax),
-    Metric(&RRms),
-    Metric(&RGyration),
 ];
 
 /// Named handles, for the call sites that name a metric symbolically rather
@@ -501,9 +434,6 @@ pub const SHEPARD_GOODNESS_MANIFOLD: Metric = Metric(&ShepardGoodnessManifold);
 pub const DAVIES_BOULDIN_RATIO: Metric = Metric(&DaviesBouldinRatio);
 pub const DUNN_INDEX: Metric = Metric(&DunnIndex);
 pub const CLUSTER_DENSITY_MEASURE: Metric = Metric(&ClusterDensityMeasure);
-pub const R_MAX: Metric = Metric(&RMax);
-pub const R_RMS: Metric = Metric(&RRms);
-pub const R_GYRATION: Metric = Metric(&RGyration);
 
 /// The qParEGO objective set, **grouped by family**.
 ///
@@ -560,7 +490,7 @@ impl Metric {
     pub fn label(self) -> &'static str {
         self.0.label()
     }
-    pub fn compute(self, c: &MetricContext<'_>) -> f64 {
+    pub fn compute(self, c: &EmbeddingContext<'_>) -> f64 {
         self.0.compute(c)
     }
 
@@ -583,15 +513,9 @@ impl Metric {
         ALL.iter().copied().find(|m| m.name() == s)
     }
 
-    /// Every metric a `--metric` flag may name: the quality metrics, excluding
-    /// the spread diagnostics, which are logged rather than optimised.
-    pub fn optimizable() -> impl Iterator<Item = Metric> {
-        ALL.iter().copied().filter(|m| m.family() != Family::Spread)
-    }
-
     /// The `--metric` help text, so it cannot drift from what parses.
     pub fn valid_names() -> String {
-        Metric::optimizable()
+        ALL.iter()
             .map(|m| m.name())
             .collect::<Vec<_>>()
             .join(", ")

@@ -9,6 +9,7 @@
 #![cfg(feature = "serde")]
 
 use fitting_core::metrics::{Metric, MetricValues, ALL};
+use fitting_core::spread::SpreadDiagnostics;
 use serde::{Deserialize, Serialize};
 
 fn values(f: impl Fn(Metric) -> f64) -> MetricValues {
@@ -72,12 +73,12 @@ fn retired_columns_are_ignored_and_missing_ones_stay_absent() {
         "knn_overlap_manifold": 0.41,
         "class_density_measure": 12.5,
         "trustworthiness": 0.97,
-        "normalized_stress": 0.31
+        "normalized_stress": 0.31,
+        "r_max": 1.0
     }"#;
     let v: MetricValues = serde_json::from_str(line).unwrap();
     assert_eq!(v.get(fitting_core::metrics::TRUSTWORTHINESS), Some(0.97));
     assert_eq!(v.get(fitting_core::metrics::NORMALIZED_STRESS), Some(0.31));
-    assert_eq!(v.get(fitting_core::metrics::R_GYRATION), None);
     assert_eq!(v.get(fitting_core::metrics::CONTINUITY), None);
 }
 
@@ -102,8 +103,9 @@ fn flatten_puts_the_metrics_at_the_top_level_in_field_order() {
     };
     let json = serde_json::to_string(&r).unwrap();
     // Named fields keep their positions; the metric block lands between them.
-    assert!(json.starts_with(r#"{"dataset_name":"tree","learning_rate":0.5,"trustworthiness":0.0,"#));
-    assert!(json.ends_with(r#""r_gyration":15.0,"time_ms":7}"#));
+    assert!(json
+        .starts_with(r#"{"dataset_name":"tree","learning_rate":0.5,"trustworthiness":0.0,"#));
+    assert!(json.ends_with(r#""cluster_density_measure":12.0,"time_ms":7}"#));
     assert_eq!(serde_json::from_str::<Record>(&json).unwrap(), r);
 }
 
@@ -138,4 +140,78 @@ fn float_parsing_stays_correctly_rounded_through_flatten() {
         want.to_bits(),
         "flatten lost precision: {got:?} != {want:?}"
     );
+}
+
+// ─── Two flattened blocks on one record ──────────────────────────────────────
+//
+// A trial line carries the metric block and the spread block side by side.
+// serde hands *every* unclaimed key to *both* flatten targets, so each has to
+// tolerate the other's columns — and the record's own string fields. That is
+// the one behaviour this shape depends on that nothing else in the repo does.
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+struct TrialLine {
+    dataset_name: String,
+    #[serde(flatten)]
+    metrics: MetricValues,
+    #[serde(flatten)]
+    spread: SpreadDiagnostics,
+    time_ms: u64,
+}
+
+fn spread_at(v: f64) -> SpreadDiagnostics {
+    serde_json::from_str(&format!(
+        r#"{{"r_max":{v},"r_rms":{},"r_gyration":{}}}"#,
+        v / 2.0,
+        v / 3.0
+    ))
+    .unwrap()
+}
+
+#[test]
+fn the_two_blocks_do_not_claim_each_others_columns() {
+    let line = TrialLine {
+        dataset_name: "tree".into(),
+        metrics: values(|m| m.index() as f64),
+        spread: spread_at(6.0),
+        time_ms: 7,
+    };
+    let json = serde_json::to_string(&line).unwrap();
+
+    // Key order: metrics, then spread, then time_ms — where the individual
+    // Option<f64> columns sat before either block existed.
+    assert!(json.contains(r#""cluster_density_measure":12.0,"r_max":6.0,"r_rms":3.0,"r_gyration":2.0,"time_ms":7}"#), "{json}");
+
+    let back: TrialLine = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, line);
+    assert_eq!(back.spread.r_rms(), Some(3.0));
+    assert_eq!(back.metrics.get(fitting_core::metrics::TRUSTWORTHINESS), Some(0.0));
+}
+
+#[test]
+fn a_pre_registry_line_loads_into_both_blocks() {
+    // Retired metric columns, no `r_gyration`, a diverged `null`, and string
+    // columns alongside — the shape of every line under `results/`.
+    let line = r#"{"dataset_name":"tree","knn_overlap":0.4,"class_density_measure":12.5,
+        "trustworthiness":0.97,"shepard_goodness":null,
+        "r_max":1.0,"r_rms":2.0,"time_ms":42}"#
+        .replace('\n', "");
+    let got: TrialLine = serde_json::from_str(&line).unwrap();
+
+    assert_eq!(got.metrics.get(fitting_core::metrics::TRUSTWORTHINESS), Some(0.97));
+    assert_eq!(got.metrics.get(fitting_core::metrics::SHEPARD_GOODNESS), None);
+    assert_eq!(got.spread.r_max(), Some(1.0));
+    assert_eq!(got.spread.r_rms(), Some(2.0));
+    assert_eq!(got.spread.r_gyration(), None, "absent, not zero");
+    assert_eq!(got.dataset_name, "tree");
+    assert_eq!(got.time_ms, 42);
+}
+
+#[test]
+fn an_unmeasured_spread_block_is_all_nulls() {
+    let json = serde_json::to_string(&SpreadDiagnostics::MISSING).unwrap();
+    assert_eq!(json, r#"{"r_max":null,"r_rms":null,"r_gyration":null}"#);
+    let back: SpreadDiagnostics = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.r_max(), None);
+    assert_eq!(back.r_gyration(), None);
 }

@@ -9,7 +9,9 @@ use crate::kl_divergence::{
 use crate::manifolds;
 use crate::manifolds::Manifold;
 use crate::matrices::{compute_euclidean_distance_matrix, pca, pca_from_distances};
-use crate::metrics::{MetricContext, MetricValues};
+use crate::context::EmbeddingContext;
+use crate::metrics::MetricValues;
+use crate::spread::SpreadDiagnostics;
 use crate::optimizer::RiemannianSGDMomentum;
 use crate::scaling_loss;
 use crate::visualisation::SphericalProjection;
@@ -281,21 +283,25 @@ impl EmbeddingState {
     }
 
     /// Score the current embedding on every metric in
-    /// [`metrics::ALL`](crate::metrics::ALL).
+    /// [`metrics::ALL`](crate::metrics::ALL), and measure its spread.
+    ///
+    /// The two come back separately because they are different things: the
+    /// metrics say how faithful the embedding is, the diagnostics say how far
+    /// it reaches. Only the first is ever optimised.
     ///
     /// `k` and the projection come from this state, not from the registry: the
     /// interactive view scores at the configured perplexity under whichever
     /// projection the user picked, where the optimizer uses
     /// `k = min(30, 0.1n)` under `AzimuthalEquidistant`. Both readings are
-    /// valid; they are just not the same number, and `MetricContext` takes them
+    /// valid; they are just not the same number, and `EmbeddingContext` takes them
     /// as inputs so neither caller can quietly adopt the other's.
-    pub fn compute_metrics(&self) -> MetricValues {
+    pub fn compute_metrics(&self) -> (MetricValues, SpreadDiagnostics) {
         let n = self.n_points;
         let k = (self.config.perplexity as usize)
             .min(n.saturating_sub(2))
             .max(1);
         let high_dim = self.high_dim_distances();
-        let ctx = MetricContext::new(
+        let ctx = EmbeddingContext::new(
             &high_dim,
             &self.points,
             self.labels.as_deref(),
@@ -308,7 +314,7 @@ impl EmbeddingState {
         // Already derived by `embedded_distances`; deriving them a second time
         // would be both wasted work and a chance for the two to disagree.
         .with_manifold_dist(self.embedded_distances());
-        MetricValues::compute(&ctx)
+        (MetricValues::compute(&ctx), SpreadDiagnostics::compute(&ctx))
     }
 
     /// Run one training iteration. Returns the current phase name.
