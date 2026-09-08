@@ -23,7 +23,7 @@ Recorded so the same ground is not re-checked later.
 | `λ` for a weight vector | `r2.rs:206`, thesis `4methods.typ:300-304` | Correct. ParEGO/MOEA/D convention; `r2.rs:30` already cites Knowles 2006 eq. 1 for `λ_j = l/s`. |
 | `utility` for `min_a max_j λ_j(z*_j − a_j)` | `r2.rs:FrontUtility` | Correct despite smaller-is-better. The R2 literature does call the Tchebycheff aggregation a "utility function" while writing the indicator with `min`. |
 | `W` for the weight set, `z*` ideal point, `s = 5` | `r2.rs`, thesis `4methods.typ:299-304` | Matches thesis and the Hansen/Jaszkiewicz lineage. |
-| The five metric names | `objectives.rs:7-17` | Match Espadoto et al.'s survey term-for-term, **including "Shepard goodness"**, which is genuinely their term and not a local invention. |
+| The objective names | `objectives.rs::OBJECTIVES` | The five structure/distance names match Espadoto et al.'s survey term-for-term, **including "Shepard goodness"**, which is genuinely their term and not a local invention. `class_density_measure` is Tatu et al. (2009). |
 | `block` / `treatment` / `control` | `stats.rs`, `aggregate.rs` | Correct classical-stats vocabulary for what Demšar §3.2.2 calls datasets/algorithms. |
 
 Note for later: the post-2020 R2 papers have drifted to `w`/`W` for weights and
@@ -65,8 +65,9 @@ Note for later: the post-2020 R2 papers have drifted to `w`/`W` for weights and
 - **Code:** `crates/core/src/metrics.rs:559` solves for the optimal scale
   `alpha = Σ d_h d_e / Σ d_e²` before computing the residual. That is the
   scale-optimized variant, not plain normalized stress. Exposed as
-  `normalized_stress` / `normalized_stress_manifold` in `objectives.rs:11-16`
-  and as the only two entries of `objectives.rs::MINIMIZE`.
+  `normalized_stress` in `objectives.rs::OBJECTIVES` and as the only entry of
+  `objectives.rs::MINIMIZE`. (`normalized_stress_manifold` is still recorded on
+  each trial but is no longer an objective, so it is no longer in `MINIMIZE`.)
 - **Literature:** Smelser, Miller & Kobourov (IEEE VIS 2024), *"Normalized
   Stress" is Not Normalized*, introduce exactly this variant **because** plain
   normalized stress is not scale-invariant, and name it **scale-normalized
