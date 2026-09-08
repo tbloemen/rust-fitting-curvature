@@ -8,3 +8,32 @@ lto = true
 # gradient inner loops (the hot path for the 5000-sample sweeps). Costs a slower
 # one-time compile; the SLURM build is cached so jobs pay it at most once.
 codegen-units = 1
+
+# Pedantic clippy is enabled workspace-wide (see `[lints] workspace = true` in
+# each crate). The allow-list below is a *temporary ratchet*: every entry is a
+# lint that still fires somewhere, and each cleanup commit deletes the entries it
+# has fixed. When the list is empty this block is just the `pedantic` line.
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+# --- ratchet: still to fix -------------------------------------------------
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+float_cmp = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+many_single_char_names = "allow"
+too_many_lines = "allow"
+unreadable_literal = "allow"
+items_after_statements = "allow"
+needless_pass_by_value = "allow"
+similar_names = "allow"
+manual_let_else = "allow"
+match_same_arms = "allow"
+format_push_string = "allow"
+ref_option = "allow"
+struct_field_names = "allow"
+return_self_not_must_use = "allow"
+needless_for_each = "allow"

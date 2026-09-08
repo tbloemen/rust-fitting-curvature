@@ -47,3 +47,6 @@ path = "src/bin/exp1.rs"
 name = "figures"
 path = "src/bin/figures.rs"
 required-features = ["plots"]
+
+[lints]
+workspace = true

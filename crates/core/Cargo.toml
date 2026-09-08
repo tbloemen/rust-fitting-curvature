@@ -45,3 +45,6 @@ required-features = ["plot-examples"]
 [[example]]
 name = "wilson_residual_curve_real"
 required-features = ["plot-examples"]
+
+[lints]
+workspace = true
