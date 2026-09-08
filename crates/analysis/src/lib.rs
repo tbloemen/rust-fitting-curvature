@@ -1,13 +1,17 @@
 //! Post-hoc analysis of the qParEGO sweeps: Pareto fronts, the R2 indicator, and
 //! the statistics behind the thesis result figures.
 //!
-//! The ten qParEGO objectives (see `crates/optimizer/src/pareto.rs` ::
-//! `default_pareto_metrics`) are, in canonical order, the 2D (post-projection)
-//! and manifold (pre-projection) variants of five DR-quality metrics. Two of
-//! them (normalised stress) are minimised; the rest are maximised. Everything
-//! here works in an *oriented* space where every objective is mapped into
-//! `[0, 1]` with higher = better, so the ideal point is `(1, …, 1)` and the R2
-//! indicator of `r2.rs` measures distance to it under a stated set of weights.
+//! The six qParEGO objectives (see `crates/optimizer/src/pareto.rs` ::
+//! `default_pareto_metrics`) are all measured on the 2D projection, and all
+//! bounded in `[0, 1]` by construction. One of them (normalised stress) is
+//! minimised; the rest are maximised. Everything here works in an *oriented*
+//! space where every objective is mapped into `[0, 1]` with higher = better, so
+//! the ideal point is `(1, …, 1)` and the R2 indicator of `r2.rs` measures
+//! distance to it under a stated set of weights.
+//!
+//! The manifold (pre-projection) variants are still recorded on every trial and
+//! still read by `figures/exp4.rs`; they are simply no longer objectives. See
+//! [`objectives::OBJECTIVES`] for why the set is bounded-and-projected.
 //! `indicators.rs` measures the same fronts without any weights at all, as the
 //! parameter-free cross-check on that preference model.
 //!

@@ -18,17 +18,17 @@ import PARAMS from "@config/params.json";
 
 const PARAM_CONFIG = Object.fromEntries(PARAMS.map((p) => [p.name, p]));
 
+// The six qParEGO objectives, in the order `default_pareto_metrics` writes them
+// (crates/optimizer/src/pareto.rs). All are measured after projection to 2D;
+// the manifold variants are still recorded on each trial but are no longer
+// optimised, so a front's `metrics` object does not carry them.
 const PARETO_METRICS_LIST = [
   { key: "trustworthiness", label: "Trustworthiness" },
-  { key: "trustworthiness_manifold", label: "Trustworthiness (manifold)" },
   { key: "continuity", label: "Continuity" },
-  { key: "continuity_manifold", label: "Continuity (manifold)" },
   { key: "normalized_stress", label: "Normalized Stress" },
-  { key: "normalized_stress_manifold", label: "Normalized Stress (manifold)" },
   { key: "shepard_goodness", label: "Shepard Goodness" },
-  { key: "shepard_goodness_manifold", label: "Shepard Goodness (manifold)" },
   { key: "neighborhood_hit", label: "Neighborhood Hit" },
-  { key: "neighborhood_hit_manifold", label: "Neighborhood Hit (manifold)" },
+  { key: "class_density_measure", label: "Class Density Measure" },
 ];
 
 // Tab10 palette — matches visualisation.rs tab10_color

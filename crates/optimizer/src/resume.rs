@@ -27,18 +27,20 @@ pub(crate) struct PriorEval {
 /// non-finite metrics as JSON `null`; those are mapped back to the same
 /// worst-case substitute `metrics_to_vec` applies, so the replayed observation
 /// is identical to the original.
+///
+/// **This list must match `pareto::default_pareto_metrics` exactly.** A field
+/// missing here deserialises as `None` and is replayed as the worst-case
+/// substitute, which silently makes the resumed observation differ from the
+/// original — no error, just a different GP. The test module below pins the two
+/// lists against each other.
 #[derive(Deserialize)]
 struct PriorTrialRecord {
     trustworthiness: Option<f64>,
-    trustworthiness_manifold: Option<f64>,
     continuity: Option<f64>,
-    continuity_manifold: Option<f64>,
     normalized_stress: Option<f64>,
-    normalized_stress_manifold: Option<f64>,
     shepard_goodness: Option<f64>,
-    shepard_goodness_manifold: Option<f64>,
     neighborhood_hit: Option<f64>,
-    neighborhood_hit_manifold: Option<f64>,
+    class_density_measure: Option<f64>,
     r_max: Option<f64>,
     r_rms: Option<f64>,
 }
@@ -65,24 +67,24 @@ pub(crate) fn load_prior_evals(path: &str, metrics: &[Metric]) -> Vec<PriorEval>
         match serde_json::from_str::<PriorTrialRecord>(line) {
             Ok(rec) => {
                 let nan = f64::NAN;
-                // Only the 10 pareto objectives + r_max/r_rms matter to the
+                // Only the 6 pareto objectives + r_max/r_rms matter to the
                 // optimizer; the other AllMetrics fields are unused here.
                 let all = AllMetrics {
                     trustworthiness: rec.trustworthiness.unwrap_or(nan),
-                    trustworthiness_manifold: rec.trustworthiness_manifold.unwrap_or(nan),
+                    trustworthiness_manifold: 0.0,
                     continuity: rec.continuity.unwrap_or(nan),
-                    continuity_manifold: rec.continuity_manifold.unwrap_or(nan),
+                    continuity_manifold: 0.0,
                     knn_overlap: 0.0,
                     knn_overlap_manifold: 0.0,
                     neighborhood_hit: rec.neighborhood_hit.unwrap_or(nan),
-                    neighborhood_hit_manifold: rec.neighborhood_hit_manifold.unwrap_or(nan),
+                    neighborhood_hit_manifold: 0.0,
                     normalized_stress: rec.normalized_stress.unwrap_or(nan),
-                    normalized_stress_manifold: rec.normalized_stress_manifold.unwrap_or(nan),
+                    normalized_stress_manifold: 0.0,
                     shepard_goodness: rec.shepard_goodness.unwrap_or(nan),
-                    shepard_goodness_manifold: rec.shepard_goodness_manifold.unwrap_or(nan),
+                    shepard_goodness_manifold: 0.0,
                     davies_bouldin_ratio: 0.0,
                     dunn_index: 0.0,
-                    class_density_measure: 0.0,
+                    class_density_measure: rec.class_density_measure.unwrap_or(nan),
                     cluster_density_measure: 0.0,
                     r_max: rec.r_max.unwrap_or(nan),
                     r_rms: rec.r_rms.unwrap_or(nan),
@@ -189,4 +191,54 @@ pub(crate) fn eval_or_reuse_batch(
         });
     }
     outcomes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pareto::default_pareto_metrics;
+
+    /// Every objective the optimizer actually searches must have a field on
+    /// `PriorTrialRecord`, or `--resume` replays it as the worst-case
+    /// substitute instead of its recorded value — silently, with no error.
+    ///
+    /// The check is behavioural rather than structural: write one JSONL line
+    /// carrying a distinct value per objective, load it back, and require the
+    /// replayed vector to be those values. A field dropped from the struct
+    /// turns its slot into the substitute and fails here.
+    #[test]
+    fn prior_record_covers_every_pareto_objective() {
+        let metrics = default_pareto_metrics();
+
+        // Distinct, in-range, and never equal to a worst-case substitute
+        // (0.0 for maximised objectives, 1.0 for minimised ones).
+        let values: Vec<f64> = (0..metrics.len()).map(|i| 0.11 + 0.07 * i as f64).collect();
+
+        let fields: Vec<String> = metrics
+            .iter()
+            .zip(&values)
+            .map(|(m, v)| format!("\"{}\":{}", m.name(), v))
+            .collect();
+        let line = format!("{{{},\"r_max\":1.0,\"r_rms\":2.0}}", fields.join(","));
+
+        let dir = std::env::temp_dir().join(format!("resume_objectives_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("prior.jsonl");
+        std::fs::write(&path, format!("{line}\n")).unwrap();
+
+        let prior = load_prior_evals(path.to_str().unwrap(), &metrics);
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(prior.len(), 1, "the recorded trial should replay");
+        for ((got, want), metric) in prior[0].metric_vec.iter().zip(&values).zip(&metrics) {
+            assert!(
+                (got - want).abs() < 1e-12,
+                "objective `{}` replayed as {got} instead of {want} — it is \
+                 missing from PriorTrialRecord",
+                metric.name()
+            );
+        }
+        assert_eq!(prior[0].r_max, 1.0);
+        assert_eq!(prior[0].r_rms, 2.0);
+    }
 }

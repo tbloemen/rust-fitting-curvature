@@ -1,19 +1,82 @@
-//! The 10 qParEGO objectives and their orientation into `[0, 1]`-higher-is-better.
+//! The 6 qParEGO objectives and their orientation into `[0, 1]`-higher-is-better.
 
 use crate::records::TrialRecord;
 
-/// The five quality metrics with their `(projected, manifold)` objective names.
+/// The 6 qParEGO objectives, in the order written by the optimizer
+/// (`default_pareto_metrics` in `crates/optimizer/src/pareto.rs`).
 ///
-/// The only place the pairing is written down: [`OBJECTIVES`], [`METRICS`] and
-/// the objective indices are all derived from this table, so there is no second
-/// order to keep in sync.
+/// Every one is measured **after projection to 2D** and is bounded in `[0, 1]`
+/// by construction. Both properties are load-bearing:
 ///
-/// Row order is the objective-space axis order and the Exp 4 panel order. It is
-/// a free choice — the indicators are invariant under a relabelling of the axes
-/// (the weight simplex is enumerated symmetrically) and nothing on disk is
-/// positional, since [`oriented_row`] resolves values by name and every output
-/// table is name-keyed. It only has to stay consistent within one build, which
-/// deriving the rest from here is what guarantees.
+/// - *Projected only.* The manifold (pre-projection, geodesic) variants used to
+///   occupy half this list. They are still measured and still present on
+///   [`TrialRecord`] — [`METRIC_PAIRS`] and `figures/exp4.rs` read them — but
+///   they no longer steer the search.
+/// - *Bounded only.* [`oriented_value`] clamps to `[0, 1]` and the R2 ideal
+///   point is pinned at `(1, …, 1)`, so an unbounded objective would be
+///   silently truncated rather than measured. That is why `dunn_index`,
+///   `davies_bouldin_ratio` and `cluster_density_measure` are absent while
+///   `class_density_measure` is present: the first three are ratios whose upper
+///   tails over `results/` reach 3.0e10, 2.9e11 and 2e24. Admitting one would
+///   require estimated ideal/nadir bounds (Karl et al., *MOHPO — An Overview*,
+///   §3.3.3; Grodzevich & Romanko 2006 §4.2), which no longer applies to a set
+///   whose limits are all known a priori.
+///
+/// Row order is grouped by [`FAMILIES`] and is otherwise a free choice — the
+/// indicators are invariant under a relabelling of the axes (the weight simplex
+/// is enumerated symmetrically) and nothing on disk is positional, since
+/// [`oriented_row`] resolves values by name and every output table is
+/// name-keyed. What it *does* have to match is the optimizer's
+/// `default_pareto_metrics`; that alignment is by hand across crates.
+pub const OBJECTIVES: [&str; 6] = [
+    // structure
+    "trustworthiness",
+    "continuity",
+    // distance preservation
+    "normalized_stress",
+    "shepard_goodness",
+    // class separation
+    "neighborhood_hit",
+    "class_density_measure",
+];
+
+/// Number of objectives; the dimension of the oriented objective space.
+pub const N_OBJECTIVES: usize = OBJECTIVES.len();
+
+/// The three preference families, as `(name, indices into [`OBJECTIVES`])`.
+///
+/// These replace the `manifold` / `projected` regions, which became vacuous
+/// once every objective was projected. The split is the standard DR-quality
+/// taxonomy: what the projection preserves of the *neighbourhood* structure, of
+/// the *distances*, and of the *labels*.
+///
+/// `neighborhood_hit` sits in `class_separation`, not `structure`: it is the
+/// fraction of a point's k nearest neighbours in the embedding sharing its
+/// label, so it reads `labels` and never touches the high-dimensional data. Its
+/// resemblance to trustworthiness/continuity is that it is a k-NN statistic at
+/// the same `k`, which is a computational similarity, not a semantic one.
+///
+/// Indices rather than names because [`OBJECTIVES`] is ordered by family, so
+/// they are contiguous and there is nothing to look up.
+/// `families_partition_the_objectives` pins that.
+pub const FAMILIES: [(&str, [usize; 2]); 3] = [
+    ("structure", [0, 1]),
+    ("distance", [2, 3]),
+    ("class_separation", [4, 5]),
+];
+
+/// The five metrics that have both a projected and a manifold variant, as
+/// `(projected, manifold)` column names.
+///
+/// **This is a diagnostic table, not the objective list.** It used to generate
+/// [`OBJECTIVES`] by interleaving; it no longer does, and the two are now
+/// independent — `class_density_measure` is an objective with no manifold
+/// variant and correctly does not appear here.
+///
+/// Its remaining consumer is `figures/exp4.rs`, which plots one panel per row
+/// to compare the manifold and projected readings of the same metric. That
+/// figure is the evidence for dropping the manifold objectives, so it outlives
+/// them. Row order is the Exp 4 panel order.
 pub const METRIC_PAIRS: [(&str, &str); 5] = [
     ("trustworthiness", "trustworthiness_manifold"),
     ("continuity", "continuity_manifold"),
@@ -22,54 +85,8 @@ pub const METRIC_PAIRS: [(&str, &str); 5] = [
     ("neighborhood_hit", "neighborhood_hit_manifold"),
 ];
 
-/// Number of paired quality metrics.
-pub const N_METRICS: usize = METRIC_PAIRS.len();
-
-/// Number of objectives; the dimension of the oriented objective space.
-pub const N_OBJECTIVES: usize = 2 * N_METRICS;
-
-const fn flatten_pairs() -> [&'static str; N_OBJECTIVES] {
-    let mut out = [""; N_OBJECTIVES];
-    let mut i = 0;
-    while i < N_METRICS {
-        out[2 * i] = METRIC_PAIRS[i].0;
-        out[2 * i + 1] = METRIC_PAIRS[i].1;
-        i += 1;
-    }
-    out
-}
-
-const fn projected_names() -> [&'static str; N_METRICS] {
-    let mut out = [""; N_METRICS];
-    let mut i = 0;
-    while i < N_METRICS {
-        out[i] = METRIC_PAIRS[i].0;
-        i += 1;
-    }
-    out
-}
-
-/// The 10 qParEGO objectives, in the order written by the optimizer
-/// (`default_pareto_metrics` in `crates/optimizer/src/pareto.rs`).
-pub const OBJECTIVES: [&str; N_OBJECTIVES] = flatten_pairs();
-
-/// The five quality metrics, i.e. the projected half of [`METRIC_PAIRS`].
-pub const METRICS: [&str; N_METRICS] = projected_names();
-
-/// The `(projected, manifold)` objective indices of metric `i` — the inverse of
-/// the interleaving [`flatten_pairs`] performs.
-pub fn metric_objectives(i: usize) -> (usize, usize) {
-    (2 * i, 2 * i + 1)
-}
-
-/// True for objectives measured on the embedding manifold. Same interleaving:
-/// [`flatten_pairs`] puts the manifold name of every pair at an odd index.
-pub fn is_manifold(j: usize) -> bool {
-    j % 2 == 1
-}
-
 /// Objectives where lower is better; oriented as `1 - value`.
-pub const MINIMIZE: [&str; 2] = ["normalized_stress", "normalized_stress_manifold"];
+pub const MINIMIZE: [&str; 1] = ["normalized_stress"];
 
 /// True when *name* is an objective that is minimised.
 pub fn is_minimized(name: &str) -> bool {
@@ -87,7 +104,7 @@ pub fn oriented_value(name: &str, v: Option<f64>) -> f64 {
         return 0.0;
     }
     let x = if is_minimized(name) { 1.0 - x } else { x };
-    // Metrics are bounded in [0, 1] by construction; clamp defensively.
+    // Every objective is bounded in [0, 1] by construction; clamp defensively.
     x.clamp(0.0, 1.0)
 }
 
@@ -100,7 +117,7 @@ pub fn oriented_row(r: &TrialRecord) -> [f64; N_OBJECTIVES] {
     row
 }
 
-/// The `(n, 10)` oriented-objective matrix for *records* (higher = better).
+/// The `(n, 6)` oriented-objective matrix for *records* (higher = better).
 pub fn oriented_matrix(records: &[TrialRecord]) -> Vec<[f64; N_OBJECTIVES]> {
     records.iter().map(oriented_row).collect()
 }

@@ -24,17 +24,12 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::objectives::{is_manifold, oriented_matrix, N_OBJECTIVES, OBJECTIVES};
-pub use crate::objectives::{metric_objectives, METRICS};
+use crate::objectives::{oriented_matrix, FAMILIES, N_OBJECTIVES, OBJECTIVES};
 use crate::pareto::pareto_front_mask;
 use crate::records::TrialRecord;
 
 /// Name of the region spanning the whole simplex.
 pub const REGION_ALL: &str = "all";
-/// Name of the region supported on the manifold objectives only.
-pub const REGION_MANIFOLD: &str = "manifold";
-/// Name of the region supported on the projected (2D) objectives only.
-pub const REGION_PROJECTED: &str = "projected";
 
 // ─── The weight simplex and its preference regions ───────────────────────────
 
@@ -58,7 +53,7 @@ pub struct Weights {
     pub counts: Vec<[u8; N_OBJECTIVES]>,
     /// The same vectors as `λ_j = l_j / s`.
     pub vectors: Vec<[f64; N_OBJECTIVES]>,
-    /// `all`, one per metric, `manifold`, `projected` — in that order.
+    /// `all`, one per family, then one per objective — in that order.
     pub regions: Vec<Region>,
 }
 
@@ -80,7 +75,7 @@ impl Weights {
     /// Enumerate the simplex at [`Self::DEFAULT_S`] and build every preference
     /// region.
     ///
-    /// For ten objectives at `s = 5` this is `C(14, 9) = 2002` vectors.
+    /// For six objectives at `s = 5` this is `C(10, 5) = 252` vectors.
     pub fn new() -> Self {
         Self::with_resolution(Self::DEFAULT_S)
     }
@@ -148,13 +143,16 @@ fn fill(
     counts[dim] = 0;
 }
 
-/// The preference regions: the whole simplex, one per metric, and one per
-/// evaluation surface.
+/// The preference regions: the whole simplex, one per family, one per objective.
 ///
-/// A metric's region holds the vectors placing at least half their mass on that
-/// metric's two objectives, which at `s = 5` means an integer count of 3 or
-/// more. The surface regions hold the vectors supported entirely on the five
-/// manifold objectives, respectively the five projected ones.
+/// Both the family and the single-objective regions use the same "at least half
+/// the mass" rule, which at `s = 5` means an integer count of 3 or more. That
+/// gives 252 / 66 / 21 vectors respectively; `test_r2.rs` pins all three.
+///
+/// The families are *not* defined as "supported entirely on" their objectives,
+/// the way the old `manifold` / `projected` surface regions were. A family holds
+/// only two objectives, so that rule would admit 6 vectors — too thin for a mean
+/// to say anything. The surface regions could afford it at five objectives each.
 fn build_regions(counts: &[[u8; N_OBJECTIVES]], s: usize) -> Vec<Region> {
     let half = s.div_ceil(2) as u8; // 3 of 5: "at least half the mass"
     let mut regions = vec![Region {
@@ -162,26 +160,20 @@ fn build_regions(counts: &[[u8; N_OBJECTIVES]], s: usize) -> Vec<Region> {
         indices: (0..counts.len()).collect(),
     }];
 
-    for (i, metric) in METRICS.iter().enumerate() {
-        let (proj, man) = metric_objectives(i);
+    for (name, [a, b]) in FAMILIES {
         regions.push(Region {
-            name: (*metric).to_string(),
-            indices: select(counts, |c| c[proj] + c[man] >= half),
+            name: name.to_string(),
+            indices: select(counts, |c| c[a] + c[b] >= half),
         });
     }
 
-    regions.push(Region {
-        name: REGION_MANIFOLD.to_string(),
-        indices: select(counts, |c| {
-            (0..N_OBJECTIVES).all(|j| is_manifold(j) || c[j] == 0)
-        }),
-    });
-    regions.push(Region {
-        name: REGION_PROJECTED.to_string(),
-        indices: select(counts, |c| {
-            (0..N_OBJECTIVES).all(|j| !is_manifold(j) || c[j] == 0)
-        }),
-    });
+    for (j, objective) in OBJECTIVES.iter().enumerate() {
+        regions.push(Region {
+            name: (*objective).to_string(),
+            indices: select(counts, |c| c[j] >= half),
+        });
+    }
+
     regions
 }
 
@@ -316,7 +308,7 @@ pub struct CellSummary {
 /// The oriented objective values of one record, by objective name.
 ///
 /// Used by the recommendation table, which reports what a recommended
-/// configuration attains on all ten objectives alongside its hyperparameters.
+/// configuration attains on all six objectives alongside its hyperparameters.
 pub fn oriented_objectives(record: &TrialRecord) -> BTreeMap<String, f64> {
     let row = crate::objectives::oriented_row(record);
     OBJECTIVES

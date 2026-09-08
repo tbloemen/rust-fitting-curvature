@@ -326,26 +326,32 @@ fn test_shepard_goodness_lower_for_uncorrelated() {
         }
     }
     let sg = shepard_goodness(&d1, &d2, n);
-    // Anti-correlated ranks → raw Spearman ≈ -1, clipped to 0
+    // Anti-correlated ranks → raw r_s = -1, which (r_s + 1) / 2 maps to 0, the
+    // bottom of the normalised scale.
     assert!(
-        sg < 0.1,
-        "Anti-correlated distances should give low shepard goodness, got {sg}"
+        sg < 1e-10,
+        "Anti-correlated distances should give shepard goodness 0, got {sg}"
     );
 }
 
 #[test]
-fn test_shepard_goodness_collapsed_embedding_is_zero() {
+fn test_shepard_goodness_collapsed_embedding_is_no_skill() {
     // Every pairwise distance identical: the embedding carries no rank
-    // information whatsoever, so the score must be 0. The `1 - 6Σd²` shortcut
-    // with ordinal ranks scored this ~0.5-0.63 on block-structured data,
-    // because it broke the all-way tie by point index.
+    // information whatsoever, so the score must be the no-skill value of the
+    // normalised scale, 0.5 — the image of r_s = 0 under (r_s + 1) / 2, and
+    // strictly worse than any embedding with real rank agreement.
     let n = 30;
     let d_high = make_distance_matrix(n, 7);
     let collapsed = vec![0.25f64; n * n];
     let sg = shepard_goodness(&d_high, &collapsed, n);
     assert!(
-        sg.abs() < 1e-12,
-        "Collapsed embedding should score 0, got {sg}"
+        (sg - 0.5).abs() < 1e-12,
+        "Collapsed embedding should score 0.5, got {sg}"
+    );
+    // ...and it must not beat a genuinely correlated embedding.
+    assert!(
+        sg < shepard_goodness(&d_high, &d_high, n),
+        "Collapsed embedding scored no worse than a perfect one"
     );
 }
 
@@ -377,7 +383,7 @@ fn test_shepard_goodness_ties_match_reference_spearman() {
             u2.push(d2[i * n + j]);
         }
     }
-    let expected = pearson_on_fractional_ranks(&u1, &u2).max(0.0);
+    let expected = (pearson_on_fractional_ranks(&u1, &u2) + 1.0) / 2.0;
     assert!(
         (sg - expected).abs() < 1e-10,
         "Tied inputs should give r_s = {expected}, got {sg}"

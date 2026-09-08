@@ -31,10 +31,21 @@
 # other would put two different quantities on one axis, which is exactly what
 # "one kappa, one gauge" exists to prevent.
 #
-# EUCLIDEAN IS NOT RE-RUN. `Euclidean::center` subtracts the coordinate mean
-# every iteration and is the last thing `step()` does, so the centroid is the
-# origin when metrics are taken and r_gyration == r_rms exactly. Euclidean kappa
-# is 0 on any gauge besides (curvature: 0.0), so it never enters a kappa axis.
+# EUCLIDEAN IS RE-RUN, but not for the gauge. `Euclidean::center` subtracts the
+# coordinate mean every iteration and is the last thing `step()` does, so the
+# centroid is the origin when metrics are taken and r_gyration == r_rms exactly.
+# Euclidean kappa is 0 on any gauge besides (curvature: 0.0), so it never enters
+# a kappa axis, and on the original rationale its cells were skipped.
+#
+# It is in the sweep because `shepard_goodness` changed on 2026-09-07, on every
+# arm at once: fractional ranks replaced the tie-free `1 - 6*sum(d^2)` shortcut,
+# which is only valid on tie-free input and scored a fully collapsed embedding
+# 0.63 on tree_structured, and the score is now normalised onto [0, 1] by the
+# order-preserving map (r_s + 1) / 2 rather than clipped at 0 -- so 0.5, not 0,
+# is now the score of an embedding that preserves no rank structure. Every
+# shepard value under results/ predates both changes and cannot be rescaled to
+# match (the clipped zeros lost their sign), so those cells have to be re-fitted
+# whatever their geometry.
 #
 # OUTPUT LIVES SOMEWHERE ELSE. results-rgyr, not results, both on scratch and in
 # $HOME, and every filename carries an _rgyr marker before the extension. The
@@ -43,13 +54,22 @@
 #   REMOTE_RESULTS=~/fitting/results-rgyr LOCAL_RESULTS=./results-rgyr \
 #     sh slurm/sync_back.sh
 #
-# DETERMINISM. `r_rms`/`r_gyration` are logged but never read by the acquisition
-# function or the scalarisation, and run_pareto seeds its RNG with a fixed
-# constant, so this run reproduces the original trials bit-for-bit and differs
-# only in the added column -- PROVIDED --n-trials, --n-seeds, --n-samples and
-# --threads all match the original. --threads is load-bearing: batch_size =
-# n_threads, and a different batch size regroups the GP proposals. Keep
-# --cpus-per-task at 48.
+# DETERMINISM -- WEAKER THAN IT WAS. `r_rms`/`r_gyration` are still logged but
+# never read by the acquisition function or the scalarisation, and run_pareto
+# still seeds its RNG with a fixed constant. On the gauge change alone this run
+# reproduced the original trials bit-for-bit, differing only in the added column.
+# It no longer does: `shepard_goodness` is one of the six qParEGO objectives, and
+# the fractional-rank fix moved it non-affinely, so the scalarised values, the GP
+# proposals and hence the whole trial sequence diverge from the original run.
+# (The (r_s + 1) / 2 normalisation alone would not have done that -- gp.rs
+# `scalarize_subset` min-max normalises every objective per batch, which absorbs
+# any positive affine map.) These cells are re-measurements, not replays;
+# compare them to results/ by front and indicator, never trial by trial.
+#
+# The settings that must still match the original for the cells to be comparable
+# at all are unchanged: --n-trials, --n-seeds, --n-samples and --threads.
+# --threads is load-bearing: batch_size = n_threads, and a different batch size
+# regroups the GP proposals. Keep --cpus-per-task at 48.
 #
 # Everything else -- the 24h chunking, --resume, the SIGTERM trap, the sizing --
 # is unchanged from run_5000.sh; see that file for the reasoning.
@@ -103,10 +123,14 @@ trap sync_back EXIT
 # JSONL if it already has trials, or starts fresh if not (so the same invocation
 # works for the first chunk and every continuation).
 #
-# NOTE: --resume must only ever see a file this fixed binary wrote. Resuming a
-# checkpoint produced by a pre-fix build would leave those replayed trials
-# without r_gyration, since a reused trial re-observes but never rewrites its
-# JSONL line. Starting in a fresh directory is what guarantees that.
+# NOTE: --resume must only ever see a file this fixed binary wrote. A reused
+# trial re-observes but never rewrites its JSONL line, so resuming a checkpoint
+# produced by an older build would leave those replayed trials without
+# r_gyration and -- since the 2026-09-07 metric changes -- with their
+# `shepard_goodness` still on the old scale, indistinguishable from the new one
+# in the same file. Starting in a fresh directory is what guarantees that; if a
+# results-rgyr/ from an earlier attempt exists on scratch or in $HOME, move it
+# aside before submitting rather than resuming into it.
 srun ./target/release/optimizer \
   --mode pareto --dataset "$DATASET" --experiment "$EXPERIMENT" \
   --n-trials 1000 --n-seeds 3 --n-samples "$N_SAMPLES" \
