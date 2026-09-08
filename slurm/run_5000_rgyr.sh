@@ -81,8 +81,8 @@ EXPERIMENT="${EXPERIMENT:-all_off}"
 GEOMETRY="${GEOMETRY:-spherical}"
 N_SAMPLES=5000
 
-module load 2025
-module load compiler
+module load 2026
+module load compilers
 module load rust
 
 cargo build --release --locked --offline -p fitting-optimizer
