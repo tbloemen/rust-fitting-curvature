@@ -145,9 +145,12 @@ impl fmt::Debug for Error {
 }
 
 impl std::error::Error for Error {
+    #[expect(clippy::match_same_arms, reason = "arms bind different source types")]
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::Io { source, .. } => Some(source),
+            // Same body text as the arm above, but `source` is a different
+            // concrete type in each, so the two cannot be or-merged.
             Error::Parse { source, .. } => Some(source),
             Error::Serialize(source) => Some(source),
             _ => None,

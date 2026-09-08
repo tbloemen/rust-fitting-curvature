@@ -5,7 +5,6 @@ use crate::evaluate::Evaluator;
 use crate::search_space::TrialConfig;
 use crate::trial_result::{write_result, TrialResult};
 use indicatif::{MultiProgress, ProgressBar};
-use std::sync::Arc;
 
 fn load_best_config_from_jsonl(
     path: &str,
@@ -87,15 +86,16 @@ fn apply_param(config: &mut TrialConfig, param: &str, val: f64) {
 ///
 /// Geometry is resolved once (via `--geometry` or auto-detection).  When the geometry
 /// is non-Euclidean, curvature magnitude is also swept as an additional parameter.
-pub fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &MultiProgress) {
+pub fn run_scan(dataset_name: &str, args: &Args, evaluator: &Evaluator, mp: &MultiProgress) {
+    use crate::search_space::{param_bounds, ParamSpec};
+
     let metric = args.metric.as_deref().unwrap();
     let n_points = evaluator.n_points();
 
-    let (geometry, curvature_sign) = resolve_geometry(args, &evaluator);
+    let (geometry, curvature_sign) = resolve_geometry(args, evaluator);
     let optimize_curvature = curvature_sign != 0.0;
 
     let hp = parse_experiment(&args.experiment);
-    use crate::search_space::ParamSpec;
     let mut default_config = hp.clone();
     // Override with sensible scan baseline values for the free parameters.
     default_config.learning_rate = ParamSpec::Fixed(10.0);
@@ -126,7 +126,6 @@ pub fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: 
         .abs()
         .max(crate::search_space::param_bounds("curvature_magnitude").0);
     let curvature_mag_max = args.curvature_max.abs().max(curvature_mag_min);
-    use crate::search_space::param_bounds;
     let mut params: Vec<(&str, Vec<f64>)> = Vec::new();
     if hp.learning_rate.is_optimized() {
         let (lo, hi, log) = param_bounds("learning_rate");
@@ -181,7 +180,7 @@ pub fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: 
 
             let start = std::time::Instant::now();
             let (mean, std) = eval_single_metric(
-                &evaluator,
+                evaluator,
                 &config,
                 curvature_sign,
                 metric,

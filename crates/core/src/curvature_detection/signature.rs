@@ -559,7 +559,7 @@ fn normalise_residual(residual: f64, n: usize, d_max: f64) -> f64 {
 
 /// Golden-section minimisation on `[a, b]`.  Returns `(r*, f(r*))`.
 fn golden_section(a: f64, b: f64, f: &mut dyn FnMut(f64) -> f64) -> (f64, f64) {
-    let phi = 0.6180339887498949_f64;
+    let phi = 0.618_033_988_749_894_9_f64;
     let mut a = a;
     let mut b = b;
     let mut r1 = a + (1.0 - phi) * (b - a);

@@ -22,9 +22,9 @@ use crate::metrics::{values_mean_of, MetricValue};
 /// private because the accessors are what callers want.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpreadDiagnostics {
-    r_max: MetricValue,
-    r_rms: MetricValue,
-    r_gyration: MetricValue,
+    max: MetricValue,
+    rms: MetricValue,
+    gyration: MetricValue,
 }
 
 impl Default for SpreadDiagnostics {
@@ -37,9 +37,9 @@ impl SpreadDiagnostics {
     /// Nothing measured — what `--mode scan` writes, and what a results line
     /// predating a column reads back as.
     pub const MISSING: Self = Self {
-        r_max: MetricValue::Absent,
-        r_rms: MetricValue::Absent,
-        r_gyration: MetricValue::Absent,
+        max: MetricValue::Absent,
+        rms: MetricValue::Absent,
+        gyration: MetricValue::Absent,
     };
 
     /// Measure the configuration's extent.
@@ -52,9 +52,9 @@ impl SpreadDiagnostics {
     pub fn compute(c: &EmbeddingContext<'_>) -> Self {
         if !c.spread_is_finite() {
             return Self {
-                r_max: MetricValue::Diverged,
-                r_rms: MetricValue::Diverged,
-                r_gyration: MetricValue::Diverged,
+                max: MetricValue::Diverged,
+                rms: MetricValue::Diverged,
+                gyration: MetricValue::Diverged,
             };
         }
         let origin = c.origin_dist();
@@ -67,9 +67,9 @@ impl SpreadDiagnostics {
             )
         };
         Self {
-            r_max: MetricValue::measured(r_max),
-            r_rms: MetricValue::measured(r_rms),
-            r_gyration: MetricValue::measured(gyration_radius(c.manifold_dist(), c.n)),
+            max: MetricValue::measured(r_max),
+            rms: MetricValue::measured(r_rms),
+            gyration: MetricValue::measured(gyration_radius(c.manifold_dist(), c.n)),
         }
     }
 
@@ -82,16 +82,16 @@ impl SpreadDiagnostics {
         let avg =
             |f: fn(&SpreadDiagnostics) -> MetricValue| values_mean_of(samples.iter().map(f), n);
         Self {
-            r_max: avg(|s| s.r_max),
-            r_rms: avg(|s| s.r_rms),
-            r_gyration: avg(|s| s.r_gyration),
+            max: avg(|s| s.max),
+            rms: avg(|s| s.rms),
+            gyration: avg(|s| s.gyration),
         }
     }
 
     /// Largest geodesic distance from the manifold origin.
     #[must_use]
     pub fn r_max(&self) -> Option<f64> {
-        self.r_max.value()
+        self.max.value()
     }
 
     /// RMS geodesic distance from the manifold origin — the `R_rms` of
@@ -105,7 +105,7 @@ impl SpreadDiagnostics {
     /// [`Self::r_gyration`] there.
     #[must_use]
     pub fn r_rms(&self) -> Option<f64> {
-        self.r_rms.value()
+        self.rms.value()
     }
 
     /// Origin-free spread: the radius of gyration over the pairwise geodesics.
@@ -114,7 +114,7 @@ impl SpreadDiagnostics {
     /// [`gyration_radius`].
     #[must_use]
     pub fn r_gyration(&self) -> Option<f64> {
-        self.r_gyration.value()
+        self.gyration.value()
     }
 }
 
@@ -166,17 +166,17 @@ mod wire {
     impl SpreadDiagnostics {
         fn column(&self, column: &str) -> MetricValue {
             match column {
-                "r_max" => self.r_max,
-                "r_rms" => self.r_rms,
-                _ => self.r_gyration,
+                "r_max" => self.max,
+                "r_rms" => self.rms,
+                _ => self.gyration,
             }
         }
 
         fn set(&mut self, column: &str, v: MetricValue) {
             match column {
-                "r_max" => self.r_max = v,
-                "r_rms" => self.r_rms = v,
-                _ => self.r_gyration = v,
+                "r_max" => self.max = v,
+                "r_rms" => self.rms = v,
+                _ => self.gyration = v,
             }
         }
     }

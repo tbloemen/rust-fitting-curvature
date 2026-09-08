@@ -2,6 +2,7 @@
 //! the unanchored-vs-`rms_anchored` κ overlay.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use plotters::coord::Shift;
 use plotters::prelude::*;
@@ -110,10 +111,14 @@ impl Figure for KappaScatter<'_> {
                 let xs: Vec<f64> = pts.iter().map(|p| p.kappa_data).collect();
                 let ys: Vec<f64> = pts.iter().map(|p| p.kappa).collect();
                 if let Some((rho, p)) = spearman(&xs, &ys) {
-                    title += &format!("   (Spearman ρ={rho:+.2}, p={p:.2}, n={})", pts.len());
+                    let _ = write!(
+                        title,
+                        "   (Spearman ρ={rho:+.2}, p={p:.2}, n={})",
+                        pts.len()
+                    );
                 }
             } else if !pts.is_empty() {
-                title += &format!("   (n={}, too few for ρ)", pts.len());
+                let _ = write!(title, "   (n={}, too few for ρ)", pts.len());
             }
 
             let xs: Vec<f64> = pts.iter().map(|p| p.kappa_data).collect();

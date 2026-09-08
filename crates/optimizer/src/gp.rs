@@ -628,10 +628,11 @@ fn normal_pdf(x: f64) -> f64 {
 /// Standard normal CDF via Abramowitz & Stegun polynomial approximation.
 /// Maximum absolute error ≈ 7.5 × 10⁻⁸.
 fn normal_cdf(x: f64) -> f64 {
-    let t = 1.0 / (1.0 + 0.2316419 * x.abs());
+    let t = 1.0 / (1.0 + 0.231_641_9 * x.abs());
     let poly = t
-        * (0.319381530
-            + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+        * (0.319_381_530
+            + t * (-0.356_563_782
+                + t * (1.781_477_937 + t * (-1.821_255_978 + t * 1.330_274_429))));
     let p = 1.0 - normal_pdf(x) * poly;
     if x >= 0.0 {
         p
@@ -1057,14 +1058,14 @@ pub fn latin_hypercube_sample(n: usize, spec: &TrialConfig, rng: &mut Rng) -> Ve
 
     let lr_col = lhs_col!(spec.learning_rate);
     let perp_col = lhs_col!(spec.perplexity_ratio);
-    let mom_col = lhs_col!(spec.momentum_main);
-    let mome_col = lhs_col!(spec.momentum_early);
+    let momentum_main_col = lhs_col!(spec.momentum_main);
+    let momentum_early_col = lhs_col!(spec.momentum_early);
     let cen_col = lhs_col!(spec.centering_weight);
     let glw_col = lhs_col!(spec.global_loss_weight);
     let nlw_col = lhs_col!(spec.norm_loss_weight);
-    let eef_col = lhs_col!(spec.early_exaggeration_factor);
+    let exaggeration_factor_col = lhs_col!(spec.early_exaggeration_factor);
     let nit_col = lhs_col!(spec.n_iterations);
-    let eei_col = lhs_col!(spec.early_exaggeration_iterations);
+    let exaggeration_iters_col = lhs_col!(spec.early_exaggeration_iterations);
     let cur_col = lhs_col!(spec.curvature_magnitude);
     let isc_col = lhs_col!(spec.init_scale);
     let edim_col = lhs_col!(spec.embed_dim);
@@ -1073,14 +1074,14 @@ pub fn latin_hypercube_sample(n: usize, spec: &TrialConfig, rng: &mut Rng) -> Ve
         .map(|i| TrialConfig {
             learning_rate: ParamSpec::Fixed(lr_col[i]),
             perplexity_ratio: ParamSpec::Fixed(perp_col[i]),
-            momentum_main: ParamSpec::Fixed(mom_col[i]),
-            momentum_early: ParamSpec::Fixed(mome_col[i]),
+            momentum_main: ParamSpec::Fixed(momentum_main_col[i]),
+            momentum_early: ParamSpec::Fixed(momentum_early_col[i]),
             centering_weight: ParamSpec::Fixed(cen_col[i]),
             global_loss_weight: ParamSpec::Fixed(glw_col[i]),
             norm_loss_weight: ParamSpec::Fixed(nlw_col[i]),
-            early_exaggeration_factor: ParamSpec::Fixed(eef_col[i]),
+            early_exaggeration_factor: ParamSpec::Fixed(exaggeration_factor_col[i]),
             n_iterations: ParamSpec::Fixed(nit_col[i]),
-            early_exaggeration_iterations: ParamSpec::Fixed(eei_col[i]),
+            early_exaggeration_iterations: ParamSpec::Fixed(exaggeration_iters_col[i]),
             curvature_magnitude: ParamSpec::Fixed(cur_col[i]),
             init_scale: ParamSpec::Fixed(isc_col[i]),
             embed_dim: ParamSpec::Fixed(edim_col[i]),
@@ -1390,9 +1391,9 @@ mod tests {
 
     #[test]
     fn test_normal_cdf_known_values() {
-        assert!(close(normal_cdf(1.0), 0.841345, 1e-5));
-        assert!(close(normal_cdf(-1.0), 0.158655, 1e-5));
-        assert!(close(normal_cdf(2.0), 0.977250, 1e-5));
+        assert!(close(normal_cdf(1.0), 0.841_345, 1e-5));
+        assert!(close(normal_cdf(-1.0), 0.158_655, 1e-5));
+        assert!(close(normal_cdf(2.0), 0.977_250, 1e-5));
     }
 
     #[test]

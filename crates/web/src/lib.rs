@@ -30,9 +30,9 @@ fn parse_scaling_loss(s: &str) -> ScalingLossType {
 
 fn parse_projection(s: &str) -> SphericalProjection {
     match s {
-        "azimuthal_equidistant" => SphericalProjection::AzimuthalEquidistant,
         "orthographic" => SphericalProjection::Orthographic,
         "stereographic" => SphericalProjection::Stereographic,
+        // "azimuthal_equidistant", and anything unrecognised, lands here.
         _ => SphericalProjection::AzimuthalEquidistant,
     }
 }
@@ -301,39 +301,39 @@ impl EmbeddingRunner {
         .coords
     }
 
-    /// Current viewport state as [cx, cy, half, `auto_half`].
-    /// When no explicit viewport is set, cx=cy=0 and `half=auto_half`.
+    /// Current viewport state as [`center_x`, `center_y`, `half`, `auto_half`].
+    /// With no explicit viewport, the centre is the origin and `half = auto_half`.
     #[must_use]
     pub fn get_viewport(&self) -> Vec<f64> {
-        let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
-        vec![cx, cy, half, self.auto_half]
+        let (center_x, center_y, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
+        vec![center_x, center_y, half, self.auto_half]
     }
 
     /// Zoom the viewport around a normalized canvas position (0..1, 0..1).
     /// `factor > 1` zooms in, `factor < 1` zooms out.
     pub fn zoom_at(&mut self, norm_x: f64, norm_y: f64, factor: f64) {
-        let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
+        let (center_x, center_y, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
         let aspect = f64::from(self.canvas.width()) / f64::from(self.canvas.height().max(1));
         let half_x = half * aspect;
         // Canvas coordinate → plot coordinate
-        let plot_x = cx + (norm_x - 0.5) * 2.0 * half_x;
-        let plot_y = cy - (norm_y - 0.5) * 2.0 * half; // y axis is flipped
+        let plot_x = center_x + (norm_x - 0.5) * 2.0 * half_x;
+        let plot_y = center_y - (norm_y - 0.5) * 2.0 * half; // y axis is flipped
         let new_half = (half / factor).clamp(1e-6, self.auto_half * 20.0);
         let new_half_x = new_half * aspect;
         // Keep plot_x/plot_y under the cursor fixed
-        let new_cx = plot_x - (norm_x - 0.5) * 2.0 * new_half_x;
-        let new_cy = plot_y + (norm_y - 0.5) * 2.0 * new_half;
-        self.view = Some((new_cx, new_cy, new_half));
+        let new_center_x = plot_x - (norm_x - 0.5) * 2.0 * new_half_x;
+        let new_center_y = plot_y + (norm_y - 0.5) * 2.0 * new_half;
+        self.view = Some((new_center_x, new_center_y, new_half));
     }
 
     /// Pan the viewport by a normalized canvas delta.
-    pub fn pan_by(&mut self, norm_dx: f64, norm_dy: f64) {
-        let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
+    pub fn pan_by(&mut self, norm_delta_x: f64, norm_delta_y: f64) {
+        let (center_x, center_y, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
         let aspect = f64::from(self.canvas.width()) / f64::from(self.canvas.height().max(1));
         let half_x = half * aspect;
-        let dx = -norm_dx * 2.0 * half_x;
-        let dy = norm_dy * 2.0 * half; // y axis is flipped
-        self.view = Some((cx + dx, cy + dy, half));
+        let plot_delta_x = -norm_delta_x * 2.0 * half_x;
+        let plot_delta_y = norm_delta_y * 2.0 * half; // y axis is flipped
+        self.view = Some((center_x + plot_delta_x, center_y + plot_delta_y, half));
     }
 
     /// Reset the viewport to auto-fit.

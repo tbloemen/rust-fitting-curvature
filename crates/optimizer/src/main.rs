@@ -31,9 +31,9 @@ mod trial_result;
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-fn get_dataset_names(dataset_arg: &Option<String>) -> Vec<String> {
+fn get_dataset_names(dataset_arg: Option<&str>) -> Vec<String> {
     match dataset_arg {
-        Some(name) if name == "all" => vec![
+        Some("all") => vec![
             "mnist".to_string(),
             "fashion_mnist".to_string(),
             "pbmc".to_string(),
@@ -44,13 +44,13 @@ fn get_dataset_names(dataset_arg: &Option<String>) -> Vec<String> {
             "hyperbolic_shells".to_string(),
             "grid".to_string(),
         ],
-        Some(name) if name == "real" => vec![
+        Some("real") => vec![
             "mnist".to_string(),
             "fashion_mnist".to_string(),
             "pbmc".to_string(),
             "wordnet_mammals".to_string(),
         ],
-        Some(name) => vec![name.clone()],
+        Some(name) => vec![name.to_string()],
         None => vec!["mnist".to_string()],
     }
 }
@@ -72,7 +72,7 @@ fn main() {
         }
     }
 
-    let dataset_names = get_dataset_names(&args.dataset);
+    let dataset_names = get_dataset_names(args.dataset.as_deref());
 
     match args.mode.as_str() {
         "random" => println!(
@@ -176,11 +176,11 @@ fn main() {
             match item {
                 None => break,
                 Some((dataset_name, evaluator)) => match args.mode.as_str() {
-                    "scan" => run_scan(&dataset_name, &args, evaluator, &mp),
-                    "bayes" => run_bayes(&dataset_name, &args, evaluator, &mp, n_threads),
-                    "pareto" => run_pareto(&dataset_name, &args, evaluator, &mp, n_threads),
+                    "scan" => run_scan(&dataset_name, &args, &evaluator, &mp),
+                    "bayes" => run_bayes(&dataset_name, &args, &evaluator, &mp, n_threads),
+                    "pareto" => run_pareto(&dataset_name, &args, &evaluator, &mp, n_threads),
                     "detect" => run_detect(&dataset_name, &args, &evaluator),
-                    _ => run_random(&dataset_name, &args, evaluator, &mp),
+                    _ => run_random(&dataset_name, &args, &evaluator, &mp),
                 },
             }
         });

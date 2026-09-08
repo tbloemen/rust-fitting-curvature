@@ -250,6 +250,8 @@ pub fn draw_legend<DB: DrawingBackend>(
 where
     DB::ErrorType: 'static,
 {
+    const SWATCH: i32 = 26;
+
     if entries.is_empty() {
         return Ok(());
     }
@@ -260,7 +262,6 @@ where
     let y = h as i32 / 2;
     for (i, e) in entries.iter().enumerate() {
         let x0 = i as i32 * slot + 12;
-        const SWATCH: i32 = 26;
         match e.dash {
             // Tile the pattern across the swatch, clipped to its width.
             Some((dash, gap)) if dash > 0 && gap > 0 => {

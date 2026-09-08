@@ -10,16 +10,15 @@ use indicatif::MultiProgress;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
 
 pub fn run_pareto(
     dataset_name: &str,
     args: &Args,
-    evaluator: Arc<Evaluator>,
+    evaluator: &Evaluator,
     mp: &MultiProgress,
     batch_size: usize,
 ) {
-    let (geometry, curvature_sign) = resolve_geometry(args, &evaluator);
+    let (geometry, curvature_sign) = resolve_geometry(args, evaluator);
     let optimize_curvature = curvature_sign != 0.0;
 
     let curvature_mag_min = crate::search_space::param_bounds("curvature_magnitude").0;
@@ -101,7 +100,7 @@ pub fn run_pareto(
             &configs,
             lhs_completed,
             &prior,
-            &evaluator,
+            evaluator,
             curvature_sign,
             args.n_seeds,
         );
@@ -177,7 +176,7 @@ pub fn run_pareto(
             &configs,
             base_global,
             &prior,
-            &evaluator,
+            evaluator,
             curvature_sign,
             args.n_seeds,
         );

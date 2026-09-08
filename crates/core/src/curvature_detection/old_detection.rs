@@ -19,7 +19,7 @@ pub fn gromov_hyperbolicity(distances: &[f64], n: usize, n_samples: usize) -> f6
     }
 
     // Use the crate-wide Rng for reproducible sampling.
-    let mut rng = crate::rng::Rng::new(0xdeadbeef);
+    let mut rng = crate::rng::Rng::new(0xdead_beef);
     let mut next = || -> usize { rng.next_raw() };
 
     let mut deltas = Vec::with_capacity(n_samples);

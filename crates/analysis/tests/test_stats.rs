@@ -43,8 +43,8 @@ fn spearman_matches_scipy() {
     let x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
     let y = [2.0, 1.0, 4.0, 3.0, 7.0, 5.0, 6.0];
     let (rho, p) = spearman(&x, &y).unwrap();
-    assert_close(rho, 0.8214285714285715, 1e-12);
-    assert_close(p, 0.0234488083456915, 1e-9);
+    assert_close(rho, 0.821_428_571_428_571_5, 1e-12);
+    assert_close(p, 0.023_448_808_345_691_5, 1e-9);
 }
 
 #[test]
@@ -53,8 +53,8 @@ fn spearman_handles_ties_like_scipy() {
     let x = [0.1, 0.5, 0.2, 0.9, 0.4, 0.4, 0.7, 0.3];
     let y = [1.0, 0.2, 0.8, 0.1, 0.55, 0.5, 0.3, 0.9];
     let (rho, p) = spearman(&x, &y).unwrap();
-    assert_close(rho, -0.9461247469114745, 1e-12);
-    assert_close(p, 0.0003753118737904405, 1e-9);
+    assert_close(rho, -0.946_124_746_911_474_5, 1e-12);
+    assert_close(p, 0.000_375_311_873_790_440_5, 1e-9);
 }
 
 #[test]
@@ -76,18 +76,18 @@ fn spearman_needs_three_points() {
 #[test]
 fn normal_tail_matches_known_quantiles() {
     assert_close(normal_sf(0.0), 0.5, 1e-7);
-    assert_close(normal_sf(1.0), 0.15865525393145707, 1e-7);
-    assert_close(normal_sf(1.959963984540054), 0.025, 1e-7);
-    assert_close(normal_sf(-1.0), 0.8413447460685429, 1e-7);
+    assert_close(normal_sf(1.0), 0.158_655_253_931_457_07, 1e-7);
+    assert_close(normal_sf(1.959_963_984_540_054), 0.025, 1e-7);
+    assert_close(normal_sf(-1.0), 0.841_344_746_068_542_9, 1e-7);
 }
 
 #[test]
 fn student_t_tail_matches_known_quantiles() {
     // The 97.5th percentile of t with 3 dof is 3.182446305284263.
-    assert_close(student_t_sf(3.182446305284263, 3.0), 0.025, 1e-9);
+    assert_close(student_t_sf(3.182_446_305_284_263, 3.0), 0.025, 1e-9);
     assert_close(student_t_sf(0.0, 5.0), 0.5, 1e-12);
     // Large dof converges to the normal.
-    assert_close(student_t_sf(1.959963984540054, 1e7), 0.025, 1e-5);
+    assert_close(student_t_sf(1.959_963_984_540_054, 1e7), 0.025, 1e-5);
 }
 
 #[test]

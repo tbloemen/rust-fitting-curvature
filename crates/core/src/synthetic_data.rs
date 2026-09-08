@@ -96,7 +96,9 @@ fn poincare_to_hyperboloid_nd(p: &[f64], n: usize, poincare_dim: usize) -> Vec<f
 fn sample_unit_sphere(rng: &mut Rng, dim: usize) -> Vec<f64> {
     let mut v: Vec<f64> = (0..dim).map(|_| rng.normal()).collect();
     let norm = v.iter().map(|x| x * x).sum::<f64>().sqrt().max(1e-15);
-    v.iter_mut().for_each(|x| *x /= norm);
+    for x in &mut v {
+        *x /= norm;
+    }
     v
 }
 

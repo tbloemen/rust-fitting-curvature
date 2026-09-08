@@ -1,5 +1,4 @@
 use indicatif::{MultiProgress, ProgressBar};
-use std::sync::Arc;
 use std::thread;
 
 use crate::cli::Args;
@@ -46,9 +45,8 @@ fn load_warm_start_trials(
     dataset_name: &str,
     geometry: &str,
 ) -> Vec<(TrialConfig, f64)> {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return vec![],
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return vec![];
     };
     content
         .lines()
@@ -95,14 +93,14 @@ fn load_warm_start_trials(
 pub(crate) fn run_bayes(
     dataset_name: &str,
     args: &Args,
-    evaluator: Arc<Evaluator>,
+    evaluator: &Evaluator,
     mp: &MultiProgress,
     batch_size: usize,
 ) {
     let metric = parse_metric(args.metric.as_deref().unwrap());
     let direction = metric.direction();
 
-    let (geometry, curvature_sign) = resolve_geometry(args, &evaluator);
+    let (geometry, curvature_sign) = resolve_geometry(args, evaluator);
     let optimize_curvature = curvature_sign != 0.0;
 
     // Curvature magnitude bounds: take abs() of the signed range limits so that
@@ -171,7 +169,6 @@ pub(crate) fn run_bayes(
                 .iter()
                 .enumerate()
                 .map(|(i, config)| {
-                    let evaluator = &*evaluator;
                     let actual_curvature = curvature_sign * config.curvature_magnitude.value();
                     let trial_idx = completed + i + 1;
                     s.spawn(move || {

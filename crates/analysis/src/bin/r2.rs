@@ -174,10 +174,13 @@ struct FrontArgs {
     force: bool,
 }
 
+/// (N, geometry, dataset) — the block a set of comparable cells shares.
+type BlockKey = (usize, String, String);
+
 fn main() -> Result<()> {
     match Args::parse().command {
         Command::Stats(a) => run_stats(a),
-        Command::Aggregate(a) => run_aggregate(a),
+        Command::Aggregate(a) => run_aggregate(&a),
         Command::Compare(a) => run_compare(a),
         Command::Recommend(a) => run_recommend(a),
         Command::Front(a) => run_front(a),
@@ -215,7 +218,7 @@ fn run_stats(args: StatsArgs) -> Result<()> {
 
 // ─── Stage 2: ΔR2 + the rank test ─────────────────────────────────────────────
 
-fn run_aggregate(args: AggregateArgs) -> Result<()> {
+fn run_aggregate(args: &AggregateArgs) -> Result<()> {
     let table: Vec<CellRecord> = aggregate::load_table(&args.tables)?;
     if table.is_empty() {
         let first = args.tables.first().cloned().unwrap_or_default();
@@ -328,7 +331,6 @@ fn run_compare(args: CompareArgs) -> Result<()> {
     // (N, geometry, dataset) → setting → cell. Sorted keys throughout, so the
     // output is sorted by (n, geometry, dataset, setting) without a final sort
     // and is byte-identical across runs.
-    type BlockKey = (usize, String, String);
     let mut blocks: BTreeMap<BlockKey, BTreeMap<&str, &CellFile>> = BTreeMap::new();
     for cf in &cells {
         blocks

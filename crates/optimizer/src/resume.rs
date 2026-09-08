@@ -40,9 +40,8 @@ struct PriorLine {
 /// interior line aborts, since silently skipping it would desync the positional
 /// replay.
 pub(crate) fn load_prior_evals(path: &str, metrics: &[Metric]) -> Vec<PriorEval> {
-    let contents = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return Vec::new();
     };
     let lines: Vec<&str> = contents
         .lines()

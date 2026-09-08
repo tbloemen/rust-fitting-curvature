@@ -126,7 +126,7 @@ pub fn gromov_delta_curve(
 ) -> GromovBallCurve {
     let median = median_pairwise_distance(distances, n);
 
-    let mut rng = crate::rng::Rng::new(seed ^ 0x9e3779b97f4a7c15);
+    let mut rng = crate::rng::Rng::new(seed ^ 0x9e37_79b9_7f4a_7c15);
     let mut next = || -> usize { rng.next_raw() };
 
     let mut points = Vec::with_capacity(ball_sizes.len());

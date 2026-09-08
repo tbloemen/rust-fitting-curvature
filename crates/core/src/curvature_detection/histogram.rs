@@ -169,18 +169,18 @@ fn ols(x: &[f64], y: &[f64]) -> (f64, f64, f64) {
     let mean_x = x.iter().sum::<f64>() / n_f;
     let mean_y = y.iter().sum::<f64>() / n_f;
 
-    let ss_xx: f64 = x.iter().map(|&xi| (xi - mean_x).powi(2)).sum();
-    let ss_xy: f64 = x
+    let sum_sq_dx: f64 = x.iter().map(|&xi| (xi - mean_x).powi(2)).sum();
+    let sum_cross: f64 = x
         .iter()
         .zip(y)
         .map(|(&xi, &yi)| (xi - mean_x) * (yi - mean_y))
         .sum();
 
-    if ss_xx.abs() < 1e-12 {
+    if sum_sq_dx.abs() < 1e-12 {
         return (0.0, mean_y, 0.0);
     }
 
-    let slope = ss_xy / ss_xx;
+    let slope = sum_cross / sum_sq_dx;
     let intercept = mean_y - slope * mean_x;
 
     let ss_tot: f64 = y.iter().map(|&yi| (yi - mean_y).powi(2)).sum();
