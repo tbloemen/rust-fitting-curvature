@@ -48,7 +48,7 @@ impl SpreadDiagnostics {
             (0.0, 0.0)
         } else {
             (
-                origin.iter().cloned().fold(0.0_f64, f64::max),
+                origin.iter().copied().fold(0.0_f64, f64::max),
                 (origin.iter().map(|d| d * d).sum::<f64>() / origin.len() as f64).sqrt(),
             )
         };
@@ -63,6 +63,7 @@ impl SpreadDiagnostics {
     ///
     /// Arithmetic on the raw values, so a seed that failed to measure
     /// propagates its NaN rather than being averaged out of existence.
+    #[must_use]
     pub fn mean(samples: &[SpreadDiagnostics]) -> SpreadDiagnostics {
         let n = samples.len() as f64;
         let avg = |f: fn(&SpreadDiagnostics) -> f64| samples.iter().map(f).sum::<f64>() / n;
@@ -74,6 +75,7 @@ impl SpreadDiagnostics {
     }
 
     /// Largest geodesic distance from the manifold origin.
+    #[must_use]
     pub fn r_max(&self) -> Option<f64> {
         self.r_max.is_finite().then_some(self.r_max)
     }
@@ -87,6 +89,7 @@ impl SpreadDiagnostics {
     /// ambient slot while `Sphere::distances_from_origin` reads the first, so
     /// PCA init lands every point ~90° from the pole κ is gauged against. Use
     /// [`Self::r_gyration`] there.
+    #[must_use]
     pub fn r_rms(&self) -> Option<f64> {
         self.r_rms.is_finite().then_some(self.r_rms)
     }
@@ -95,6 +98,7 @@ impl SpreadDiagnostics {
     ///
     /// The gauge to read κ against, precisely because it needs no pole. See
     /// [`crate::metrics::gyration_radius`].
+    #[must_use]
     pub fn r_gyration(&self) -> Option<f64> {
         self.r_gyration.is_finite().then_some(self.r_gyration)
     }
@@ -110,7 +114,7 @@ impl SpreadDiagnostics {
 
 #[cfg(feature = "serde")]
 mod wire {
-    use super::*;
+    use super::SpreadDiagnostics;
     use serde::de::{IgnoredAny, MapAccess, Visitor};
     use serde::ser::SerializeMap;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};

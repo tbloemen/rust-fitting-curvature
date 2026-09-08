@@ -40,6 +40,7 @@ fn knn_index_sets(dist: &[f64], n: usize, k: usize) -> Vec<Vec<usize>> {
 /// Use this to obtain "after-projection" distances from the output of
 /// `visualisation::project_to_2d`, so that any metric can be evaluated on
 /// what the viewer actually sees rather than on the manifold geometry.
+#[must_use]
 pub fn euclidean_dist_2d(pts_2d: &[f64], n: usize) -> Vec<f64> {
     let mut dist = vec![0.0; n * n];
     for i in 0..n {
@@ -63,6 +64,7 @@ pub fn euclidean_dist_2d(pts_2d: &[f64], n: usize) -> Vec<f64> {
 /// Measures whether points that appear as neighbors in the embedding are also
 /// neighbors in the original space. Penalizes "false neighbors" in the embedding.
 /// Returns a value in [0, 1], higher is better.
+#[must_use]
 pub fn trustworthiness(
     high_dim_distances: &[f64],
     embedded_distances: &[f64],
@@ -102,6 +104,7 @@ pub fn trustworthiness(
 /// Measures whether points that are neighbors in the original space remain
 /// neighbors in the embedding. Penalizes "missed neighbors" from the original.
 /// Returns a value in [0, 1], higher is better.
+#[must_use]
 pub fn continuity(
     high_dim_distances: &[f64],
     embedded_distances: &[f64],
@@ -146,16 +149,17 @@ pub fn continuity(
 // D. Perceptual evaluation
 // ---------------------------------------------------------------------------
 
-/// Cluster Density Measure (ClDM) from Albuquerque et al. (2010).
+/// Cluster Density Measure (`ClDM`) from Albuquerque et al. (2010).
 ///
 /// Uses the label-based cluster formula on 2D projected coordinates:
-/// ClDM = (1/K) * sum_{k<l} d²_{k,l} / (r_k * r_l)
+/// `ClDM` = (1/K) * sum_{k<l} d²_{k,l} / (`r_k` * `r_l`)
 ///
 /// Measures how well-separated and compact the clusters are.
 /// Higher values = better separated clusters.
+#[must_use]
 pub fn cluster_density_measure(pts_2d: &[f64], labels: &[u32], n: usize) -> f64 {
     let mut unique_labels: Vec<u32> = labels.to_vec();
-    unique_labels.sort();
+    unique_labels.sort_unstable();
     unique_labels.dedup();
     let k = unique_labels.len();
     if k < 2 {
@@ -209,9 +213,10 @@ pub fn cluster_density_measure(pts_2d: &[f64], labels: &[u32], n: usize) -> f64 
 
 /// Davies-Bouldin index from precomputed distance matrix.
 /// Lower = better separated, more compact clusters.
+#[must_use]
 pub fn davies_bouldin(distances: &[f64], labels: &[u32], n: usize) -> f64 {
     let mut unique_labels: Vec<u32> = labels.to_vec();
-    unique_labels.sort();
+    unique_labels.sort_unstable();
     unique_labels.dedup();
     let k = unique_labels.len();
     if k < 2 {
@@ -271,12 +276,13 @@ pub fn davies_bouldin(distances: &[f64], labels: &[u32], n: usize) -> f64 {
     db / k as f64
 }
 
-/// Davies-Bouldin ratio: DB_high / DB_projected.
+/// Davies-Bouldin ratio: `DB_high` / `DB_projected`.
 ///
 /// Computes the DB index on both the high-dimensional data distances and
 /// the 2D projected Euclidean distances. A higher ratio indicates the
 /// projection preserves or improves cluster separation relative to the
 /// original data (Di Caro et al. 2010).
+#[must_use]
 pub fn davies_bouldin_ratio(
     high_dim_distances: &[f64],
     pts_2d: &[f64],
@@ -295,6 +301,7 @@ pub fn davies_bouldin_ratio(
 /// cached. The two agree bit-for-bit: `euclidean_dist_2d` and
 /// `matrices::compute_euclidean_distance_matrix` differ only by a leading
 /// `0.0 +`, which is exact.
+#[must_use]
 pub fn davies_bouldin_ratio_from(
     high_dim_distances: &[f64],
     dist_2d: &[f64],
@@ -351,6 +358,7 @@ fn fractional_rank_vector(values: &[f64]) -> Vec<f64> {
 /// Returns a value in [0, 1], with **0 being best**. Because α is optimised
 /// out, manifold and 2D variants are identical for Euclidean embeddings where
 /// `project_to_2d` only rescales coordinates for display.
+#[must_use]
 pub fn normalized_stress(high_dim_distances: &[f64], embedded_distances: &[f64], n: usize) -> f64 {
     let mut cross = 0.0;
     let mut embed_sq = 0.0;
@@ -396,6 +404,7 @@ pub fn normalized_stress(high_dim_distances: &[f64], embedded_distances: &[f64],
 /// Returns a value in [0, 1], with **1 being best** (all k-NN same-class).
 /// Requires labeled data. Pass manifold geodesic or 2D Euclidean distances
 /// for the before/after projection distinction.
+#[must_use]
 pub fn neighborhood_hit(embedded_distances: &[f64], labels: &[u32], n: usize, k: usize) -> f64 {
     let k = k.min(n - 1);
     if k == 0 {
@@ -453,6 +462,7 @@ pub fn neighborhood_hit(embedded_distances: &[f64], labels: &[u32], n: usize, k:
 ///   undefined (`scipy.stats.spearmanr` returns NaN here) — returns 0.5, the
 ///   image of "no rank information", rather than NaN, because this feeds a
 ///   Pareto objective where NaN is a hazard.
+#[must_use]
 pub fn shepard_goodness(high_dim_distances: &[f64], embedded_distances: &[f64], n: usize) -> f64 {
     let m = n * (n - 1) / 2;
     if m < 2 {
@@ -501,9 +511,10 @@ pub fn shepard_goodness(high_dim_distances: &[f64], embedded_distances: &[f64], 
 
 /// Dunn index: ratio of minimum inter-cluster distance to maximum intra-cluster diameter.
 /// Higher = better clustering.
+#[must_use]
 pub fn dunn_index(embedded_distances: &[f64], labels: &[u32], n: usize) -> f64 {
     let mut unique_labels: Vec<u32> = labels.to_vec();
-    unique_labels.sort();
+    unique_labels.sort_unstable();
     unique_labels.dedup();
     let k = unique_labels.len();
     if k < 2 {
@@ -570,6 +581,7 @@ pub fn dunn_index(embedded_distances: &[f64], labels: &[u32], n: usize) -> f64 {
 /// last ambient slot while `Sphere::distances_from_origin` reads the first — so
 /// PCA init lands every point ~90° from the pole κ is gauged against, and
 /// `|K|·r_rms²` sits at `π²/4` however curved the space actually is.
+#[must_use]
 pub fn gyration_radius(dist: &[f64], n: usize) -> f64 {
     if n == 0 {
         return 0.0;
@@ -612,7 +624,7 @@ mod tests {
                 *c += points[i * D + d];
             }
         }
-        for c in centroid.iter_mut() {
+        for c in &mut centroid {
             *c /= N as f64;
         }
         let want = {

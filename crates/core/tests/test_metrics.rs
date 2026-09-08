@@ -1,5 +1,5 @@
 //! Tests for embedding quality metrics.
-//! Ported from Python test/test_metrics.py
+//! Ported from Python `test/test_metrics.py`
 
 use fitting_core::context::EmbeddingContext;
 use fitting_core::metrics::*;
@@ -81,7 +81,7 @@ fn test_cluster_density_measure_overlapping() {
     let n = 100;
     let mut rng = Rng::new(42);
     let pts: Vec<f64> = (0..n * 2).map(|_| rng.normal()).collect();
-    let labels: Vec<u32> = (0..n).map(|i| if i < n / 2 { 0 } else { 1 }).collect();
+    let labels: Vec<u32> = (0..n).map(|i| u32::from(i >= n / 2)).collect();
 
     let cldm = cluster_density_measure(&pts, &labels, n);
     // Not a strict bound, but should be relatively low

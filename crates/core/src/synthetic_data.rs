@@ -1,7 +1,7 @@
 //! Synthetic dataset generators with known intrinsic curvature.
 //!
 //! Each generator returns `DataPoints` with:
-//! - `x`: ambient coordinates (flat row-major, shape n × ambient_dim)
+//! - `x`: ambient coordinates (flat row-major, shape n × `ambient_dim`)
 //! - `labels`: integer labels (length n)
 //! - `distances`: precomputed intrinsic distance matrix (flat n × n)
 
@@ -11,7 +11,7 @@ pub use crate::rng::Rng;
 
 /// Result of a data generator or real dataset loader.
 pub struct DataPoints {
-    /// Flat row-major coordinates, shape (n_points, ambient_dim)
+    /// Flat row-major coordinates, shape (`n_points`, `ambient_dim`)
     pub x: Vec<f64>,
     pub n_points: usize,
     pub ambient_dim: usize,
@@ -101,7 +101,7 @@ fn sample_unit_sphere(rng: &mut Rng, dim: usize) -> Vec<f64> {
 }
 
 /// Generate a tree structure in the 2D Poincaré disk.
-/// Returns (poincaré_coords [n×2], labels [n]).
+/// Returns (`poincaré_coords` [n×2], labels [n]).
 fn poincare_tree_2d(n_samples: usize, rng: &mut Rng) -> (Vec<f64>, Vec<u32>) {
     let max_depth = (n_samples as f64).log2().ceil() as usize;
     let max_depth = max_depth.max(2);
@@ -118,7 +118,7 @@ fn poincare_tree_2d(n_samples: usize, rng: &mut Rng) -> (Vec<f64>, Vec<u32>) {
         let n_at_depth = 1 << depth; // 2^depth
         let r = (depth as f64 * 0.8 / 2.0).tanh();
         for i in 0..n_at_depth {
-            let angle = 2.0 * PI * i as f64 / n_at_depth as f64 + depth as f64 * 0.3;
+            let angle = 2.0 * PI * f64::from(i) / f64::from(n_at_depth) + depth as f64 * 0.3;
             poincare.push(r * angle.cos());
             poincare.push(r * angle.sin());
             labels.push((depth as u32).min(4));
@@ -159,6 +159,7 @@ fn poincare_tree_2d(n_samples: usize, rng: &mut Rng) -> (Vec<f64>, Vec<u32>) {
 // ---------------------------------------------------------------------------
 
 /// Uniform random samples in [-1,1]^2, labels by quadrant (0-3).
+#[must_use]
 pub fn generate_uniform_grid(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
     let mut x = Vec::with_capacity(n_samples * 2);
@@ -169,7 +170,7 @@ pub fn generate_uniform_grid(n_samples: usize, seed: u64) -> DataPoints {
         let x1 = rng.uniform() * 2.0 - 1.0;
         x.push(x0);
         x.push(x1);
-        let label = if x0 >= 0.0 { 2 } else { 0 } + if x1 >= 0.0 { 1 } else { 0 };
+        let label = if x0 >= 0.0 { 2 } else { 0 } + u32::from(x1 >= 0.0);
         labels.push(label);
     }
 
@@ -185,6 +186,7 @@ pub fn generate_uniform_grid(n_samples: usize, seed: u64) -> DataPoints {
 }
 
 /// N(0, I) in R^2, labels by median radius (0=inner, 1=outer).
+#[must_use]
 pub fn generate_gaussian_blob(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
     let mut x = Vec::with_capacity(n_samples * 2);
@@ -203,10 +205,7 @@ pub fn generate_gaussian_blob(n_samples: usize, seed: u64) -> DataPoints {
     sorted_radii.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let median = sorted_radii[n_samples / 2];
 
-    let labels: Vec<u32> = radii
-        .iter()
-        .map(|&r| if r >= median { 1 } else { 0 })
-        .collect();
+    let labels: Vec<u32> = radii.iter().map(|&r| u32::from(r >= median)).collect();
 
     let distances = euclidean_distances(&x, n_samples, 2);
 
@@ -220,6 +219,7 @@ pub fn generate_gaussian_blob(n_samples: usize, seed: u64) -> DataPoints {
 }
 
 /// Two concentric rings at r=1, r=2 with noise, labels by ring (0, 1).
+#[must_use]
 pub fn generate_concentric_circles(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
     let n_inner = n_samples / 2;
@@ -262,6 +262,7 @@ pub fn generate_concentric_circles(n_samples: usize, seed: u64) -> DataPoints {
 // ---------------------------------------------------------------------------
 
 /// Uniform on S^2 via Marsaglia method, labels by hemisphere (0=south, 1=north).
+#[must_use]
 pub fn generate_uniform_sphere(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
     let mut x = Vec::with_capacity(n_samples * 3);
@@ -284,7 +285,7 @@ pub fn generate_uniform_sphere(n_samples: usize, seed: u64) -> DataPoints {
         x.push(px / norm);
         x.push(py / norm);
         x.push(pz / norm);
-        labels.push(if pz >= 0.0 { 1 } else { 0 });
+        labels.push(u32::from(pz >= 0.0));
         count += 1;
     }
 
@@ -300,6 +301,7 @@ pub fn generate_uniform_sphere(n_samples: usize, seed: u64) -> DataPoints {
 }
 
 /// Von Mises-Fisher distribution (kappa=10) around north pole.
+#[must_use]
 pub fn generate_von_mises_fisher(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
     let kappa = 10.0_f64;
@@ -336,7 +338,7 @@ pub fn generate_von_mises_fisher(n_samples: usize, seed: u64) -> DataPoints {
         points.push(py / norm);
         points.push(pz / norm);
 
-        labels.push(if count < n_samples / 2 { 0 } else { 1 });
+        labels.push(u32::from(count >= n_samples / 2));
         count += 1;
     }
 
@@ -347,10 +349,7 @@ pub fn generate_von_mises_fisher(n_samples: usize, seed: u64) -> DataPoints {
     let mut sorted_dists = dists.clone();
     sorted_dists.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let median = sorted_dists[n_samples / 2];
-    labels = dists
-        .iter()
-        .map(|&d| if d >= median { 1 } else { 0 })
-        .collect();
+    labels = dists.iter().map(|&d| u32::from(d >= median)).collect();
 
     let distances = spherical_distances_nd(&points, n_samples, 3);
 
@@ -364,6 +363,7 @@ pub fn generate_von_mises_fisher(n_samples: usize, seed: u64) -> DataPoints {
 }
 
 /// Two vMF clusters at north and south poles (kappa=10), labels by cluster.
+#[must_use]
 pub fn generate_antipodal_clusters(n_samples: usize, seed: u64) -> DataPoints {
     let n_north = n_samples / 2;
     let n_south = n_samples - n_north;
@@ -402,6 +402,7 @@ pub fn generate_antipodal_clusters(n_samples: usize, seed: u64) -> DataPoints {
 /// `max_rho` controls the sampling radius in the hyperbolic metric.
 /// Use `max_rho = 3.0` for t-SNE embedding data; use `max_rho ≥ 5.0` for
 /// curvature detection, where longer distances make H² distinguishable from E².
+#[must_use]
 pub fn generate_uniform_hyperbolic(n_samples: usize, seed: u64, max_rho: f64) -> DataPoints {
     let mut rng = Rng::new(seed);
 
@@ -436,6 +437,7 @@ pub fn generate_uniform_hyperbolic(n_samples: usize, seed: u64, max_rho: f64) ->
 }
 
 /// Regular branching tree embedded in hyperbolic space, labels by depth.
+#[must_use]
 pub fn generate_tree_structured(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
     let (poincare, labels) = poincare_tree_2d(n_samples, &mut rng);
@@ -453,6 +455,7 @@ pub fn generate_tree_structured(n_samples: usize, seed: u64) -> DataPoints {
 }
 
 /// Concentric rings at fixed hyperbolic radii, labels by shell (0, 1, 2).
+#[must_use]
 pub fn generate_hyperbolic_shells(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
     let n_per_shell = n_samples / 3;
@@ -499,6 +502,7 @@ pub fn generate_hyperbolic_shells(n_samples: usize, seed: u64) -> DataPoints {
 /// Labels by quadrant of the first two coordinates (0-3), matching the 2D
 /// generator: using all 2^dim orthants would give one label per handful of
 /// points at dim=10 and make the label-based metrics meaningless.
+#[must_use]
 pub fn generate_hd_uniform_grid(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 2, "dim must be at least 2");
     let mut rng = Rng::new(seed);
@@ -507,7 +511,7 @@ pub fn generate_hd_uniform_grid(n_samples: usize, dim: usize, seed: u64) -> Data
 
     for _ in 0..n_samples {
         let coords: Vec<f64> = (0..dim).map(|_| rng.uniform() * 2.0 - 1.0).collect();
-        let label = if coords[0] >= 0.0 { 2 } else { 0 } + if coords[1] >= 0.0 { 1 } else { 0 };
+        let label = if coords[0] >= 0.0 { 2 } else { 0 } + u32::from(coords[1] >= 0.0);
         x.extend_from_slice(&coords);
         labels.push(label);
     }
@@ -524,6 +528,7 @@ pub fn generate_hd_uniform_grid(n_samples: usize, dim: usize, seed: u64) -> Data
 
 /// Uniform on S^(dim-1): sample dim normals and normalize.
 /// Labels by sign of first coordinate (two hemispheres).
+#[must_use]
 pub fn generate_hd_sphere(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 2, "dim must be at least 2");
     let mut rng = Rng::new(seed);
@@ -532,7 +537,7 @@ pub fn generate_hd_sphere(n_samples: usize, dim: usize, seed: u64) -> DataPoints
 
     for _ in 0..n_samples {
         let coords = sample_unit_sphere(&mut rng, dim);
-        labels.push(if coords[0] >= 0.0 { 1 } else { 0 });
+        labels.push(u32::from(coords[0] >= 0.0));
         x.extend_from_slice(&coords);
     }
 
@@ -547,8 +552,9 @@ pub fn generate_hd_sphere(n_samples: usize, dim: usize, seed: u64) -> DataPoints
 }
 
 /// Two concentrated clusters at antipodal poles on S^(dim-1).
-/// Uses shift-and-normalize: add κ * pole_direction to a random normal, then normalize.
+/// Uses shift-and-normalize: add κ * `pole_direction` to a random normal, then normalize.
 /// Labels by cluster (0=north, 1=south).
+#[must_use]
 pub fn generate_hd_antipodal_clusters(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 2, "dim must be at least 2");
     let mut rng = Rng::new(seed);
@@ -566,7 +572,7 @@ pub fn generate_hd_antipodal_clusters(n_samples: usize, dim: usize, seed: u64) -
             *v /= norm;
         }
         x.extend_from_slice(&coords);
-        labels.push(if i < n_north { 0 } else { 1 });
+        labels.push(u32::from(i >= n_north));
     }
 
     let distances = spherical_distances_nd(&x, n_samples, dim);
@@ -583,6 +589,7 @@ pub fn generate_hd_antipodal_clusters(n_samples: usize, dim: usize, seed: u64) -
 /// The tree structure is generated in a 2D Poincaré disk; extra Poincaré dimensions
 /// receive small noise so the data is non-degenerate in all ambient dimensions.
 /// Labels by depth (0-4).
+#[must_use]
 pub fn generate_hd_tree(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 3, "dim must be at least 3 for hd_tree");
     let mut rng = Rng::new(seed);
@@ -627,6 +634,7 @@ pub fn generate_hd_tree(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
 /// Concentric hyperbolic shells in H^(dim-1) embedded in R^dim.
 /// Each shell is a (dim-2)-sphere in the Poincaré ball at a fixed hyperbolic radius.
 /// Labels by shell (0, 1, 2).
+#[must_use]
 pub fn generate_hd_hyperbolic_shells(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 3, "dim must be at least 3 for hd_hyperbolic_shells");
     let mut rng = Rng::new(seed);
@@ -722,6 +730,7 @@ fn poincare_to_hyperboloid_generic(p: &[f64], n: usize, d: usize) -> Vec<f64> {
 ///
 /// Use `radius ≈ 3` to match the natural scale of H² and S² generators,
 /// which is important for curvature detection based on the density profile.
+#[must_use]
 pub fn generate_uniform_ball_2d(n_samples: usize, seed: u64, radius: f64) -> DataPoints {
     let mut rng = Rng::new(seed);
     let mut x = Vec::with_capacity(n_samples * 2);
@@ -748,6 +757,7 @@ pub fn generate_uniform_ball_2d(n_samples: usize, seed: u64, radius: f64) -> Dat
 /// Uniform random samples inside a 3D ball of the given radius (Euclidean 3-space).
 ///
 /// Use `radius ≈ 3` to match the natural scale of H³ and S³ generators.
+#[must_use]
 pub fn generate_uniform_ball_3d(n_samples: usize, seed: u64, radius: f64) -> DataPoints {
     let mut rng = Rng::new(seed);
     let mut x = Vec::with_capacity(n_samples * 3);
@@ -775,6 +785,7 @@ pub fn generate_uniform_ball_3d(n_samples: usize, seed: u64, radius: f64) -> Dat
 
 /// Uniform random samples on the unit 3-sphere S³ ⊂ R⁴.
 /// Distances are geodesic (great-circle) distances.
+#[must_use]
 pub fn generate_uniform_sphere3(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
     let mut x = Vec::with_capacity(n_samples * 4);
@@ -821,6 +832,7 @@ fn h3_inverse_cdf(u: f64, max_r: f64) -> f64 {
 /// Stored in the hyperboloid model in R⁴; distances are geodesic.
 ///
 /// Use `max_r ≥ 5.0` for curvature detection experiments.
+#[must_use]
 pub fn generate_uniform_hyperbolic3(n_samples: usize, seed: u64, max_r: f64) -> DataPoints {
     let mut rng = Rng::new(seed);
 

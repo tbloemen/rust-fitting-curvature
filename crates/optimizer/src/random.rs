@@ -30,7 +30,7 @@ pub(crate) fn run_random(
         args.n_trials as u64,
         "{spinner:.green} {msg} [{bar:35.cyan/blue}] {pos}/{len} | {wide_msg}",
     );
-    pb.set_message(format!("dataset={}", dataset_name));
+    pb.set_message(format!("dataset={dataset_name}"));
     let pb_iters = ProgressBar::hidden();
 
     for trial_idx in 1..=args.n_trials {
@@ -73,5 +73,5 @@ pub(crate) fn run_random(
         pb.inc(1);
     }
 
-    pb.finish_with_message(format!("dataset={} done", dataset_name));
+    pb.finish_with_message(format!("dataset={dataset_name} done"));
 }

@@ -44,6 +44,7 @@ pub fn normalize_data(data: &mut [f64], n_points: usize, n_features: usize, seed
 ///
 /// For Gaussian points in d dimensions: E[||x-y||] ≈ σ * sqrt(2d),
 /// so σ = 1 / sqrt(2d) gives E[||x-y||] = 1.
+#[must_use]
 pub fn get_default_init_scale(embed_dim: usize) -> f64 {
     1.0 / (2.0 * embed_dim as f64).sqrt()
 }
@@ -53,6 +54,7 @@ pub fn get_default_init_scale(embed_dim: usize) -> f64 {
 /// Returns the projection of `data` onto its top `embed_dim` principal
 /// components as a flat `n_points × embed_dim` row-major array.
 /// Each output column has mean zero (inherited from centering the input).
+#[must_use]
 pub fn pca(
     data: &[f64],
     n_points: usize,
@@ -130,7 +132,7 @@ pub fn pca(
     result
 }
 
-/// Classical multidimensional scaling (PCoA) — PCA from a pairwise distance matrix.
+/// Classical multidimensional scaling (`PCoA`) — PCA from a pairwise distance matrix.
 ///
 /// Given a flat n × n distance matrix, returns a flat `n_points × n_components`
 /// row-major array of coordinates that preserve inter-point distances as well as
@@ -138,6 +140,7 @@ pub fn pca(
 ///
 /// Algorithm: double-center the squared distance matrix to obtain the Gram matrix B,
 /// then extract the top `n_components` eigenvectors via power iteration with deflation.
+#[must_use]
 pub fn pca_from_distances(
     distances: &[f64],
     n_points: usize,
@@ -231,6 +234,7 @@ fn vec_normalize(v: &mut [f64]) {
 /// Compute pairwise Euclidean distance matrix from data.
 ///
 /// Returns flat n × n row-major matrix.
+#[must_use]
 pub fn compute_euclidean_distance_matrix(
     data: &[f64],
     n_points: usize,

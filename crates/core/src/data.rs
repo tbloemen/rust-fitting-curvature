@@ -19,8 +19,8 @@ use std::{
 /// normalised to [0, 1] and `distances` left empty (not precomputed).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_mnist(path: &str, n_samples: usize) -> Result<DataPoints, String> {
-    let images_path = format!("{}/train-images-idx3-ubyte", path);
-    let labels_path = format!("{}/train-labels-idx1-ubyte", path);
+    let images_path = format!("{path}/train-images-idx3-ubyte");
+    let labels_path = format!("{path}/train-labels-idx1-ubyte");
 
     let images = read_idx3_ubyte(&images_path)?;
     let labels_raw = read_idx1_ubyte(&labels_path)?;
@@ -30,11 +30,11 @@ pub fn load_mnist(path: &str, n_samples: usize) -> Result<DataPoints, String> {
 
     let x = images[..actual_samples * n_features]
         .chunks(n_features)
-        .flat_map(|row| row.iter().map(|&p| p as f64 / 255.0))
+        .flat_map(|row| row.iter().map(|&p| f64::from(p) / 255.0))
         .collect();
     let labels = labels_raw[..actual_samples]
         .iter()
-        .map(|&l| l as u32)
+        .map(|&l| u32::from(l))
         .collect();
 
     Ok(DataPoints {
@@ -99,7 +99,7 @@ pub fn load_fashion_mnist(path: &str, n_samples: usize) -> Result<DataPoints, St
     load_mnist(path, n_samples)
 }
 
-/// Load the WordNet mammal subtree from a pre-generated edge list.
+/// Load the `WordNet` mammal subtree from a pre-generated edge list.
 ///
 /// `path` is the directory containing:
 /// - `mammals_edges.tsv`: tab-separated `parent_id\tchild_id` pairs (integer IDs, no header).
@@ -114,7 +114,7 @@ pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<DataPoints, 
     use std::io::{BufRead, BufReader};
 
     // --- Parse edge list ---
-    let edges_path = format!("{}/mammals_edges.tsv", path);
+    let edges_path = format!("{path}/mammals_edges.tsv");
     let edges_file =
         File::open(&edges_path).map_err(|e| format!("Failed to open {edges_path}: {e}"))?;
     let mut edges: Vec<(usize, usize)> = Vec::new();
@@ -208,7 +208,7 @@ pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<DataPoints, 
     }
 
     // --- Labels ---
-    let labels_path = format!("{}/mammals_labels.tsv", path);
+    let labels_path = format!("{path}/mammals_labels.tsv");
     let labels: Vec<u32> = if let Ok(file) = File::open(&labels_path) {
         // Load from file; one label per line in original node order; remap via bfs_order.
         let raw: Vec<u32> = BufReader::new(file)
@@ -276,7 +276,7 @@ pub fn load_pbmc(path: &str, n_samples: usize) -> Result<DataPoints, String> {
     use std::collections::BTreeMap;
     use std::io::{BufRead, BufReader};
 
-    let file_path = format!("{}/pbmc_pca.tsv", path);
+    let file_path = format!("{path}/pbmc_pca.tsv");
     let file = File::open(&file_path).map_err(|e| format!("Failed to open {file_path}: {e}"))?;
 
     let mut data_lines: Vec<String> = BufReader::new(file)
@@ -304,8 +304,7 @@ pub fn load_pbmc(path: &str, n_samples: usize) -> Result<DataPoints, String> {
     let has_label_col = data_lines.iter().any(|l| {
         l.split('\t')
             .next()
-            .map(|f| f.parse::<f64>().is_err())
-            .unwrap_or(false)
+            .is_some_and(|f| f.parse::<f64>().is_err())
     });
 
     let mut raw_labels: Vec<String> = Vec::new();
@@ -314,7 +313,7 @@ pub fn load_pbmc(path: &str, n_samples: usize) -> Result<DataPoints, String> {
 
     for (row_idx, line) in data_lines.iter().take(n_samples).enumerate() {
         let fields: Vec<&str> = line.split('\t').collect();
-        let feature_start = if has_label_col { 1 } else { 0 };
+        let feature_start = usize::from(has_label_col);
         let features: Result<Vec<f64>, _> = fields[feature_start..]
             .iter()
             .map(|f| f.trim().parse::<f64>())

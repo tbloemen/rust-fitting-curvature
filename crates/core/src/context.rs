@@ -51,6 +51,7 @@ impl<'a> EmbeddingContext<'a> {
     /// builder would make `k` and `projection` skippable — the two inputs that
     /// silently move published numbers when a caller forgets them.
     #[allow(clippy::too_many_arguments)]
+    #[must_use]
     pub fn new(
         high_dim_dist: &'a [f64],
         points: &'a [f64],

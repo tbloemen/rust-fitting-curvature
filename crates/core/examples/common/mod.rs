@@ -45,15 +45,15 @@ pub struct Fixture {
 }
 
 pub fn distances_for(d: &DataPoints) -> Vec<f64> {
-    if !d.distances.is_empty() {
-        d.distances.clone()
-    } else {
+    if d.distances.is_empty() {
         compute_euclidean_distance_matrix(&d.x, d.n_points, d.ambient_dim)
+    } else {
+        d.distances.clone()
     }
 }
 
 pub fn d_max_of(d: &[f64]) -> f64 {
-    d.iter().cloned().fold(0.0_f64, f64::max)
+    d.iter().copied().fold(0.0_f64, f64::max)
 }
 
 /// Root-mean-square of the `n(n−1)` off-diagonal pairwise distances — a scale
@@ -228,7 +228,7 @@ impl CommonArgs {
                 "--seed" => {
                     out.seed = value("--seed")?
                         .parse()
-                        .map_err(|e| format!("--seed: {e}"))?
+                        .map_err(|e| format!("--seed: {e}"))?;
                 }
                 "--data-root" => out.data_root = value("--data-root")?,
                 "--all" => out.all = true,

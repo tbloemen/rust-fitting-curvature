@@ -42,7 +42,10 @@ use plotters::coord::Shift;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
 
-use super::*;
+use super::{
+    binned_median, draw_legend, geometry_color, log_tick, padded_log_range, padded_range,
+    snap_to_decades, CellMap, Figure, LegendEntry, Res, CURVED, METRIC_PAIRS, OK_BLACK,
+};
 use crate::objectives::{oriented_value, N_METRIC_PAIRS};
 use crate::pareto::pareto_front_records;
 use crate::stats::{median, quantile, spearman};
@@ -68,6 +71,7 @@ pub struct RhoManProj<'a> {
 }
 
 impl<'a> RhoManProj<'a> {
+    #[must_use]
     pub fn new(cells: &'a CellMap, n: usize) -> Self {
         Self { cells, n }
     }
@@ -335,6 +339,7 @@ impl ProjGap {
     }
 
     /// The same figure restricted to `κ >= kappa_min`, written to its own file.
+    #[must_use]
     pub fn zoomed(self, kappa_min: f64) -> Self {
         Self { kappa_min, ..self }
     }
@@ -365,6 +370,7 @@ impl ProjGap {
             .collect()
     }
 
+    #[must_use]
     pub fn has_data(&self) -> bool {
         !self.kappas().is_empty()
     }

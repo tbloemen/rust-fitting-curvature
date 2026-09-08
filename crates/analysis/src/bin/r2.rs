@@ -574,8 +574,7 @@ fn front_entry(r: &TrialRecord) -> FrontEntry {
     for metric in OBJECTIVES {
         let v = match r.metrics.get(*metric) {
             Some(x) => serde_json::Number::from_f64(x)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null),
+                .map_or(serde_json::Value::Null, serde_json::Value::Number),
             None => serde_json::Value::Null,
         };
         metrics.insert(metric.name().to_string(), v);

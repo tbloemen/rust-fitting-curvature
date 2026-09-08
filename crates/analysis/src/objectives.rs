@@ -113,6 +113,7 @@ pub const N_METRIC_PAIRS: usize = 5;
 /// Was a `MINIMIZE: [&str; 1]` constant listing `normalized_stress`; the
 /// registry states each metric's own orientation, and
 /// `only_normalized_stress_is_minimized` pins that this is still the only one.
+#[must_use]
 pub fn is_minimized(name: &str) -> bool {
     Metric::by_name(name).is_some_and(|m| m.direction() == Direction::Minimize)
 }
@@ -122,6 +123,7 @@ pub fn is_minimized(name: &str) -> bool {
 /// A missing / null / non-finite value is the worst case (0.0), matching the
 /// optimizer's `metrics_to_vec` substitution so diverged trials score as bad
 /// rather than being dropped silently.
+#[must_use]
 pub fn oriented_value(name: &str, v: Option<f64>) -> f64 {
     let Some(x) = v else { return 0.0 };
     if !x.is_finite() {
@@ -133,6 +135,7 @@ pub fn oriented_value(name: &str, v: Option<f64>) -> f64 {
 }
 
 /// One record's oriented objective vector.
+#[must_use]
 pub fn oriented_row(r: &TrialRecord) -> [f64; N_OBJECTIVES] {
     let mut row = [0.0; N_OBJECTIVES];
     for (slot, metric) in row.iter_mut().zip(OBJECTIVES) {

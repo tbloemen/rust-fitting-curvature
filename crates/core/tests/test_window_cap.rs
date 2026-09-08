@@ -63,7 +63,7 @@ fn the_fitted_radius_stays_within_the_window() {
             generate_uniform_hyperbolic(n, 7, 3.0).distances,
         ),
     ] {
-        let d_max = d.iter().cloned().fold(0.0_f64, f64::max);
+        let d_max = d.iter().copied().fold(0.0_f64, f64::max);
         let fit = fit_hyperbolic(&d, n, DIM);
         assert!(
             fit.radius >= d_max / 20.0 - 1e-9,

@@ -8,6 +8,7 @@ use crate::records::TrialRecord;
 /// Row `i` is dominated when some row `j` is `>=` it in every objective and
 /// strictly greater in at least one. Exact duplicates are all kept (no row
 /// strictly dominates an identical one).
+#[must_use]
 pub fn pareto_front_mask(m: &[[f64; N_OBJECTIVES]]) -> Vec<bool> {
     let n = m.len();
     let mut keep = vec![true; n];
@@ -42,6 +43,7 @@ fn dominates(a: &[f64; N_OBJECTIVES], b: &[f64; N_OBJECTIVES]) -> bool {
 }
 
 /// The non-dominated subset of *records* (in the 10-objective space).
+#[must_use]
 pub fn pareto_front_records(records: &[TrialRecord]) -> Vec<TrialRecord> {
     let m = oriented_matrix(records);
     let keep = pareto_front_mask(&m);
@@ -57,6 +59,7 @@ pub fn pareto_front_records(records: &[TrialRecord]) -> Vec<TrialRecord> {
 ///
 /// `x_up` / `y_up` say whether larger is better on each axis. Used for the
 /// per-cell front cross-sections in the Exp 2 figure.
+#[must_use]
 pub fn slice_front_2d(x: &[f64], y: &[f64], x_up: bool, y_up: bool) -> Vec<usize> {
     let n = x.len().min(y.len());
     let sign = |up: bool, v: f64| if up { v } else { -v };
@@ -91,6 +94,7 @@ pub fn slice_front_2d(x: &[f64], y: &[f64], x_up: bool, y_up: bool) -> Vec<usize
 /// x followed by a tread at the later y:
 /// `[(x0,y0), (x1,y1)]` → `[(x0,y0), (x0,y1), (x1,y1)]`. Empty and single-point
 /// fronts pass through unchanged.
+#[must_use]
 pub fn step_polyline(points: &[(f64, f64)]) -> Vec<(f64, f64)> {
     let mut out = Vec::with_capacity(points.len().saturating_mul(2).saturating_sub(1));
     for (i, &(x, y)) in points.iter().enumerate() {

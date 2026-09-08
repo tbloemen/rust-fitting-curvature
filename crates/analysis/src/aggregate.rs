@@ -93,6 +93,7 @@ pub fn load_table(paths: &[impl AsRef<Path>]) -> Result<Vec<CellRecord>> {
 }
 
 /// Every region name present in the table, in first-seen-sorted order.
+#[must_use]
 pub fn regions(table: &[CellRecord]) -> Vec<String> {
     let mut names: Vec<String> = table
         .iter()
@@ -105,6 +106,7 @@ pub fn regions(table: &[CellRecord]) -> Vec<String> {
 }
 
 /// ΔR2 rows for every (n, geometry, setting, dataset, region) against the baseline.
+#[must_use]
 pub fn compute_deltas(table: &[CellRecord]) -> Vec<DeltaRow> {
     let mut values: BTreeMap<(usize, String, String, String, String), f64> = BTreeMap::new();
     for r in table {
@@ -180,6 +182,7 @@ pub struct RankTest {
 /// contribute; the rest are counted in `dropped_blocks`. A group that cannot
 /// support the test at all (fewer than two complete blocks, or fewer than three
 /// settings) is omitted rather than reported with a missing p-value.
+#[must_use]
 pub fn rank_tests(rows: &[DeltaRow], settings: &[String]) -> Vec<RankTest> {
     if settings.len() < 3 {
         return Vec::new();
@@ -247,6 +250,7 @@ pub fn rank_tests(rows: &[DeltaRow], settings: &[String]) -> Vec<RankTest> {
 }
 
 /// The settings present in *rows*, ordered with the baseline first.
+#[must_use]
 pub fn settings(rows: &[DeltaRow]) -> Vec<String> {
     let mut names: Vec<String> = rows
         .iter()
@@ -259,6 +263,7 @@ pub fn settings(rows: &[DeltaRow]) -> Vec<String> {
 }
 
 /// Per-(n, geometry, setting, region) ΔR2 summary with the cross-dataset test.
+#[must_use]
 pub fn summarise(rows: &[DeltaRow]) -> Vec<GroupSummary> {
     let mut groups: BTreeMap<(usize, String, String, String), Vec<f64>> = BTreeMap::new();
     for r in rows {

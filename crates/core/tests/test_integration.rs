@@ -1,5 +1,5 @@
 //! Integration tests for t-SNE embedding workflow.
-//! Ported from Python test/test_integration.py
+//! Ported from Python `test/test_integration.py`
 
 use fitting_core::config::{InitMethod, ScalingLossType, TrainingConfig};
 use fitting_core::embedding::EmbeddingState;

@@ -76,6 +76,7 @@ impl Weights {
     /// region.
     ///
     /// For five objectives at `s = 5` this is `C(9, 4) = 126` vectors.
+    #[must_use]
     pub fn new() -> Self {
         Self::with_resolution(Self::DEFAULT_S)
     }
@@ -84,6 +85,7 @@ impl Weights {
     ///
     /// Panics unless `1 <= s <= 255`: counts are `u8`, so a larger `s` would
     /// wrap silently in release.
+    #[must_use]
     pub fn with_resolution(s: usize) -> Self {
         assert!(
             (1..=usize::from(u8::MAX)).contains(&s),
@@ -104,6 +106,7 @@ impl Weights {
     }
 
     /// The region named *name*, if it exists.
+    #[must_use]
     pub fn region(&self, name: &str) -> Option<&Region> {
         self.regions.iter().find(|r| r.name == name)
     }
@@ -111,7 +114,7 @@ impl Weights {
 
 /// Every vector of `N_OBJECTIVES` non-negative integers summing to `s`.
 ///
-/// Example: for s=2, N_OBJECTIVES = 3, it should return
+/// Example: for s=2, `N_OBJECTIVES` = 3, it should return
 /// (0, 0, 2)
 /// (0, 1, 1)
 /// (0, 2, 0)
@@ -168,7 +171,7 @@ fn build_regions(counts: &[[u8; N_OBJECTIVES]], s: usize) -> Vec<Region> {
             // `u16` because a family may hold more than two objectives and
             // `s` can be up to 255; summing `u8` counts in place would wrap.
             indices: select(counts, |c| {
-                members.iter().map(|&j| c[j] as u16).sum::<u16>() >= half as u16
+                members.iter().map(|&j| u16::from(c[j])).sum::<u16>() >= u16::from(half)
             }),
         });
     }
@@ -250,6 +253,7 @@ pub fn front_utilities(
 /// The R2 indicator of a front under one preference region. Smaller is better.
 ///
 /// `NaN` for an empty region, which [`Weights::new`] never produces.
+#[must_use]
 pub fn r2(u: &[FrontUtility], region: &Region) -> f64 {
     if region.indices.is_empty() {
         return f64::NAN;
@@ -271,6 +275,7 @@ pub struct Recommendation {
 ///
 /// Ties resolve to the lowest front index, so the recommendation is a function
 /// of the front alone.
+#[must_use]
 pub fn recommendation(u: &[FrontUtility], region: &Region) -> Option<Recommendation> {
     if region.indices.is_empty() {
         return None;
@@ -315,6 +320,7 @@ pub struct CellSummary {
 ///
 /// Used by the recommendation table, which reports what a recommended
 /// configuration attains on all five objectives alongside its hyperparameters.
+#[must_use]
 pub fn oriented_objectives(record: &TrialRecord) -> BTreeMap<String, f64> {
     let row = crate::objectives::oriented_row(record);
     OBJECTIVES
@@ -325,6 +331,7 @@ pub fn oriented_objectives(record: &TrialRecord) -> BTreeMap<String, f64> {
 }
 
 /// Reduce a cell's trials to its front, then score it under every region.
+#[must_use]
 pub fn cell_summary(records: &[TrialRecord], weights: &Weights) -> CellSummary {
     let all = oriented_matrix(records);
     let keep = pareto_front_mask(&all);

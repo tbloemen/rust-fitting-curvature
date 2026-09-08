@@ -83,6 +83,7 @@ pub struct ShellProfile {
 /// * `distances`    — flat row-major n×n distance matrix.
 /// * `n_points`     — n.
 /// * `n_bins`       — histogram resolution (30–50 recommended).
+#[must_use]
 pub fn shell_density_profile(distances: &[f64], n_points: usize, n_bins: usize) -> ShellProfile {
     if n_points < 3 {
         return ShellProfile {
@@ -135,7 +136,7 @@ pub fn shell_density_profile(distances: &[f64], n_points: usize, n_bins: usize) 
     }
 }
 
-/// Build a normalised density histogram of `sorted_dists` over (0, r_max)
+/// Build a normalised density histogram of `sorted_dists` over (0, `r_max`)
 /// with `n_bins` equal-width bins.  Returns `(bin_centers, density)`; the
 /// density integrates to ~1 so it is comparable across datasets.
 fn histogram(sorted_dists: &[f64], r_max: f64, n_bins: usize) -> (Vec<f64>, Vec<f64>) {
@@ -271,7 +272,7 @@ fn fit_curved_model(
     best
 }
 
-/// Build a log-spaced grid of curvature magnitudes such that √c·r_max spans
+/// Build a log-spaced grid of curvature magnitudes such that √`c·r_max` spans
 /// `[arg_min, arg_max]`.  This keeps the search adapted to the data scale.
 fn curvature_grid(r_max: f64, arg_min: f64, arg_max: f64, n: usize) -> Vec<f64> {
     if r_max < 1e-10 || n < 2 {
@@ -288,9 +289,9 @@ fn curvature_grid(r_max: f64, arg_min: f64, arg_max: f64, n: usize) -> Vec<f64> 
 }
 
 /// Fit a hyperbolic model with a free curvature magnitude c.
-/// Searches sqrt(c)·r_max ∈ [0.01, 20] on a 60-point log-spaced grid.
+/// Searches `sqrt(c)·r_max` ∈ [0.01, 20] on a 60-point log-spaced grid.
 fn fit_hyperbolic_curved(r_vals: &[f64], log_density: &[f64]) -> FitResult {
-    let r_max = r_vals.iter().cloned().fold(0.0_f64, f64::max);
+    let r_max = r_vals.iter().copied().fold(0.0_f64, f64::max);
     let c_grid = curvature_grid(r_max, 0.01, 20.0, 60);
     fit_curved_model(
         |r, sqrt_c| {
@@ -308,10 +309,10 @@ fn fit_hyperbolic_curved(r_vals: &[f64], log_density: &[f64]) -> FitResult {
 }
 
 /// Fit a spherical model with a free curvature magnitude c.
-/// Searches sqrt(c)·r_max ∈ [0.01, 0.95π] on a 60-point log-spaced grid;
+/// Searches `sqrt(c)·r_max` ∈ [0.01, 0.95π] on a 60-point log-spaced grid;
 /// the upper cap keeps sin(√c·r) bounded away from its zero at π.
 fn fit_spherical_curved(r_vals: &[f64], log_density: &[f64]) -> FitResult {
-    let r_max = r_vals.iter().cloned().fold(0.0_f64, f64::max);
+    let r_max = r_vals.iter().copied().fold(0.0_f64, f64::max);
     let c_grid = curvature_grid(r_max, 0.01, 0.95 * std::f64::consts::PI, 60);
     fit_curved_model(
         |r, sqrt_c| {
@@ -348,6 +349,7 @@ fn fit_spherical_curved(r_vals: &[f64], log_density: &[f64]) -> FitResult {
 /// * `distances`    — flat row-major n×n distance matrix.
 /// * `n_points`     — n.
 /// * `n_bins`       — histogram resolution (30–50 works well).
+#[must_use]
 pub fn fit_geometries(distances: &[f64], n_points: usize, n_bins: usize) -> GeometryFits {
     let profile = shell_density_profile(distances, n_points, n_bins);
 
@@ -395,6 +397,7 @@ pub fn fit_geometries(distances: &[f64], n_points: usize, n_bins: usize) -> Geom
 /// * `distances`    — flat row-major n×n distance matrix.
 /// * `n_points`     — n.
 /// * `n_bins`       — histogram resolution (30–50 works well).
+#[must_use]
 pub fn detect_geometry(distances: &[f64], n_points: usize, n_bins: usize) -> GeometryVerdict {
     let fits = fit_geometries(distances, n_points, n_bins);
 

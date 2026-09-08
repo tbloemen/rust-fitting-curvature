@@ -300,5 +300,7 @@ fn holm_adjusted_p_values_are_monotone_and_bounded() {
 fn holm_handles_a_control_index_out_of_range() {
     let blocks = vec![vec![3.0, 2.0, 1.0], vec![1.0, 2.0, 3.0]];
     let f = friedman(&blocks).unwrap();
-    assert!(holm_against_control(&f, 9).iter().all(|p| p.is_none()));
+    assert!(holm_against_control(&f, 9)
+        .iter()
+        .all(std::option::Option::is_none));
 }

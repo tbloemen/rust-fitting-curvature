@@ -132,7 +132,8 @@ fn symmetrize_and_normalize_p(p_cond: &[f64], n_points: usize) -> Vec<f64> {
 
 /// Compute symmetric perplexity-based affinity matrix P.
 ///
-/// Returns a flat n_points x n_points row-major matrix where P sums to 1.
+/// Returns a flat `n_points` x `n_points` row-major matrix where P sums to 1.
+#[must_use]
 pub fn compute_perplexity_affinities(
     data: &[f64],
     n_points: usize,
@@ -150,6 +151,7 @@ pub fn compute_perplexity_affinities(
 }
 
 /// Compute affinities from a precomputed distance matrix.
+#[must_use]
 pub fn compute_perplexity_affinities_from_distances(
     distance_matrix: &[f64],
     n_points: usize,

@@ -44,6 +44,7 @@ pub enum Family {
 
 impl Family {
     /// The analysis region name, and the grouping key for the web UI.
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Family::Structure => "structure",
@@ -596,7 +597,7 @@ impl PartialEq for Metric {
 impl Eq for Metric {}
 impl std::hash::Hash for Metric {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.name().hash(state)
+        self.name().hash(state);
     }
 }
 
@@ -626,7 +627,7 @@ pub const ALL: &[Metric] = &[
 ];
 
 /// Named handles, for the call sites that name a metric symbolically rather
-/// than parsing one: [`OBJECTIVES`], the ParEGO tests, the figure axes.
+/// than parsing one: [`OBJECTIVES`], the `ParEGO` tests, the figure axes.
 ///
 /// These are values, not indices, so there is no position to fall out of sync.
 pub const TRUSTWORTHINESS: Metric = Metric(&Trustworthiness);
@@ -674,27 +675,35 @@ impl Metric {
     /// what [`super::MetricValues`] needs.
     pub const COUNT: usize = ALL.len();
 
+    #[must_use]
     pub fn name(self) -> &'static str {
         self.0.name()
     }
+    #[must_use]
     pub fn base(self) -> &'static str {
         self.0.base()
     }
+    #[must_use]
     pub fn space(self) -> Space {
         self.0.space()
     }
+    #[must_use]
     pub fn family(self) -> Family {
         self.0.family()
     }
+    #[must_use]
     pub fn direction(self) -> Direction {
         self.0.direction()
     }
+    #[must_use]
     pub fn is_objective(self) -> bool {
         self.0.is_objective()
     }
+    #[must_use]
     pub fn short(self) -> &'static str {
         self.0.short()
     }
+    #[must_use]
     pub fn label(self) -> &'static str {
         self.0.label()
     }
@@ -707,6 +716,7 @@ impl Metric {
     /// A linear scan of sixteen `&str` pointers, against a metric evaluation
     /// that is `O(n²)` at minimum. `ALL_INDEXED` in the tests pins the
     /// round-trip.
+    #[must_use]
     pub fn index(self) -> usize {
         ALL.iter()
             .position(|m| *m == self)
@@ -717,11 +727,13 @@ impl Metric {
     /// which is routine rather than exceptional, since it is also how
     /// deserialisation skips the columns of retired metrics. That is why this
     /// is not `FromStr`: there is no error to report.
+    #[must_use]
     pub fn by_name(s: &str) -> Option<Metric> {
         ALL.iter().copied().find(|m| m.name() == s)
     }
 
     /// The `--metric` help text, so it cannot drift from what parses.
+    #[must_use]
     pub fn valid_names() -> String {
         ALL.iter().map(|m| m.name()).collect::<Vec<_>>().join(", ")
     }
@@ -733,6 +745,7 @@ impl Metric {
     /// the browser suffixes `_2d` for those and uses the bare name for
     /// `dunn_index`, `davies_bouldin_ratio` and `cluster_density_measure`,
     /// where there is nothing to disambiguate against.
+    #[must_use]
     pub fn has_twin(self) -> bool {
         ALL.iter()
             .any(|o| o.base() == self.base() && o.space() != self.space())

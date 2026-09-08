@@ -5,7 +5,7 @@ use fitting_core::config::{InitMethod, ScalingLossType, TrainingConfig};
 use fitting_core::embedding::EmbeddingState;
 use fitting_core::synthetic_data::Rng;
 
-/// Generate MNIST-like data: n_points of dim features, pixel-like values in [0, 1].
+/// Generate MNIST-like data: `n_points` of dim features, pixel-like values in [0, 1].
 fn create_mnist_like_data(n_points: usize, n_features: usize, seed: u64) -> (Vec<f64>, Vec<u32>) {
     let mut rng = Rng::new(seed);
 

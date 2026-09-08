@@ -51,12 +51,14 @@ impl MetricValues {
     /// Every caller that feeds a plot or a statistic wants this: `figures/exp5`
     /// filters on it, and `oriented_value` maps `None` to the worst case.
     /// Returning `Some(NAN)` instead would put NaN points on a chart.
+    #[must_use]
     pub fn get(&self, m: Metric) -> Option<f64> {
         let v = self.0[m.index()];
         v.is_finite().then_some(v)
     }
 
     /// The stored value, NaN included. For serialisation and [`Self::mean`].
+    #[must_use]
     pub fn raw(&self, m: Metric) -> f64 {
         self.0[m.index()]
     }
@@ -70,6 +72,7 @@ impl MetricValues {
     /// Deliberately arithmetic on `raw`: a NaN in any sample propagates to that
     /// component of the mean, so a seed that failed to score is visible rather
     /// than silently averaged out of existence.
+    #[must_use]
     pub fn mean(samples: &[MetricValues]) -> MetricValues {
         let n = samples.len() as f64;
         let mut out = Self::MISSING;
@@ -101,7 +104,7 @@ impl Index<Metric> for MetricValues {
 
 #[cfg(feature = "serde")]
 mod wire {
-    use super::*;
+    use super::{Metric, MetricValues};
     use serde::de::{IgnoredAny, MapAccess, Visitor};
     use serde::ser::SerializeMap;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};

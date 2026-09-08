@@ -61,7 +61,7 @@ impl GpOptimizer {
     /// Evaluating this batch in parallel keeps all workers busy while only requiring
     /// one GP fit and one EI pass per batch — no inter-worker synchronisation needed.
     ///
-    /// During the initial random phase (fewer than N_INIT real observations) the
+    /// During the initial random phase (fewer than `N_INIT` real observations) the
     /// full batch is filled with random configs instead.
     pub fn suggest_batch(&self, n: usize, rng: &mut Rng) -> Vec<TrialConfig> {
         const N_INIT: usize = 5;
@@ -219,19 +219,19 @@ pub struct GpExportObs {
 /// `alpha` (K⁻¹y) and the Cholesky factor are NOT stored — they can be
 /// recomputed from the observations in O(n³), which is fast for typical n.
 /// Python reconstruction:
-///   xs_norm  = [obs.x_norm for obs in observations]
-///   y_flipped = [-obs.metric if direction=="minimize" else obs.metric]
-///   y_norm   = (y_flipped - y_mean) / y_std
-///   K        = rbf(xs_norm, xs_norm, length_scale) + 1e-4 * I
+///   `xs_norm`  = [`obs.x_norm` for obs in observations]
+///   `y_flipped` = [-obs.metric if direction=="minimize" else obs.metric]
+///   `y_norm`   = (`y_flipped` - `y_mean`) / `y_std`
+///   K        = `rbf(xs_norm`, `xs_norm`, `length_scale`) + 1e-4 * I
 ///   L        = cholesky(K)
-///   alpha    = L.T \ (L \ y_norm)
-///   k_star   = rbf(xs_norm, x_test_norm, length_scale)
-///   mu_norm  = k_star @ alpha
-///   v        = L \ k_star
-///   sigma_norm = sqrt(max(0, 1 - v @ v))
+///   alpha    = L.T \ (L \ `y_norm`)
+///   `k_star`   = `rbf(xs_norm`, `x_test_norm`, `length_scale`)
+///   `mu_norm`  = `k_star` @ alpha
+///   v        = L \ `k_star`
+///   `sigma_norm` = sqrt(max(0, 1 - v @ v))
 #[derive(Serialize)]
 pub struct GpState {
-    /// Human-readable parameter names in the same order as x_encoded / x_norm.
+    /// Human-readable parameter names in the same order as `x_encoded` / `x_norm`.
     pub param_names: Vec<String>,
     /// Which params are log-transformed (Python needs this to encode test points).
     pub log_scale_params: Vec<String>,
@@ -290,7 +290,7 @@ impl GpModel {
         let k_mat = build_kernel_matrix(&xs_norm, length_scale, JITTER);
         let chol = cholesky(&k_mat, n);
         let alpha = chol_solve(&chol, &ys_norm, n);
-        let f_best_norm = ys_norm.iter().cloned().fold(f64::MIN, f64::max);
+        let f_best_norm = ys_norm.iter().copied().fold(f64::MIN, f64::max);
 
         Self {
             xs_norm,
@@ -382,7 +382,7 @@ impl GpModel {
 
 /// Select the length-scale that maximises the log marginal likelihood (Frazier §3.2).
 ///
-/// A log-spaced grid of N_GRID candidates in [L_MIN, L_MAX] is evaluated; the
+/// A log-spaced grid of `N_GRID` candidates in [`L_MIN`, `L_MAX`] is evaluated; the
 /// highest-LML value is returned.  Grid search is appropriate because we are
 /// optimising a single scalar hyperparameter and the LML is typically unimodal
 /// in log l.
@@ -399,8 +399,7 @@ fn mle_length_scale(xs_norm: &[Vec<f64>], ys_norm: &[f64]) -> f64 {
             (l, lml)
         })
         .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(l, _)| l)
-        .unwrap_or(1.0)
+        .map_or(1.0, |(l, _)| l)
 }
 
 /// Log marginal likelihood of a zero-mean GP with RBF kernel:
@@ -427,10 +426,10 @@ fn log_marginal_likelihood(xs_norm: &[Vec<f64>], ys_norm: &[f64], length_scale: 
 
 // ─── Input encoding ───────────────────────────────────────────────────────────
 
-/// Encode a TrialConfig as a real-valued GP input vector containing only the
+/// Encode a `TrialConfig` as a real-valued GP input vector containing only the
 /// `Optimize` (free) parameters from `hp`, in canonical order.
 ///
-/// Log-uniform parameters (learning_rate, perplexity_ratio) are log-transformed.
+/// Log-uniform parameters (`learning_rate`, `perplexity_ratio`) are log-transformed.
 /// Fixed parameters are excluded so the GP dimensionality matches the search space.
 /// When `optimize_curvature` is true, `curvature_magnitude` is appended (log-transformed).
 /// Encode a sampled `HyperParams` as a GP input vector, including only `Optimize` fields.
@@ -646,7 +645,7 @@ fn normal_cdf(x: f64) -> f64 {
 /// Expected Improvement at a point with posterior mean µ and std σ,
 /// given the current best observed value f*.
 ///
-/// From Frazier Eq. 7:  EI_n(x) = E_n[(f(x) − f*_n)⁺]
+/// From Frazier Eq. 7:  `EI_n(x)` = `E_n`[(f(x) − f*_n)⁺]
 ///
 /// Closed-form evaluation (Jones et al. 1998, referenced in Frazier §4.1):
 ///   Let Δ = µ − f*,  z = Δ / σ
@@ -692,7 +691,7 @@ pub struct ParEgoOptimizer {
     pub trials: Vec<MultiTrial>,
     pub metrics: Vec<Metric>,
     spec: TrialConfig,
-    /// s parameter (equation 1): weight vectors use λ_j = l/s, l ∈ {0,...,s}.
+    /// s parameter (equation 1): weight vectors use `λ_j` = l/s, l ∈ {0,...,s}.
     s: usize,
     /// LHS configs queued for the initialisation phase (drained before GP phase).
     lhs_queue: VecDeque<TrialConfig>,
@@ -762,7 +761,7 @@ impl ParEgoOptimizer {
     ///    c. Run EVOLALG to find the config maximising EI under this GP.
     ///    d. Hallucinate: predict the GP posterior mean at the chosen config and add it as a fake observation so the next member avoids the same region.
     ///
-    /// With `n = 1` this degenerates to standard (sequential) ParEGO.
+    /// With `n = 1` this degenerates to standard (sequential) `ParEGO`.
     pub fn suggest_batch(&mut self, n: usize, rng: &mut Rng) -> Vec<TrialConfig> {
         if !self.lhs_initialized {
             let n_lhs = 11 * self.spec.free_param_count() - 1;
@@ -874,8 +873,7 @@ impl ParEgoOptimizer {
         population
             .into_iter()
             .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(_, cfg)| cfg)
-            .unwrap_or_else(|| self.random_config(rng))
+            .map_or_else(|| self.random_config(rng), |(_, cfg)| cfg)
     }
 
     /// Scalar fitness of a trial under the current weight vector (higher = closer to ideal).
@@ -980,7 +978,7 @@ impl ParEgoOptimizer {
 // ─── ParEGO helper functions ──────────────────────────────────────────────────
 
 /// Sample a weight vector uniformly from the discrete set Λ (Knowles 2006, eq. 1):
-///   Λ = { λ = (λ_1,...,λ_k) | Σ λ_j = 1, λ_j = l/s, l ∈ {0,...,s} }
+///   Λ = { λ = (`λ_1,...,λ_k`) | Σ `λ_j` = 1, `λ_j` = l/s, l ∈ {0,...,s} }
 ///
 /// Stars-and-bars: pick (dim−1) positions from {0,...,s+dim−2} without
 /// replacement via partial Fisher-Yates, sort, compute gaps divided by s.
@@ -1111,7 +1109,7 @@ fn lhs_map_linear(t: f64, lo: f64, hi: f64) -> f64 {
 ///
 /// child = 0.5 * ((1+β)*p1 + (1-β)*p2)
 ///
-/// Log-scale parameters (learning_rate, perplexity_ratio, curvature_magnitude)
+/// Log-scale parameters (`learning_rate`, `perplexity_ratio`, `curvature_magnitude`)
 /// have SBX applied in log space and are then exponentiated back.
 /// SBX crossover between two sampled (all-Fixed) `HyperParams`. Returns a new sampled HP.
 pub fn sbx_crossover(
@@ -1288,7 +1286,7 @@ pub fn evolalg_mutate(
 
 /// Augmented Chebyshev scalarisation (Knowles 2006, Eq. 1).
 ///
-///   s = max_i(λ_i · (z*_i − f_i))  +  ρ · Σ_i λ_i · (z*_i − f_i)
+///   s = `max_i(λ_i` · (z*_i − `f_i`))  +  ρ · `Σ_i` `λ_i` · (z*_i − `f_i`)
 ///
 /// Lower s = closer to ideal = better.  ρ=0.05 is the standard value.
 fn chebyshev_scalarize(metrics_norm: &[f64], weights: &[f64], ideal: &[f64], rho: f64) -> f64 {
@@ -1298,7 +1296,7 @@ fn chebyshev_scalarize(metrics_norm: &[f64], weights: &[f64], ideal: &[f64], rho
         .zip(weights)
         .map(|((f, z), w)| w * (z - f))
         .collect();
-    let max_term = diffs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let max_term = diffs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let sum_term: f64 = diffs.iter().sum();
     max_term + rho * sum_term
 }
@@ -1408,7 +1406,7 @@ mod tests {
     fn test_normal_cdf_monotone() {
         let mut prev = normal_cdf(-4.0);
         for i in -3..=4 {
-            let p = normal_cdf(i as f64);
+            let p = normal_cdf(f64::from(i));
             assert!(p > prev);
             prev = p;
         }
@@ -1598,7 +1596,7 @@ mod tests {
     #[test]
     fn test_lml_prefers_good_length_scale() {
         // Generate data from an RBF with l=1; LML should be higher near l=1 than l=10.
-        let xs: Vec<Vec<f64>> = (0..10).map(|i| vec![i as f64 * 0.2]).collect();
+        let xs: Vec<Vec<f64>> = (0..10).map(|i| vec![f64::from(i) * 0.2]).collect();
         let ys: Vec<f64> = xs.iter().map(|x| (-(x[0] - 1.0).powi(2)).exp()).collect();
         let lml_good = log_marginal_likelihood(&xs, &ys, 0.5);
         let lml_bad = log_marginal_likelihood(&xs, &ys, 10.0);
@@ -1800,7 +1798,7 @@ mod tests {
         let mut rng = Rng::new(42);
         for i in 0..10 {
             let cfg = random_config(&mut rng);
-            opt.observe(cfg, i as f64 * 0.1);
+            opt.observe(cfg, f64::from(i) * 0.1);
         }
         let cfg = opt.suggest_batch(1, &mut rng).remove(0);
         assert!(cfg.learning_rate.value() > 0.0);
@@ -2087,7 +2085,7 @@ mod tests {
 
     // ─── sbx_crossover ────────────────────────────────────────────────────────
 
-    /// A concrete (all-Fixed) HyperParams for use as a parent/input in SBX/evolalg tests.
+    /// A concrete (all-Fixed) `HyperParams` for use as a parent/input in SBX/evolalg tests.
     fn default_config() -> TrialConfig {
         TrialConfig {
             learning_rate: ParamSpec::Fixed(5.0),

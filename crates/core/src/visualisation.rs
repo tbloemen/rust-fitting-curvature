@@ -16,7 +16,7 @@ pub enum SphericalProjection {
 
 /// Result of projecting points to 2D.
 pub struct Projection2D {
-    /// Flat array of (x, y) pairs, length 2*n_points.
+    /// Flat array of (x, y) pairs, length 2*`n_points`.
     pub coords: Vec<f64>,
     /// Scale factor applied to Euclidean coordinates (divide projected coords
     /// by this to recover original values). Always 1.0 for curved spaces.
@@ -156,7 +156,7 @@ pub fn project_to_2d(
     }
 }
 
-/// Rotate spherical points so the data centroid aligns with -e_0 (south pole).
+/// Rotate spherical points so the data centroid aligns with -`e_0` (south pole).
 fn align_sphere_to_centroid(points: &[f64], n_points: usize, ambient_dim: usize) -> Vec<f64> {
     // Compute centroid
     let mut centroid = vec![0.0; ambient_dim];
@@ -205,6 +205,7 @@ fn align_sphere_to_centroid(points: &[f64], n_points: usize, ambient_dim: usize)
 }
 
 /// Tab10 color palette (matching matplotlib/d3), returns (r, g, b) in 0-255.
+#[must_use]
 pub fn tab10_color(label: u32) -> (u8, u8, u8) {
     match label % 10 {
         0 => (31, 119, 180),  // blue

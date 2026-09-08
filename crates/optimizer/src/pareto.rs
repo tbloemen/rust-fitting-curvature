@@ -48,7 +48,7 @@ pub fn run_pareto(
     let stem = out_path
         .trim_end_matches(".jsonl")
         .trim_end_matches(".json");
-    let front_path = format!("{}_pareto_{}_{}.json", stem, dataset_name, geometry);
+    let front_path = format!("{stem}_pareto_{dataset_name}_{geometry}.json");
 
     // ── Resume: replay already-recorded trials instead of re-evaluating them ──
     // `prior` is the ordered list of completed evaluations from a previous,
@@ -86,10 +86,9 @@ pub fn run_pareto(
         lhs_total as u64,
         "{spinner:.cyan} [LHS] {msg} [{bar:35.cyan/blue}] {pos}/{len} ({eta})",
     );
-    pb.set_message(format!("{} (sign={:+.0})", geometry, curvature_sign));
+    pb.set_message(format!("{geometry} (sign={curvature_sign:+.0})"));
     pb.println(format!(
-        "pareto '{}' ({}) — LHS init phase: {} points, {} objectives",
-        dataset_name, geometry, lhs_total, n_objectives
+        "pareto '{dataset_name}' ({geometry}) — LHS init phase: {lhs_total} points, {n_objectives} objectives"
     ));
 
     let mut lhs_completed = 0usize;
@@ -150,7 +149,7 @@ pub fn run_pareto(
             pb.inc(1);
         }
     }
-    pb.finish_with_message(format!("{} LHS done ({} points)", geometry, lhs_completed));
+    pb.finish_with_message(format!("{geometry} LHS done ({lhs_completed} points)"));
 
     // ── Phase 2: GP optimisation ─────────────────────────────────────────────
     let pb = make_progress_bar(
@@ -158,7 +157,7 @@ pub fn run_pareto(
         args.n_trials as u64,
         "{spinner:.green} [GP]  {msg} [{bar:35.cyan/blue}] {pos}/{len} | front: {prefix} ({eta})",
     );
-    pb.set_message(format!("{} (sign={:+.0})", geometry, curvature_sign));
+    pb.set_message(format!("{geometry} (sign={curvature_sign:+.0})"));
     pb.set_prefix("0");
     pb.println(format!(
         "pareto '{}' ({}) — GP phase: {} trials, batch_size={}",
@@ -223,7 +222,7 @@ pub fn run_pareto(
                     write_result(&result, out_path);
 
                     let front_size = optimizer.pareto_front_indices().len();
-                    pb.set_prefix(format!("{}", front_size));
+                    pb.set_prefix(format!("{front_size}"));
                     pb.println(format!(
                         "pareto '{}' GP {:3}/{} | front={} | {}ms | k={:.3} lr={:.4} perp={:.4}",
                         dataset_name,
@@ -244,11 +243,11 @@ pub fn run_pareto(
         remaining -= this_batch;
     }
 
-    pb.finish_with_message(format!("{} ({}) done", dataset_name, geometry));
+    pb.finish_with_message(format!("{dataset_name} ({geometry}) done"));
 
     let front = optimizer.pareto_trials();
     write_pareto_front(&front, &optimizer.metrics, args.n_samples, &front_path);
-    pb.println(format!("Pareto front written to {}", front_path));
+    pb.println(format!("Pareto front written to {front_path}"));
 }
 
 /// The objectives for --mode pareto: five metrics, all measured on the 2D

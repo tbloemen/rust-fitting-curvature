@@ -32,7 +32,10 @@ use plotters::coord::Shift;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
 
-use super::*;
+use super::{
+    draw_legend, setting_color, Figure, LegendEntry, Res, FAMILIES, OBJECTIVES, OK_BLACK,
+    SETTING_ORDER,
+};
 use crate::aggregate::DeltaRow;
 use crate::error::{Error, Result};
 use crate::records::load_jsonl;
@@ -68,7 +71,7 @@ const HEAD_ROOM: f64 = 0.16;
 ///
 /// An **absent** table is not an error: it is a separate `r2` run, and the bar
 /// charts are skipped without it exactly as Exp 3 skips its scatter without a
-/// κ_data export. A table that is there and will not parse still fails.
+/// `κ_data` export. A table that is there and will not parse still fails.
 pub fn load_deltas(path: &Path) -> Result<Vec<DeltaRow>> {
     match load_jsonl(path) {
         Ok(rows) => Ok(rows),
@@ -122,10 +125,8 @@ fn short_metric(metric: &str) -> &str {
 fn fixed(scaled: f64) -> String {
     let decimals = if scaled.abs() < 10.0 {
         2
-    } else if scaled.abs() < 100.0 {
-        1
     } else {
-        0
+        usize::from(scaled.abs() < 100.0)
     };
     format!("{scaled:.decimals$}")
 }
@@ -150,6 +151,7 @@ pub struct R2Bars {
 
 impl R2Bars {
     /// One chart per (dataset, geometry) present at this N.
+    #[must_use]
     pub fn panels(rows: &[DeltaRow], n: usize) -> Vec<R2Bars> {
         // (dataset, geometry) → setting → region → row.
         type Block<'a> = BTreeMap<&'a str, BTreeMap<&'a str, &'a DeltaRow>>;
@@ -193,10 +195,11 @@ impl R2Bars {
                     groups,
                 }
             })
-            .filter(|b| b.has_data())
+            .filter(R2Bars::has_data)
             .collect()
     }
 
+    #[must_use]
     pub fn has_data(&self) -> bool {
         !self.settings.is_empty() && !self.groups.is_empty()
     }
@@ -343,7 +346,7 @@ impl Figure for R2Bars {
         // label strip, whose own draw calls are relative to its top-left.
         let (plot_px, _) = chart.plotting_area().get_pixel_range();
         let strip_x0 = label_area.get_pixel_range().0.start;
-        let width = (plot_px.end - plot_px.start) as f64;
+        let width = f64::from(plot_px.end - plot_px.start);
         for (g, group) in self.groups.iter().enumerate() {
             let centre =
                 plot_px.start + (width * (g as f64 + 0.5) / n_groups as f64).round() as i32;

@@ -77,10 +77,12 @@ impl TrialRecord {
     /// This was a hand-written match arm per metric — a fourth copy of the
     /// name-to-value mapping, and one where a typo reads as permanently
     /// missing, i.e. silently worst-case, rather than as an error.
+    #[must_use]
     pub fn objective(&self, name: &str) -> Option<f64> {
         self.metrics.get(Metric::by_name(name)?)
     }
 
+    #[must_use]
     pub fn param(&self, name: &str) -> Option<f64> {
         match name {
             "learning_rate" => self.learning_rate,
@@ -102,7 +104,7 @@ impl TrialRecord {
         }
     }
 
-    /// Dimensionless embedding curvature κ = |K|·R_rms² for one trial
+    /// Dimensionless embedding curvature κ = |`K|·R_rms²` for one trial
     /// (thesis `@eq:kappa` at the embedding gauge, `4methods.typ` §gauge-fixing).
     ///
     /// `|K|` prefers `curvature_magnitude` and falls back to `|curvature|`.
@@ -112,6 +114,7 @@ impl TrialRecord {
     /// without it every Euclidean cell reports no κ at all. Euclidean space has
     /// `K = 0`, hence `κ = 0` exactly on any gauge — that is a value, not a
     /// missing measurement, and a table that prints `---` for it is wrong.
+    #[must_use]
     pub fn kappa(&self) -> Option<f64> {
         let k = self
             .curvature_magnitude
@@ -140,6 +143,7 @@ impl TrialRecord {
     /// `results/`. Callers that need a κ for both sets must say which gauge they
     /// are using rather than silently falling back — the two are not comparable
     /// on the spherical arm.
+    #[must_use]
     pub fn kappa_gyration(&self) -> Option<f64> {
         let k = self
             .curvature_magnitude

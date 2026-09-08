@@ -117,6 +117,7 @@ const QL_MAX_ITER: usize = 50;
 /// This is the hot path — [`minimise_log_spaced`] calls it once per
 /// candidate radius — so it skips the `O(n³)` back-transformation that
 /// [`eigen_symmetric`] pays for.
+#[must_use]
 pub fn eigenvalues_symmetric(a: &[f64], n: usize) -> Vec<f64> {
     if n == 0 {
         return Vec::new();
@@ -146,6 +147,7 @@ pub struct Eigen {
 impl Eigen {
     /// Component `i` of the eigenvector for `values[j]`.
     #[inline]
+    #[must_use]
     pub fn vector_component(&self, i: usize, j: usize, n: usize) -> f64 {
         self.vectors[i * n + j]
     }
@@ -166,6 +168,7 @@ impl Eigen {
 /// The eigenvalues it returns agree with [`eigenvalues_symmetric`] to
 /// rounding: both call the same two routines on the same input, and the
 /// vector accumulation does not feed back into `d` or `e`.
+#[must_use]
 pub fn eigen_symmetric(a: &[f64], n: usize) -> Eigen {
     if n == 0 {
         return Eigen {
@@ -407,7 +410,7 @@ pub(crate) fn build_z_hyperbolic(d: &[f64], n: usize, r: f64) -> Vec<f64> {
     z
 }
 
-/// `B = −J D∘D J / 2` with `J = I − 11ᵀ/n` — the classical-MDS (PCoA) Gram
+/// `B = −J D∘D J / 2` with `J = I − 11ᵀ/n` — the classical-MDS (`PCoA`) Gram
 /// matrix, i.e. the flat model's `Z`.  It takes no radius: Euclidean space
 /// has no curvature parameter, which is exactly what makes this arm the
 /// nested null model of the other two.
@@ -637,8 +640,7 @@ fn minimise_log_spaced(
                 .iter()
                 .enumerate()
                 .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-                .map(|(i, _)| i)
-                .unwrap_or(0),
+                .map_or(0, |(i, _)| i),
         );
     }
 
@@ -687,7 +689,7 @@ fn minimise_log_spaced(
 /// sphere than the coverage threshold allows ⇒ not spherical; that flag,
 /// not a post-hoc angular comparison, is what [`detect_geometry`] reads.
 pub fn fit_spherical(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
-    let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
+    let d_max = distances.iter().copied().fold(0.0_f64, f64::max);
     let r_lower = d_max / PI;
     let r_upper = d_max / SPHERICAL_ANGULAR_MIN;
 
@@ -781,7 +783,7 @@ fn hyperbolic_window_cap(distances: &[f64], n: usize, dim: usize, r_lower: f64) 
 /// `Σ|λ|` over the eigenvalues of `Z_hyperbolic(r)` outside its
 /// `(1 negative, dim positive)` signature block.
 ///
-/// Search bounds: r ≥ d_max/20 (keeps `cosh(d_max/r) ≤ cosh(20) ≈ 2.4·10⁸`,
+/// Search bounds: r ≥ `d_max/20` (keeps `cosh(d_max/r) ≤ cosh(20) ≈ 2.4·10⁸`,
 /// safe from overflow) and `r ≤` the radius at which the implied
 /// configuration's `κ = |K|·R_rms²` falls to [`HYPERBOLIC_KAPPA_MIN`], solved
 /// by [`hyperbolic_window_cap`].  Hyperbolic space is non-compact, so the
@@ -798,7 +800,7 @@ fn hyperbolic_window_cap(distances: &[f64], n: usize, dim: usize, r_lower: f64) 
 /// so that the bound is a statement about the same κ the fit reports — see
 /// [`hyperbolic_window_cap`] for what that costs and why it is affordable.
 pub fn fit_hyperbolic(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
-    let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
+    let d_max = distances.iter().copied().fold(0.0_f64, f64::max);
     let r_lower = d_max / 20.0;
     let r_upper = hyperbolic_window_cap(distances, n, dim, r_lower);
 
@@ -839,7 +841,7 @@ pub fn fit_hyperbolic(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
 /// loosened, so that cap sets the minimum curvature the comparison can
 /// resolve.
 pub fn fit_euclidean(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
-    let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
+    let d_max = distances.iter().copied().fold(0.0_f64, f64::max);
     let residual = euclidean_residual(distances, n, dim);
     WilsonFit {
         radius: f64::INFINITY,
@@ -869,12 +871,14 @@ pub struct GeometryVerdict {
 /// Diagnostic: raw spherical signature residual `Σ|λ_res|` at a single r
 /// for a `dim`-dimensional model.  Exposed so tests can plot the residual
 /// curve; divide by `n · d_max²` to compare across datasets.
+#[must_use]
 pub fn spherical_residual_at(distances: &[f64], n: usize, dim: usize, r: f64) -> f64 {
     spherical_residual(distances, n, dim, r)
 }
 
 /// Diagnostic: raw hyperbolic signature residual `Σ|λ_res|` at a single r
 /// for a `dim`-dimensional model.
+#[must_use]
 pub fn hyperbolic_residual_at(distances: &[f64], n: usize, dim: usize, r: f64) -> f64 {
     hyperbolic_residual(distances, n, dim, r)
 }
@@ -882,6 +886,7 @@ pub fn hyperbolic_residual_at(distances: &[f64], n: usize, dim: usize, r: f64) -
 /// Diagnostic: raw Euclidean (classical-MDS) signature residual
 /// `Σ|λ_res|` for a `dim`-dimensional model.  Takes no radius — this is
 /// the flat limit the curved residuals converge to.
+#[must_use]
 pub fn euclidean_residual_at(distances: &[f64], n: usize, dim: usize) -> f64 {
     euclidean_residual(distances, n, dim)
 }
@@ -917,7 +922,7 @@ pub const SPHERICAL_ANGULAR_MIN: f64 = 2.5;
 /// the constant a function of [`SPHERICAL_ANGULAR_MIN`]: widening the
 /// window flat-ward admits larger `r*`, and a larger `r*` shrinks the
 /// fraction quadratically.  Measured on the three synthetic fixtures plus
-/// mnist / fashion_mnist / pbmc / wordnet_mammals, sweeping
+/// mnist / `fashion_mnist` / pbmc / `wordnet_mammals`, sweeping
 /// `SPHERICAL_ANGULAR_MIN` over `{2.5, 2.0, 1.5, 1.0, 0.5}`, the Euclidean
 /// fixture's fraction falls `8.0e-2 → 3.3e-2 → 1.1e-2 → 2.1e-3 → 1.3e-4`
 /// as its `r*` runs flat-ward — so at 2.0 it was already *under* the old
@@ -995,6 +1000,7 @@ pub const SPHERICAL_RESIDUAL_MAX: f64 = 1e-3;
 /// `dim` is the target embedding dimension — the spherical and
 /// hyperbolic models are fitted as `dim`-dimensional manifolds (rank
 /// `dim+1` Gram matrices).
+#[must_use]
 pub fn detect_geometry(distances: &[f64], n: usize, dim: usize) -> GeometryVerdict {
     let spherical = fit_spherical(distances, n, dim);
 

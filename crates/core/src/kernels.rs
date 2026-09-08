@@ -1,6 +1,7 @@
 use crate::manifolds::Manifold;
 
 /// Student-t kernel: k(d) = (1 + d^2/dof)^(-(dof+1)/2)
+#[must_use]
 pub fn t_distribution_kernel(distances: &[f64], dof: f64) -> Vec<f64> {
     let exponent = -(dof + 1.0) / 2.0;
     distances
@@ -11,7 +12,7 @@ pub fn t_distribution_kernel(distances: &[f64], dof: f64) -> Vec<f64> {
 
 /// Compute normalized Q matrix for t-SNE.
 ///
-/// Returns flat n_points x n_points row-major matrix.
+/// Returns flat `n_points` x `n_points` row-major matrix.
 pub fn compute_q_matrix(
     manifold: &dyn Manifold,
     points: &[f64],

@@ -37,6 +37,7 @@ use crate::objectives::N_OBJECTIVES;
 ///
 /// `None` when either front is empty: with no *a* there is nothing to shift, and
 /// with no *b* there is nothing to cover, and neither is a value of zero.
+#[must_use]
 pub fn epsilon_additive(a: &[[f64; N_OBJECTIVES]], b: &[[f64; N_OBJECTIVES]]) -> Option<f64> {
     if a.is_empty() || b.is_empty() {
         return None;
@@ -81,11 +82,13 @@ pub struct EpsilonPair {
 
 impl EpsilonPair {
     /// The setting's front covers every baseline point outright.
+    #[must_use]
     pub fn setting_covers_baseline(&self) -> bool {
         self.setting_vs_baseline <= 0.0
     }
 
     /// The baseline's front covers every setting point outright.
+    #[must_use]
     pub fn baseline_covers_setting(&self) -> bool {
         self.baseline_vs_setting <= 0.0
     }
@@ -94,6 +97,7 @@ impl EpsilonPair {
 /// [`epsilon_additive`] in both directions, with the signed summary.
 ///
 /// `None` when either front is empty, matching [`epsilon_additive`].
+#[must_use]
 pub fn epsilon_pair(
     setting: &[[f64; N_OBJECTIVES]],
     baseline: &[[f64; N_OBJECTIVES]],

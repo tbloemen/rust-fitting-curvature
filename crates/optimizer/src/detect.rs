@@ -6,9 +6,9 @@
 //! characterises the *data's* intrinsic curvature so the Python analysis can put
 //! each dataset on the same dimensionless κ axis as the embeddings.
 //!
-//! ## What κ_data is
+//! ## What `κ_data` is
 //!
-//! The thesis reports a dimensionless curvature **κ = |K|·R_rms²** (|sectional
+//! The thesis reports a dimensionless curvature **κ = |`K|·R_rms²`** (|sectional
 //! curvature| times the squared RMS geodesic radius the configuration occupies),
 //! and that is the gauge used throughout — for embeddings and for the detector
 //! alike, so the two land on one axis.
@@ -59,7 +59,7 @@ struct DetectionRecord {
     kappa_data: f64,
 
     // ── Scale of the data (distance-matrix only) ──
-    /// Input RMS pairwise distance `sqrt((1/n(n-1)) Σ_{i≠j} d_ij²)` (thesis d_rms).
+    /// Input RMS pairwise distance `sqrt((1/n(n-1)) Σ_{i≠j} d_ij²)` (thesis `d_rms`).
     d_rms: f64,
     /// Largest pairwise distance (the diameter used by the Wilson search bounds).
     d_max: f64,
@@ -160,7 +160,7 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
     let distances = evaluator.distances();
     let embed_dim = 2;
 
-    let d_max = distances.iter().cloned().fold(0.0_f64, f64::max);
+    let d_max = distances.iter().copied().fold(0.0_f64, f64::max);
     let d_rms = rms_pairwise(distances, n);
 
     let verdict = detect_geometry(distances, n, embed_dim);
@@ -274,7 +274,7 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
     };
     match serde_json::to_string(&record) {
         Ok(json) => {
-            writeln!(file, "{}", json).ok();
+            writeln!(file, "{json}").ok();
         }
         Err(e) => eprintln!("detect: failed to serialise record: {e}"),
     }

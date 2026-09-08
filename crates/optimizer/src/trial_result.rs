@@ -88,7 +88,7 @@ pub(crate) fn write_result(result: &TrialResult, out_path: &str) {
         .open(out_path)
         .unwrap();
     let json = serde_json::to_string(result).unwrap();
-    writeln!(file, "{}", json).ok();
+    writeln!(file, "{json}").ok();
 }
 
 #[cfg(test)]

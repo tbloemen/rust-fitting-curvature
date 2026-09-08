@@ -106,27 +106,17 @@ pub fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: 
         ParamSpec::Fixed(if optimize_curvature { 1.0 } else { 0.0 });
 
     let base = if let Some(scan_file) = &args.scan_from {
-        match load_best_config_from_jsonl(scan_file, n_points, dataset_name, geometry) {
-            Some(c) => {
-                eprintln!(
-                    "scan '{}' ({}): loaded base config from {}",
-                    dataset_name, geometry, scan_file
-                );
-                c
-            }
-            None => {
-                eprintln!(
-                    "scan '{}' ({}): could not load from {}, using default",
-                    dataset_name, geometry, scan_file
-                );
-                default_config
-            }
+        if let Some(c) = load_best_config_from_jsonl(scan_file, n_points, dataset_name, geometry) {
+            eprintln!("scan '{dataset_name}' ({geometry}): loaded base config from {scan_file}");
+            c
+        } else {
+            eprintln!(
+                "scan '{dataset_name}' ({geometry}): could not load from {scan_file}, using default"
+            );
+            default_config
         }
     } else {
-        eprintln!(
-            "scan '{}' ({}): no --scan-from, using default config",
-            dataset_name, geometry
-        );
+        eprintln!("scan '{dataset_name}' ({geometry}): no --scan-from, using default config");
         default_config
     };
 
@@ -175,7 +165,7 @@ pub fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: 
         total,
         "{spinner:.green} scan={msg} [{bar:35.cyan/blue}] {pos}/{len} {wide_msg}",
     );
-    pb.set_message(format!("{} ({})", dataset_name, geometry));
+    pb.set_message(format!("{dataset_name} ({geometry})"));
 
     let out_path = &args.output;
     let pb_iters = ProgressBar::hidden();
@@ -213,16 +203,15 @@ pub fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: 
             if optimize_curvature {
                 result.curvature_magnitude = Some(config.curvature_magnitude.value());
             }
-            result.scan_param = Some(param_name.to_string());
+            result.scan_param = Some((*param_name).to_string());
             write_result(&result, out_path);
 
             pb.set_message(format!(
-                "{} | {}={:.4} → {:.4} ± {:.4}",
-                geometry, param_name, val, mean, std
+                "{geometry} | {param_name}={val:.4} → {mean:.4} ± {std:.4}"
             ));
             pb.inc(1);
         }
     }
 
-    pb.finish_with_message(format!("{} ({}) scan done", dataset_name, geometry));
+    pb.finish_with_message(format!("{dataset_name} ({geometry}) scan done"));
 }

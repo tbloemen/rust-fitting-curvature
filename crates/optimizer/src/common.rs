@@ -17,9 +17,8 @@ pub(crate) fn parse_experiment(name: &str) -> TrialConfig {
         "rms_anchored" => TrialConfig::rms_anchored(),
         other => {
             eprintln!(
-                "Unknown --experiment '{}'. Valid: all_off, centering_only, global_only, \
-                 norm_only, all_free, rms_anchored.",
-                other
+                "Unknown --experiment '{other}'. Valid: all_off, centering_only, global_only, \
+                 norm_only, all_free, rms_anchored."
             );
             std::process::exit(1);
         }

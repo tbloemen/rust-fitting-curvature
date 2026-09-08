@@ -1,5 +1,5 @@
 //! Tests for affinity computation.
-//! Ported from Python test/test_tsne.py::TestAffinities
+//! Ported from Python `test/test_tsne.py::TestAffinities`
 
 use fitting_core::affinities::{binary_search_sigma, compute_perplexity_affinities};
 use fitting_core::synthetic_data::Rng;

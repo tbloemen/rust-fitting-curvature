@@ -116,7 +116,7 @@ fn objectives_are_grouped_by_family() {
     let mut seen = Vec::new();
     for f in families {
         if seen.last() != Some(&f) {
-            assert!(!seen.contains(&f), "family {:?} is not contiguous", f);
+            assert!(!seen.contains(&f), "family {f:?} is not contiguous");
             seen.push(f);
         }
     }

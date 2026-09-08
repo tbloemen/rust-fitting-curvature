@@ -115,6 +115,7 @@ fn ball_delta(
 ///   over this many randomly sampled quadruples (the sup is then a lower
 ///   estimate, so use a generous bound for large balls).
 /// - `seed`: makes centre/quadruple sampling reproducible.
+#[must_use]
 pub fn gromov_delta_curve(
     distances: &[f64],
     n: usize,
@@ -177,11 +178,13 @@ impl GromovBallCurve {
     }
 
     /// Saturated raw δ of the underlying space (tail-averaged `delta_mean`).
+    #[must_use]
     pub fn saturated_delta(&self) -> f64 {
         self.tail_mean(|p| p.delta_mean)
     }
 
     /// Saturated normalised δ (tail-averaged `delta_mean_normalised`).
+    #[must_use]
     pub fn saturated_delta_normalised(&self) -> f64 {
         self.tail_mean(|p| p.delta_mean_normalised)
     }
@@ -189,6 +192,7 @@ impl GromovBallCurve {
     /// Curvature implied by the saturated δ via `δ = ln(1+√2)/√(−K)`,
     /// i.e. `K = −(ln(1+√2)/δ)²`.  Returns `f64::NEG_INFINITY` for a
     /// degenerate (tree-like) δ → 0.
+    #[must_use]
     pub fn estimated_hyperbolic_curvature(&self) -> f64 {
         let delta = self.saturated_delta();
         if delta < 1e-12 {
@@ -202,6 +206,7 @@ impl GromovBallCurve {
     /// slope near 0; a still-growing (flat/spherical) curve has a clearly
     /// positive slope, since there δ ∝ ball diameter ∝ k^(1/d).  The slope
     /// is scale-invariant, so it needs no distance normalisation.
+    #[must_use]
     pub fn tail_loglog_slope(&self) -> f64 {
         let num_points = self.points.len();
         if num_points < 2 {
@@ -286,6 +291,7 @@ pub struct HyperbolicityVerdict {
 /// growing-ball saturation test (see the module docs).  Uses a default
 /// ball-size schedule, centre count and quadruple budget; for finer
 /// control build the curve directly with [`gromov_delta_curve`].
+#[must_use]
 pub fn detect_hyperbolic(distances: &[f64], n: usize) -> HyperbolicityVerdict {
     let ball_sizes = default_ball_sizes(n);
     let curve = gromov_delta_curve(

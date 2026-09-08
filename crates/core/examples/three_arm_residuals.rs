@@ -20,7 +20,7 @@
 //! signed sectional curvature `K = ±1/r*²` that radius implies, and the
 //! dimensionless `κ`. Only `κ` is comparable across datasets: `r*` and `K`
 //! carry the units of the input distance matrix, which are pixel distances for
-//! MNIST and hop counts for WordNet.
+//! MNIST and hop counts for `WordNet`.
 //!
 //! `kappa_* = |K|·R_rms²`, where `R_rms` is the RMS geodesic radius of the
 //! configuration the fit implies — the one gauge used throughout the
@@ -131,7 +131,7 @@ fn build_row(fx: &Fixture) -> Row {
         truth: fx.truth,
         n,
         d_rms,
-        d_max: d.iter().cloned().fold(0.0_f64, f64::max),
+        d_max: d.iter().copied().fold(0.0_f64, f64::max),
         r_sph,
         r_hyp,
         r_euc,
@@ -316,18 +316,18 @@ fn main() {
     let mut out = match std::fs::File::create(jsonl) {
         Ok(f) => std::io::BufWriter::new(f),
         Err(e) => {
-            eprintln!("error: cannot write {}: {e}", jsonl);
+            eprintln!("error: cannot write {jsonl}: {e}");
             std::process::exit(1);
         }
     };
     for r in &rows {
         if let Err(e) = writeln!(out, "{}", json_line(r, args.seed)) {
-            eprintln!("error: cannot write {}: {e}", jsonl);
+            eprintln!("error: cannot write {jsonl}: {e}");
             std::process::exit(1);
         }
     }
     if let Err(e) = out.flush() {
-        eprintln!("error: cannot write {}: {e}", jsonl);
+        eprintln!("error: cannot write {jsonl}: {e}");
         std::process::exit(1);
     }
     println!("  wrote {} rows to {}", rows.len(), jsonl);

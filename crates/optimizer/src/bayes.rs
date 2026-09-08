@@ -145,17 +145,15 @@ pub(crate) fn run_bayes(
         args.n_trials as u64,
         "{spinner:.green} bayes={msg} [{bar:35.cyan/blue}] {pos}/{len} | best: {prefix}",
     );
-    pb.set_message(format!("{} (sign={:+.0})", geometry, curvature_sign));
+    pb.set_message(format!("{geometry} (sign={curvature_sign:+.0})"));
     pb.set_prefix("n/a");
     if n_warm > 0 {
         pb.println(format!(
-            "bayes '{}' ({}) warm-started from {} prior trials",
-            dataset_name, geometry, n_warm
+            "bayes '{dataset_name}' ({geometry}) warm-started from {n_warm} prior trials"
         ));
     }
     pb.println(format!(
-        "bayes '{}' ({}) running with batch_size={}",
-        dataset_name, geometry, batch_size
+        "bayes '{dataset_name}' ({geometry}) running with batch_size={batch_size}"
     ));
 
     let mut completed = 0usize;
@@ -220,7 +218,7 @@ pub(crate) fn run_bayes(
             write_result(&result, out_path);
 
             let best = optimizer.best_trial();
-            pb.set_prefix(format!("{:.4}", best));
+            pb.set_prefix(format!("{best:.4}"));
             pb.println(format!(
                 "bayes '{}' trial {:3}/{} | {}={:.4} | best={:.4} | {}ms \
                  | k={:.3} lr={:.4} perp={:.4}",
@@ -241,7 +239,7 @@ pub(crate) fn run_bayes(
         remaining -= this_batch;
     }
 
-    pb.finish_with_message(format!("{} ({}) done", dataset_name, geometry));
+    pb.finish_with_message(format!("{dataset_name} ({geometry}) done"));
 
     if let Some(best) = optimizer.best_config() {
         pb.println(format!(
@@ -267,9 +265,9 @@ pub(crate) fn run_bayes(
         let stem = out_path
             .trim_end_matches(".jsonl")
             .trim_end_matches(".json");
-        let state_path = format!("{}_gp_{}_{}.json", stem, dataset_name, geometry);
+        let state_path = format!("{stem}_gp_{dataset_name}_{geometry}.json");
         write_gp_state(&state, &state_path);
-        pb.println(format!("GP state written to {}", state_path));
+        pb.println(format!("GP state written to {state_path}"));
     }
 }
 
@@ -277,9 +275,9 @@ fn write_gp_state(state: &GpState, path: &str) {
     match serde_json::to_string_pretty(state) {
         Ok(json) => {
             if let Err(e) = std::fs::write(path, json) {
-                eprintln!("Failed to write GP state to {}: {}", path, e);
+                eprintln!("Failed to write GP state to {path}: {e}");
             }
         }
-        Err(e) => eprintln!("Failed to serialise GP state: {}", e),
+        Err(e) => eprintln!("Failed to serialise GP state: {e}"),
     }
 }

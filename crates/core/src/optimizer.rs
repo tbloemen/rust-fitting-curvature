@@ -12,6 +12,7 @@ pub struct RiemannianSGDMomentum {
 }
 
 impl RiemannianSGDMomentum {
+    #[must_use]
     pub fn new(lr: f64, momentum: f64, n_points: usize, ambient_dim: usize) -> Self {
         let len = n_points * ambient_dim;
         Self {

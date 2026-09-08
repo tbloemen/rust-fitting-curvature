@@ -10,9 +10,9 @@
 //!
 //! Metrics group into:
 //! - **Local structure** — trustworthiness, continuity
-//! - **Class separation** — neighborhood_hit; plus the unbounded ratios
-//!   davies_bouldin_ratio, dunn_index, cluster_density_measure
-//! - **Distance preservation** — normalized_stress, shepard_goodness
+//! - **Class separation** — `neighborhood_hit`; plus the unbounded ratios
+//!   `davies_bouldin_ratio`, `dunn_index`, `cluster_density_measure`
+//! - **Distance preservation** — `normalized_stress`, `shepard_goodness`
 //!
 //! The spread diagnostics κ is gauged against — `r_max`, `r_rms`, `r_gyration`
 //! — are deliberately *not* here: see [`crate::spread`].

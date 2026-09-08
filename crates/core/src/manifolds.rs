@@ -1,6 +1,6 @@
 use crate::synthetic_data::Rng;
 
-/// A point stored as a flat Vec<f64> of length n_points * ambient_dim (row-major).
+/// A point stored as a flat Vec<f64> of length `n_points` * `ambient_dim` (row-major).
 /// This avoids nested allocations and is cache-friendly.
 pub type Points = Vec<f64>;
 
@@ -13,7 +13,7 @@ pub trait Manifold {
     /// Initialize `n_points` on the manifold. Returns flat row-major array.
     fn init_points(&self, n_points: usize, embed_dim: usize, init_scale: f64, seed: u64) -> Points;
 
-    /// Compute full pairwise distance matrix (n_points x n_points, row-major).
+    /// Compute full pairwise distance matrix (`n_points` x `n_points`, row-major).
     fn pairwise_distances(&self, points: &[f64], n_points: usize, ambient_dim: usize) -> Vec<f64>;
 
     /// Geodesic distance from each point to the manifold's natural origin.
@@ -147,6 +147,7 @@ pub struct Hyperboloid {
 }
 
 impl Hyperboloid {
+    #[must_use]
     pub fn new(curvature: f64) -> Self {
         assert!(curvature < 0.0, "Hyperboloid requires negative curvature");
         let radius = 1.0 / (-curvature).sqrt();
@@ -383,6 +384,7 @@ pub struct Sphere {
 }
 
 impl Sphere {
+    #[must_use]
     pub fn new(curvature: f64) -> Self {
         assert!(curvature > 0.0, "Sphere requires positive curvature");
         let radius = 1.0 / curvature.sqrt();
@@ -561,6 +563,7 @@ impl Manifold for Sphere {
 // Factory
 // ---------------------------------------------------------------------------
 
+#[must_use]
 pub fn create_manifold(curvature: f64) -> Box<dyn Manifold> {
     if curvature > 0.0 {
         Box::new(Sphere::new(curvature))

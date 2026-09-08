@@ -48,11 +48,10 @@ static PARAM_BOUNDS: LazyLock<Vec<ParamBoundsEntry>> = LazyLock::new(|| {
 
 /// Returns `(min, max, log_scale)` for a named parameter from `config/params.json`.
 pub fn param_bounds(name: &str) -> (f64, f64, bool) {
-    PARAM_BOUNDS
-        .iter()
-        .find(|b| b.name == name)
-        .map(|b| (b.min, b.max, b.log))
-        .unwrap_or_else(|| panic!("unknown param: {name}"))
+    PARAM_BOUNDS.iter().find(|b| b.name == name).map_or_else(
+        || panic!("unknown param: {name}"),
+        |b| (b.min, b.max, b.log),
+    )
 }
 
 // ─── ParamSpec ────────────────────────────────────────────────────────────────
@@ -134,14 +133,14 @@ impl ParamSpec {
 /// — both are hardcoded in `to_training_config`.
 ///
 /// Canonical field order (also the GP input vector order):
-///   learning_rate, perplexity_ratio, momentum_main, momentum_early,
-///   centering_weight, global_loss_weight, norm_loss_weight,
-///   early_exaggeration_factor, n_iterations, early_exaggeration_iterations,
-///   curvature_magnitude, init_scale, embed_dim
+///   `learning_rate`, `perplexity_ratio`, `momentum_main`, `momentum_early`,
+///   `centering_weight`, `global_loss_weight`, `norm_loss_weight`,
+///   `early_exaggeration_factor`, `n_iterations`, `early_exaggeration_iterations`,
+///   `curvature_magnitude`, `init_scale`, `embed_dim`
 #[derive(Debug, Clone)]
 pub struct TrialConfig {
     pub learning_rate: ParamSpec,
-    /// Fraction of n_points; converted to absolute perplexity in `to_training_config`.
+    /// Fraction of `n_points`; converted to absolute perplexity in `to_training_config`.
     pub perplexity_ratio: ParamSpec,
     pub momentum_main: ParamSpec,
     pub momentum_early: ParamSpec,
@@ -156,7 +155,7 @@ pub struct TrialConfig {
     pub init_scale: ParamSpec,
     pub embed_dim: ParamSpec,
     /// Which scaling loss the embedding uses. Not optimised — set per experiment
-    /// variant. Default `MeanDistance`; `Rms` pins R_max ≈ 1 (gauge-fixing).
+    /// variant. Default `MeanDistance`; `Rms` pins `R_max` ≈ 1 (gauge-fixing).
     pub scaling_loss_type: ScalingLossType,
 }
 
@@ -308,11 +307,11 @@ impl TrialConfig {
         Self::base()
     }
 
-    /// Gauge-fixed setup for κ = |K|·R²_max experiments.
+    /// Gauge-fixed setup for κ = |`K|·R²_max` experiments.
     ///
-    /// Pins R_max ≈ 1 via the RMS scaling loss with a fixed, strong weight so
-    /// the curvature_magnitude knob can be interpreted directly as the
-    /// dimensionless invariant κ = |K|·R²_max.  Useful for validating that
+    /// Pins `R_max` ≈ 1 via the RMS scaling loss with a fixed, strong weight so
+    /// the `curvature_magnitude` knob can be interpreted directly as the
+    /// dimensionless invariant κ = |`K|·R²_max`.  Useful for validating that
     /// post-hoc κ values measured in unanchored runs correspond to a
     /// controllable hyperparameter — i.e. that κ is a reproducible setting,
     /// not just a descriptive measurement.
@@ -324,7 +323,7 @@ impl TrialConfig {
         }
     }
 
-    /// Only centering_weight (MeanDistance scaling loss weight) is optimized.
+    /// Only `centering_weight` (`MeanDistance` scaling loss weight) is optimized.
     pub fn centering_only() -> Self {
         let (lo, hi, log_scale) = param_bounds("centering_weight");
         Self {
@@ -333,7 +332,7 @@ impl TrialConfig {
         }
     }
 
-    /// Only global_loss_weight is optimized.
+    /// Only `global_loss_weight` is optimized.
     pub fn global_only() -> Self {
         let (lo, hi, log_scale) = param_bounds("global_loss_weight");
         Self {
@@ -342,7 +341,7 @@ impl TrialConfig {
         }
     }
 
-    /// Only norm_loss_weight is optimized.
+    /// Only `norm_loss_weight` is optimized.
     pub fn norm_only() -> Self {
         let (lo, hi, log_scale) = param_bounds("norm_loss_weight");
         Self {
@@ -445,8 +444,8 @@ mod tests {
         let spec = curvature_spec();
         let mut rng = Rng::new(42);
         let samples: Vec<f64> = (0..200).map(|_| spec.sample(&mut rng)).collect();
-        let min = samples.iter().cloned().fold(f64::MAX, f64::min);
-        let max = samples.iter().cloned().fold(f64::MIN, f64::max);
+        let min = samples.iter().copied().fold(f64::MAX, f64::min);
+        let max = samples.iter().copied().fold(f64::MIN, f64::max);
         assert!(
             max / min > 100.0,
             "samples not varied enough: min={min:.4}, max={max:.4}, ratio={:.1}",

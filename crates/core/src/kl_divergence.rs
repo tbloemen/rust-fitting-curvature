@@ -7,6 +7,7 @@ use crate::manifolds::Manifold;
 /// (emphasizing large distances), making it sensitive to global structure.
 ///
 /// `result_ij = (1 + d²_ij) / Σ_{m≠n}(1 + d²_mn)`
+#[must_use]
 pub fn compute_global_similarities(distances: &[f64], n_points: usize) -> Vec<f64> {
     let mut kernel = vec![0.0; n_points * n_points];
     let mut total = 0.0;
@@ -27,7 +28,7 @@ pub fn compute_global_similarities(distances: &[f64], n_points: usize) -> Vec<f6
     kernel
 }
 
-/// Norm loss: H = (1/m) * Σ_i (||x_i||² - ||y_i||²)²
+/// Norm loss: H = (1/m) * `Σ_i` (||`x_i||²` - ||`y_i||²)²`
 ///
 /// Tries to match the squared Euclidean norm of each input point to its
 /// embedding. For tree-structured hyperbolic data this preserves the hierarchy
@@ -36,6 +37,7 @@ pub fn compute_global_similarities(distances: &[f64], n_points: usize) -> Vec<f6
 /// Returns `(loss, gradient_in_ambient_space)`. The gradient is in ambient
 /// coordinates; the caller must project it to the tangent space before adding
 /// it to the main gradient.
+#[must_use]
 pub fn norm_loss_gradient(
     input_data: &[f64],
     points: &[f64],
@@ -97,6 +99,7 @@ pub fn norm_loss_gradient(
 ///
 /// Returns `(loss, gradient_in_ambient_space)`. The gradient is in ambient
 /// coordinates; the caller must project it to the tangent space before use.
+#[must_use]
 pub fn depth_norm_loss_gradient(
     points: &[f64],
     target_norms: &[f64],
@@ -165,6 +168,7 @@ pub fn depth_norm_loss_gradient(
 }
 
 /// KL divergence loss: -sum(P * log(Q + eps)), excluding diagonal.
+#[must_use]
 pub fn kl_loss(q: &[f64], p: &[f64], n_points: usize) -> f64 {
     let eps = 1e-12;
     let mut loss = 0.0;
@@ -184,11 +188,11 @@ pub fn kl_loss(q: &[f64], p: &[f64], n_points: usize) -> f64 {
 /// Returns a tangent vector at each point (no further projection needed).
 ///
 /// The general formula is:
-///   grad_{y_i} C = 4 * sum_j (p_ij - q_ij) * w_ij * (-log_{y_i}(y_j))
+///   grad_{`y_i`} C = 4 * `sum_j` (`p_ij` - `q_ij`) * `w_ij` * (-log_{`y_i}(y_j)`)
 ///
-/// where w_ij = (1 + d_ij^2)^{-1} and log_{y_i}(y_j) is the Riemannian log map.
+/// where `w_ij` = (1 + d_ij^2)^{-1} and log_{`y_i}(y_j)` is the Riemannian log map.
 ///
-/// - Euclidean: -log_{y_i}(y_j) = y_i - y_j
+/// - Euclidean: -log_{`y_i}(y_j)` = `y_i` - `y_j`
 /// - Hyperboloid: uses Lorentzian log map
 /// - Sphere: uses spherical log map
 pub fn kl_gradient(
@@ -226,7 +230,7 @@ pub fn kl_gradient(
     }
 }
 
-/// Euclidean KL gradient: -log_{y_i}(y_j) = y_i - y_j.
+/// Euclidean KL gradient: -log_{`y_i}(y_j)` = `y_i` - `y_j`.
 ///
 /// `p`, `q` and `distances` are assumed symmetric (they are throughout t-SNE),
 /// so each unordered pair {i, j} is visited once and its contribution scattered
@@ -265,7 +269,7 @@ fn kl_gradient_euclidean(
 /// Hyperboloid KL gradient using the Lorentzian log map.
 ///
 /// For points x, y on the hyperboloid of radius r:
-///   -log_x(y) = -(acosh(alpha) / sqrt(alpha^2 - 1)) * (y - alpha * x)
+///   -`log_x(y)` = -(acosh(alpha) / sqrt(alpha^2 - 1)) * (y - alpha * x)
 /// where alpha = -<x, y>_L / r^2  and  <.,.>_L is the Lorentz inner product.
 fn kl_gradient_hyperboloid(
     radius: f64,
@@ -329,7 +333,7 @@ fn kl_gradient_hyperboloid(
 /// Sphere KL gradient using the spherical log map.
 ///
 /// For points x, y on the sphere of radius r:
-///   -log_x(y) = -(theta / sin(theta)) * (y - cos(theta) * x)
+///   -`log_x(y)` = -(theta / sin(theta)) * (y - cos(theta) * x)
 /// where cos(theta) = <x, y> / r^2.
 fn kl_gradient_sphere(
     radius: f64,

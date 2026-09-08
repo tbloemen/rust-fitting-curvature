@@ -45,7 +45,7 @@ pub struct EmbeddingRunner {
     /// Human-readable names for each integer label, indexed by label value.
     /// When set, the legend shows these names instead of "Label N".
     label_names: Option<Vec<String>>,
-    /// Current viewport: (center_x, center_y, half_extent). None = auto-fit.
+    /// Current viewport: (`center_x`, `center_y`, `half_extent`). None = auto-fit.
     view: Option<(f64, f64, f64)>,
     /// Auto-fit half-extent from the last render, used to anchor zoom interactions.
     auto_half: f64,
@@ -156,10 +156,10 @@ impl EmbeddingRunner {
         })
     }
 
-    /// Create a runner from a pre-computed pairwise distance matrix (e.g., WordNet tree distances).
+    /// Create a runner from a pre-computed pairwise distance matrix (e.g., `WordNet` tree distances).
     ///
-    /// `distances` is a flat n × n row-major Float64Array of pairwise distances.
-    /// `labels` is a Uint32Array of integer class labels of length n.
+    /// `distances` is a flat n × n row-major `Float64Array` of pairwise distances.
+    /// `labels` is a `Uint32Array` of integer class labels of length n.
     #[allow(clippy::too_many_arguments)]
     pub fn from_distances(
         canvas_id: &str,
@@ -214,7 +214,12 @@ impl EmbeddingRunner {
     /// ascending order (e.g. `"B cells\tCD4 T\tCD14 Monocytes"`).
     /// When set, the legend uses these names instead of "Label N".
     pub fn set_label_names(&mut self, names_tsv: &str) {
-        self.label_names = Some(names_tsv.split('\t').map(|s| s.to_string()).collect());
+        self.label_names = Some(
+            names_tsv
+                .split('\t')
+                .map(std::string::ToString::to_string)
+                .collect(),
+        );
     }
 
     /// Run N iterations and render the current state.
@@ -282,8 +287,9 @@ impl EmbeddingRunner {
         )
     }
 
-    /// Return the 2D projected coordinates of all points as a flat Float64Array [x0,y0,x1,y1,...].
+    /// Return the 2D projected coordinates of all points as a flat `Float64Array` [x0,y0,x1,y1,...].
     /// Coordinates are in the same plot space used by `render()`.
+    #[must_use]
     pub fn get_projected_coords(&self) -> Vec<f64> {
         visualisation::project_to_2d(
             &self.state.points,
@@ -295,8 +301,9 @@ impl EmbeddingRunner {
         .coords
     }
 
-    /// Current viewport state as [cx, cy, half, auto_half].
-    /// When no explicit viewport is set, cx=cy=0 and half=auto_half.
+    /// Current viewport state as [cx, cy, half, `auto_half`].
+    /// When no explicit viewport is set, cx=cy=0 and `half=auto_half`.
+    #[must_use]
     pub fn get_viewport(&self) -> Vec<f64> {
         let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
         vec![cx, cy, half, self.auto_half]
@@ -306,7 +313,7 @@ impl EmbeddingRunner {
     /// `factor > 1` zooms in, `factor < 1` zooms out.
     pub fn zoom_at(&mut self, norm_x: f64, norm_y: f64, factor: f64) {
         let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
-        let aspect = self.canvas.width() as f64 / self.canvas.height().max(1) as f64;
+        let aspect = f64::from(self.canvas.width()) / f64::from(self.canvas.height().max(1));
         let half_x = half * aspect;
         // Canvas coordinate → plot coordinate
         let plot_x = cx + (norm_x - 0.5) * 2.0 * half_x;
@@ -322,7 +329,7 @@ impl EmbeddingRunner {
     /// Pan the viewport by a normalized canvas delta.
     pub fn pan_by(&mut self, norm_dx: f64, norm_dy: f64) {
         let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
-        let aspect = self.canvas.width() as f64 / self.canvas.height().max(1) as f64;
+        let aspect = f64::from(self.canvas.width()) / f64::from(self.canvas.height().max(1));
         let half_x = half * aspect;
         let dx = -norm_dx * 2.0 * half_x;
         let dy = norm_dy * 2.0 * half; // y axis is flipped
@@ -335,21 +342,25 @@ impl EmbeddingRunner {
     }
 
     /// Get current iteration number.
+    #[must_use]
     pub fn iteration(&self) -> usize {
         self.state.iteration
     }
 
     /// Get current loss value.
+    #[must_use]
     pub fn loss(&self) -> f64 {
         self.state.loss
     }
 
     /// Whether training is complete.
+    #[must_use]
     pub fn is_done(&self) -> bool {
         self.state.is_done()
     }
 
     /// Total number of iterations configured.
+    #[must_use]
     pub fn total_iterations(&self) -> usize {
         self.state.config().n_iterations
     }
@@ -466,7 +477,7 @@ fn web_name(m: metrics::Metric) -> String {
     }
 }
 
-/// Return default TrainingConfig values as a JS object, so the frontend
+/// Return default `TrainingConfig` values as a JS object, so the frontend
 /// can populate its inputs from a single source of truth.
 #[wasm_bindgen]
 pub fn get_default_config() -> Result<JsValue, JsValue> {
