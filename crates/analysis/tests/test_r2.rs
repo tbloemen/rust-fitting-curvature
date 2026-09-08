@@ -8,9 +8,7 @@ use fitting_analysis::r2::{
     cell_summary, front_utilities, r2, recommendation, Weights, REGION_ALL,
 };
 use fitting_analysis::TrialRecord;
-use fitting_core::metrics::{
-    Direction, MetricValue, MetricValues, CONTINUITY, TRUSTWORTHINESS,
-};
+use fitting_core::metrics::{Direction, MetricValue, MetricValues, CONTINUITY, TRUSTWORTHINESS};
 
 /// A front point that scores *v* on every objective.
 fn flat(v: f64) -> [f64; N_OBJECTIVES] {

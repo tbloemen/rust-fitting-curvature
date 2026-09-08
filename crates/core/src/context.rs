@@ -15,8 +15,8 @@
 use std::cell::OnceCell;
 
 use crate::manifolds::create_manifold;
-use crate::metrics::Space;
 use crate::matrices::compute_euclidean_distance_matrix;
+use crate::metrics::Space;
 use crate::visualisation::{project_to_2d, SphericalProjection};
 
 /// Everything a metric or diagnostic may read about one embedding.

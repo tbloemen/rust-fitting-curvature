@@ -55,5 +55,5 @@ pub use quality::{
     NEIGHBORHOOD_HIT_MANIFOLD, NORMALIZED_STRESS, NORMALIZED_STRESS_MANIFOLD, OBJECTIVES,
     SHEPARD_GOODNESS, SHEPARD_GOODNESS_MANIFOLD, TRUSTWORTHINESS, TRUSTWORTHINESS_MANIFOLD,
 };
-pub use values::{MetricValue, MetricValues};
 pub(crate) use values::mean_of as values_mean_of;
+pub use values::{MetricValue, MetricValues};

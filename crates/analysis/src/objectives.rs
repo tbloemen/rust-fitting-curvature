@@ -137,7 +137,11 @@ pub fn oriented(metric: Metric, v: Option<f64>) -> f64 {
     if !x.is_finite() {
         return 0.0;
     }
-    let x = if is_minimized_metric(metric) { 1.0 - x } else { x };
+    let x = if is_minimized_metric(metric) {
+        1.0 - x
+    } else {
+        x
+    };
     // Every objective is bounded in [0, 1] by construction; clamp defensively.
     x.clamp(0.0, 1.0)
 }

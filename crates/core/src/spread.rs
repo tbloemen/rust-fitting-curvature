@@ -79,9 +79,8 @@ impl SpreadDiagnostics {
     #[must_use]
     pub fn mean(samples: &[SpreadDiagnostics]) -> SpreadDiagnostics {
         let n = samples.len() as f64;
-        let avg = |f: fn(&SpreadDiagnostics) -> MetricValue| {
-            values_mean_of(samples.iter().map(f), n)
-        };
+        let avg =
+            |f: fn(&SpreadDiagnostics) -> MetricValue| values_mean_of(samples.iter().map(f), n);
         Self {
             r_max: avg(|s| s.r_max),
             r_rms: avg(|s| s.r_rms),

@@ -517,12 +517,18 @@ fn test_with_projection_spherical_no_nan() {
         EmbeddingState::new(&data, 5, &cfg).with_projection(SphericalProjection::Stereographic);
     state.run(|_| true);
     let (m, _spread) = state.compute_metrics();
-    assert!(!m.get(TRUSTWORTHINESS).is_none(), "NaN in trustworthiness_2d");
+    assert!(
+        !m.get(TRUSTWORTHINESS).is_none(),
+        "NaN in trustworthiness_2d"
+    );
     assert!(
         !m.get(NORMALIZED_STRESS).is_none(),
         "NaN in normalized_stress_2d"
     );
-    assert!(!m.get(SHEPARD_GOODNESS).is_none(), "NaN in shepard_goodness_2d");
+    assert!(
+        !m.get(SHEPARD_GOODNESS).is_none(),
+        "NaN in shepard_goodness_2d"
+    );
 }
 
 #[test]
@@ -534,7 +540,10 @@ fn test_with_projection_hyperbolic_no_nan() {
         .with_projection(SphericalProjection::AzimuthalEquidistant);
     state.run(|_| true);
     let (m, _spread) = state.compute_metrics();
-    assert!(!m.get(TRUSTWORTHINESS).is_none(), "NaN in trustworthiness_2d");
+    assert!(
+        !m.get(TRUSTWORTHINESS).is_none(),
+        "NaN in trustworthiness_2d"
+    );
     assert!(
         !m.get(NORMALIZED_STRESS).is_none(),
         "NaN in normalized_stress_2d"

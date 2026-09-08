@@ -54,7 +54,13 @@ pub(crate) fn eval_single_metric(
     let values: Vec<f64> = (0..n_seeds)
         .filter_map(|si| {
             evaluator
-                .evaluate_with_metric(config, curvature, metric, trial_seed(trial_idx, si), pb_iters)
+                .evaluate_with_metric(
+                    config,
+                    curvature,
+                    metric,
+                    trial_seed(trial_idx, si),
+                    pb_iters,
+                )
                 .value()
         })
         .collect();
