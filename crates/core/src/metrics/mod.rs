@@ -16,9 +16,7 @@
 //! - **Distance preservation** — [`normalized_stress`], [`shepard_goodness`]
 //!
 //! The spread diagnostics κ is gauged against — `r_max`, `r_rms`, `r_gyration`
-//! — are deliberately *not* here: see [`crate::spread`]. [`gyration_radius`]
-//! is the one function that is, because it reads a distance matrix like the
-//! rest.
+//! — are deliberately *not* here: see [`crate::spread`].
 //!
 //! Most metrics have both a *projected* and a *manifold* reading. That
 //! distinction is carried entirely by which distance matrix is passed in,
@@ -29,7 +27,6 @@ mod cluster_density_measure;
 mod continuity;
 mod davies_bouldin_ratio;
 mod dunn_index;
-mod gyration_radius;
 mod helpers;
 mod neighborhood_hit;
 mod normalized_stress;
@@ -42,7 +39,6 @@ pub use cluster_density_measure::cluster_density_measure;
 pub use continuity::continuity;
 pub use davies_bouldin_ratio::{davies_bouldin, davies_bouldin_ratio, davies_bouldin_ratio_from};
 pub use dunn_index::dunn_index;
-pub use gyration_radius::gyration_radius;
 pub use helpers::euclidean_dist_2d;
 pub use neighborhood_hit::neighborhood_hit;
 pub use normalized_stress::normalized_stress;
