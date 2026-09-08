@@ -14,7 +14,7 @@ use fitting_core::metrics::{Direction, Family, Metric, Space, ALL, OBJECTIVES};
 /// from `ALL`, added to it, or moved within it changes the schema of every new
 /// results line — so that has to be a deliberate edit here, not a silent
 /// consequence of editing `ALL`.
-const EXPECTED: [&str; 13] = [
+const EXPECTED: [&str; 14] = [
     "trustworthiness",
     "trustworthiness_manifold",
     "continuity",
@@ -28,6 +28,7 @@ const EXPECTED: [&str; 13] = [
     "davies_bouldin_ratio",
     "dunn_index",
     "cluster_density_measure",
+    "distance_consistency",
 ];
 
 #[test]
@@ -155,7 +156,9 @@ fn the_spread_diagnostics_are_not_metrics() {
             "{d} is offered to --metric"
         );
     }
-    assert_eq!(ALL.len(), 13);
+    // The golden list above is the one place the count is stated; restating it
+    // here only made a metric addition fail in two tests instead of one.
+    assert_eq!(ALL.len(), EXPECTED.len());
     assert!(Metric::valid_names().contains("trustworthiness"));
 }
 
@@ -213,6 +216,7 @@ fn only_the_paired_metrics_report_a_twin() {
         "davies_bouldin_ratio",
         "dunn_index",
         "cluster_density_measure",
+        "distance_consistency",
     ] {
         assert!(
             !Metric::by_name(solo).unwrap().has_twin(),

@@ -208,6 +208,84 @@ fn test_neighborhood_hit_range() {
 }
 
 // ---------------------------------------------------------------------------
+// Distance consistency
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_distance_consistency_perfect_separation() {
+    let (pts, labels) = make_clustered_2d(3, 20, 0.3, 42);
+    let dsc = distance_consistency(&pts, &labels, pts.len() / 2);
+    assert!(
+        (dsc - 1.0).abs() < 1e-12,
+        "clusters 20 apart with spread 0.3 must all sit nearest their own centroid, got {dsc}"
+    );
+}
+
+#[test]
+fn test_distance_consistency_random_labels() {
+    // Random labels over one blob: the class centroids all land near the blob's
+    // centre, so membership is close to a coin toss between them.
+    let mut rng = Rng::new(42);
+    let n = 120;
+    let pts: Vec<f64> = (0..n * 2).map(|_| rng.normal()).collect();
+    let labels: Vec<u32> = (0..n).map(|i| (i % 3) as u32).collect();
+    let dsc = distance_consistency(&pts, &labels, n);
+    assert!(dsc < 0.6, "random labels should give low DSC, got {dsc}");
+}
+
+#[test]
+fn test_distance_consistency_range() {
+    let (pts, labels) = make_clustered_2d(2, 15, 1.0, 7);
+    let dsc = distance_consistency(&pts, &labels, pts.len() / 2);
+    assert!((0.0..=1.0).contains(&dsc), "DSC out of [0,1]: {dsc}");
+}
+
+#[test]
+fn test_distance_consistency_is_global_where_neighborhood_hit_is_local() {
+    // Two classes as concentric rings sharing a centre. Neither interleaves —
+    // every point's nearest neighbours are its own class, so NH is perfect —
+    // but the two centroids coincide, so the classes occupy the same region of
+    // the plane and DSC sees no separation. This is the case that motivates
+    // measuring both, and the non-convexity DSC is documented to mishandle.
+    let n_per = 60;
+    let n = n_per * 2;
+    let mut pts = vec![0.0f64; n * 2];
+    let mut labels = vec![0u32; n];
+    for i in 0..n_per {
+        let theta = std::f64::consts::TAU * i as f64 / n_per as f64;
+        for (ring, r) in [(0usize, 1.0f64), (1, 4.0)] {
+            let idx = ring * n_per + i;
+            pts[idx * 2] = r * theta.cos();
+            pts[idx * 2 + 1] = r * theta.sin();
+            labels[idx] = ring as u32;
+        }
+    }
+
+    let d = euclidean_dist_2d(&pts, n);
+    let nh = neighborhood_hit(&d, &labels, n, 5);
+    let dsc = distance_consistency(&pts, &labels, n);
+    assert!(
+        nh > 0.99,
+        "the rings do not interleave, so NH ≈ 1: got {nh}"
+    );
+    assert!(
+        dsc < 0.55,
+        "coincident centroids leave DSC near chance: got {dsc}"
+    );
+}
+
+#[test]
+fn test_distance_consistency_single_class_is_one() {
+    // The minimum over an empty set of rival centroids is infinite, so every
+    // point trivially qualifies — the same convention `neighborhood_hit` uses
+    // for a degenerate input.
+    let (pts, _) = make_clustered_2d(2, 10, 1.0, 3);
+    let n = pts.len() / 2;
+    let labels = vec![0u32; n];
+    assert_eq!(distance_consistency(&pts, &labels, n), 1.0);
+}
+
+// ---------------------------------------------------------------------------
 // Shepard goodness
 // ---------------------------------------------------------------------------
 
@@ -525,6 +603,7 @@ fn test_compute_without_labels_leaves_label_metrics_absent() {
         CLUSTER_DENSITY_MEASURE,
         DAVIES_BOULDIN_RATIO,
         DUNN_INDEX,
+        DISTANCE_CONSISTENCY,
     ] {
         assert_eq!(m.get(metric), None, "{} needs labels", metric.name());
     }
@@ -545,6 +624,7 @@ fn test_compute_with_labels_scores_the_label_metrics() {
         CLUSTER_DENSITY_MEASURE,
         DAVIES_BOULDIN_RATIO,
         DUNN_INDEX,
+        DISTANCE_CONSISTENCY,
     ] {
         assert!(m.get(metric).is_some(), "{} unscored", metric.name());
     }

@@ -121,7 +121,7 @@ pub use crate::cell::GEOMETRIES;
 /// panel per metric, in table order. A *diagnostic* table — no longer the
 /// objective list, which is [`OBJECTIVES`].
 pub use crate::objectives::METRIC_PAIRS;
-/// The five objectives and the three preference families, in region order;
+/// The six objectives and the three preference families, in region order;
 /// `r2_bars` labels its axes from these.
 pub use crate::objectives::{FAMILIES, OBJECTIVES};
 

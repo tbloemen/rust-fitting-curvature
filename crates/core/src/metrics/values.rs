@@ -95,10 +95,11 @@ impl MetricValues {
     ///
     /// **The divergence gate.** A metric whose distance matrix is not finite is
     /// reported [`MetricValue::Diverged`] without being run, because running it
-    /// produces a number that looks measured and is not: of the thirteen, only
-    /// the four that *sum* distances notice a NaN. The three that *compare* fall
+    /// produces a number that looks measured and is not: of the fourteen, only
+    /// the four that *sum* distances notice a NaN. The four that *compare* fall
     /// into their degenerate branches and report `0.0` (`f64::max` ignores NaN;
-    /// `if d > max_intra` is false for NaN), and the six that *rank* sort NaN to
+    /// `if d > max_intra` and `if d_own < nearest_rival` are both false for
+    /// NaN), and the six that *rank* sort NaN to
     /// a defined position via `total_cmp` and return a confident, plausible
     /// score — `trustworthiness` reads 0.93 on an embedding that blew up, and
     /// `pareto::metrics_to_vec` then hands the GP a 0.93.

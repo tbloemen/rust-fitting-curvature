@@ -963,6 +963,8 @@ function updateParetoPreview() {
     lines.push(`Shepard: ${m.shepard_goodness.toFixed(4)}`);
   if (m.neighborhood_hit != null)
     lines.push(`NH: ${m.neighborhood_hit.toFixed(4)}`);
+  if (m.distance_consistency != null)
+    lines.push(`DSC: ${m.distance_consistency.toFixed(4)}`);
   metricsPreview.innerHTML = lines.join(" &nbsp;|&nbsp; ");
   metricsPreview.style.display = lines.length > 0 ? "block" : "none";
 }

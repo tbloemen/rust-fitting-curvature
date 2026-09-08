@@ -252,7 +252,7 @@ pub fn run_pareto(
     pb.println(format!("Pareto front written to {front_path}"));
 }
 
-/// The objectives for --mode pareto: five metrics, all measured on the 2D
+/// The objectives for --mode pareto: six metrics, all measured on the 2D
 /// projection.
 ///
 /// The list itself is `fitting_core::metrics::OBJECTIVES`, which is also what
@@ -268,7 +268,13 @@ pub fn run_pareto(
 /// reads those columns and is what shows whether dropping them was justified.
 ///
 /// **Bounded in `[0, 1]` only.** Of the label-aware, projection-only metrics
-/// only `neighborhood_hit` qualifies. `dunn_index`, `davies_bouldin_ratio` and
+/// `neighborhood_hit` and `distance_consistency` qualify — the first is a
+/// fraction of neighbours, the second a fraction of points — and they are kept
+/// as a pair because one is local and one is global: neighbourhood hit asks
+/// only about a point's immediate neighbours, so it cannot separate cleanly
+/// separated classes from classes that merely fail to interleave, which is
+/// exactly what a comparison against every class centroid does see.
+/// `dunn_index`, `davies_bouldin_ratio` and
 /// `cluster_density_measure` are ratios, unbounded above, and measured over
 /// `results/` their upper tails reach 3.0e10, 2.9e11 and 2e24 respectively —
 /// the last mostly from collapsed clusters hitting the `1e-12` radius floor in

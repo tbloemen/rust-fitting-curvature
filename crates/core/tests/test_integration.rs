@@ -6,8 +6,9 @@ use fitting_core::embedding::EmbeddingState;
 use fitting_core::matrices::get_default_init_scale;
 use fitting_core::metrics::{
     CLUSTER_DENSITY_MEASURE, CONTINUITY, CONTINUITY_MANIFOLD, DAVIES_BOULDIN_RATIO,
-    NEIGHBORHOOD_HIT, NEIGHBORHOOD_HIT_MANIFOLD, NORMALIZED_STRESS, NORMALIZED_STRESS_MANIFOLD,
-    SHEPARD_GOODNESS, SHEPARD_GOODNESS_MANIFOLD, TRUSTWORTHINESS, TRUSTWORTHINESS_MANIFOLD,
+    DISTANCE_CONSISTENCY, NEIGHBORHOOD_HIT, NEIGHBORHOOD_HIT_MANIFOLD, NORMALIZED_STRESS,
+    NORMALIZED_STRESS_MANIFOLD, SHEPARD_GOODNESS, SHEPARD_GOODNESS_MANIFOLD, TRUSTWORTHINESS,
+    TRUSTWORTHINESS_MANIFOLD,
 };
 use fitting_core::synthetic_data::{load_synthetic, Rng};
 use fitting_core::visualisation::SphericalProjection;
@@ -487,6 +488,7 @@ fn test_compute_metrics_with_labels_gives_some() {
     assert!(m.get(NEIGHBORHOOD_HIT).is_some());
     assert!(m.get(CLUSTER_DENSITY_MEASURE).is_some());
     assert!(m.get(DAVIES_BOULDIN_RATIO).is_some());
+    assert!(m.get(DISTANCE_CONSISTENCY).is_some());
 }
 
 #[test]

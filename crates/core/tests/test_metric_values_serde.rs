@@ -106,7 +106,8 @@ fn flatten_puts_the_metrics_at_the_top_level_in_field_order() {
     assert!(
         json.starts_with(r#"{"dataset_name":"tree","learning_rate":0.5,"trustworthiness":0.0,"#)
     );
-    assert!(json.ends_with(r#""cluster_density_measure":12.0,"time_ms":7}"#));
+    assert!(json
+        .ends_with(r#""cluster_density_measure":12.0,"distance_consistency":13.0,"time_ms":7}"#));
     assert_eq!(serde_json::from_str::<Record>(&json).unwrap(), r);
 }
 
@@ -186,7 +187,7 @@ fn the_two_blocks_do_not_claim_each_others_columns() {
 
     // Key order: metrics, then spread, then time_ms — where the individual
     // Option<f64> columns sat before either block existed.
-    assert!(json.contains(r#""cluster_density_measure":12.0,"r_max":6.0,"r_rms":3.0,"r_gyration":2.0,"time_ms":7}"#), "{json}");
+    assert!(json.contains(r#""cluster_density_measure":12.0,"distance_consistency":13.0,"r_max":6.0,"r_rms":3.0,"r_gyration":2.0,"time_ms":7}"#), "{json}");
 
     let back: TrialLine = serde_json::from_str(&json).unwrap();
     assert_eq!(back, line);

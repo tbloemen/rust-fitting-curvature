@@ -30,7 +30,7 @@ pub(crate) struct Args {
     /// bayes:  Bayesian optimisation over all 7 hyperparameters (requires --metric).
     ///         Geometry sign is detected automatically unless --geometry is given.
     /// scan:   sweep each parameter individually from a base config (requires --metric).
-    /// pareto: qParEGO multi-objective optimisation over 5 objectives (no --metric needed).
+    /// pareto: qParEGO multi-objective optimisation over 6 objectives (no --metric needed).
     /// detect: run curvature detection on the data distances; one JSONL line per
     ///         dataset, carrying `κ_data` plus all three Wilson arms and the δ(k)
     ///         diagnostics. This is what `fitting-analysis`'s `exp1` reads.

@@ -13,7 +13,7 @@
 //!   and the max over `j` can only shrink. Reducing to the front first is exact.
 //! * Every preference region is a *subset* of one enumeration of the simplex, so
 //!   the per-weight-vector minimisation runs once and each region is a mean over
-//!   its own slice of the result. Eight regions cost barely more than one.
+//!   its own slice of the result. Ten regions cost barely more than one.
 //!
 //! Weight vectors are held as integer counts summing to [`Weights::s`], which
 //! keeps the region membership tests exact (`l/5` is not representable in
@@ -75,7 +75,7 @@ impl Weights {
     /// Enumerate the simplex at [`Self::DEFAULT_S`] and build every preference
     /// region.
     ///
-    /// For five objectives at `s = 5` this is `C(9, 4) = 126` vectors.
+    /// For six objectives at `s = 5` this is `C(10, 5) = 252` vectors.
     #[must_use]
     pub fn new() -> Self {
         Self::with_resolution(Self::DEFAULT_S)
@@ -150,9 +150,9 @@ fn fill(
 ///
 /// Both the family and the single-objective regions use the same "at least half
 /// the mass" rule, which at `s = 5` means an integer count of 3 or more. Over
-/// the 126 vectors of the 5-objective simplex that admits 45 for a
-/// two-objective family and 15 for a single objective — and so also 15 for
-/// `class_separation`, which currently holds one. `test_r2.rs` pins all of them.
+/// the 252 vectors of the 6-objective simplex that admits 66 for a
+/// two-objective family — which all three now are — and 21 for a single
+/// objective. `test_r2.rs` pins all of them.
 ///
 /// The families are *not* defined as "supported entirely on" their objectives,
 /// the way the old `manifold` / `projected` surface regions were. A family holds
@@ -319,7 +319,7 @@ pub struct CellSummary {
 /// The oriented objective values of one record, by objective name.
 ///
 /// Used by the recommendation table, which reports what a recommended
-/// configuration attains on all five objectives alongside its hyperparameters.
+/// configuration attains on all six objectives alongside its hyperparameters.
 #[must_use]
 pub fn oriented_objectives(record: &TrialRecord) -> BTreeMap<String, f64> {
     let row = crate::objectives::oriented_row(record);

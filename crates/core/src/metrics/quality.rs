@@ -18,6 +18,7 @@
 use super::cluster_density_measure::ClusterDensityMeasure;
 use super::continuity::{Continuity, ContinuityManifold};
 use super::davies_bouldin_ratio::DaviesBouldinRatio;
+use super::distance_consistency::DistanceConsistency;
 use super::dunn_index::DunnIndex;
 use super::neighborhood_hit::{NeighborhoodHit, NeighborhoodHitManifold};
 use super::normalized_stress::{NormalizedStress, NormalizedStressManifold};
@@ -176,6 +177,10 @@ pub const ALL: &[Metric] = &[
     Metric(&DaviesBouldinRatio),
     Metric(&DunnIndex),
     Metric(&ClusterDensityMeasure),
+    // Appended, not slotted beside `neighborhood_hit` where it belongs
+    // thematically: position here *is* JSONL column order, and inserting into
+    // the middle would reorder the keys of every metric after it.
+    Metric(&DistanceConsistency),
 ];
 
 /// Named handles, for the call sites that name a metric symbolically rather
@@ -195,6 +200,7 @@ pub const SHEPARD_GOODNESS_MANIFOLD: Metric = Metric(&ShepardGoodnessManifold);
 pub const DAVIES_BOULDIN_RATIO: Metric = Metric(&DaviesBouldinRatio);
 pub const DUNN_INDEX: Metric = Metric(&DunnIndex);
 pub const CLUSTER_DENSITY_MEASURE: Metric = Metric(&ClusterDensityMeasure);
+pub const DISTANCE_CONSISTENCY: Metric = Metric(&DistanceConsistency);
 
 /// The qParEGO objective set, **grouped by family**.
 ///
@@ -218,8 +224,9 @@ pub const OBJECTIVES: &[Metric] = &[
     // distance preservation
     NORMALIZED_STRESS,
     SHEPARD_GOODNESS,
-    // class separation
+    // class separation — the local reading and the global one
     NEIGHBORHOOD_HIT,
+    DISTANCE_CONSISTENCY,
 ];
 
 impl Metric {

@@ -22,7 +22,9 @@ use crate::records::TrialRecord;
 ///   they no longer steer the search.
 /// - *Bounded only.* [`oriented_value`] clamps to `[0, 1]` and the R2 ideal
 ///   point is pinned at `(1, …, 1)`, so an unbounded objective would be
-///   silently truncated rather than measured. That is why `dunn_index`,
+///   silently truncated rather than measured. `distance_consistency` qualifies
+///   — it is a fraction of points — which is why it joined the set rather than
+///   staying a reported-only diagnostic. That is why `dunn_index`,
 ///   `davies_bouldin_ratio` and `cluster_density_measure` are absent: all three
 ///   are ratios whose upper tails over `results/` reach 3.0e10, 2.9e11 and 2e24.
 ///   Admitting one would require estimated ideal/nadir bounds (Karl et al.,
@@ -62,13 +64,16 @@ pub const N_OBJECTIVES: usize = OBJECTIVES.len();
 /// resemblance to trustworthiness/continuity is that it is a k-NN statistic at
 /// the same `k`, which is a computational similarity, not a semantic one.
 ///
-/// **`class_separation` currently holds a single objective**, since
-/// `class_density_measure` was dropped, so its region is *identical* to the
-/// per-objective `neighborhood_hit` region — both admit exactly the vectors
-/// putting at least half the mass on that one axis. It is reported anyway, so
-/// the family row survives if a second bounded class-separation metric is added
-/// back. Tests that contrast a family against its members exempt it for that
-/// reason.
+/// Its partner is `distance_consistency`, which asks whether each point falls
+/// nearest to its own class centroid. The pairing is deliberate: neighbourhood
+/// hit is purely local and so cannot distinguish classes that are cleanly
+/// separated from classes that merely fail to interleave, while distance
+/// consistency compares against every class centroid and therefore reads
+/// separation across the visualisation as a whole. `class_separation` held only
+/// `neighborhood_hit` between the removal of `class_density_measure` and the
+/// addition of this one, over which its region was *identical* to the
+/// per-objective `neighborhood_hit` region; all three families now hold two
+/// objectives each.
 ///
 /// Membership is a **slice, not a fixed-size array**: the `[usize; 2]` this used
 /// to be silently outlived the objective set it indexed into, leaving
@@ -81,7 +86,7 @@ pub const N_OBJECTIVES: usize = OBJECTIVES.len();
 pub const FAMILIES: [(&str, &[usize]); 3] = [
     ("structure", &[0, 1]),
     ("distance", &[2, 3]),
-    ("class_separation", &[4]),
+    ("class_separation", &[4, 5]),
 ];
 
 /// The metrics that have both a projected and a manifold reading, as

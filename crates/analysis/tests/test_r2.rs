@@ -15,6 +15,43 @@ fn flat(v: f64) -> [f64; N_OBJECTIVES] {
     [v; N_OBJECTIVES]
 }
 
+/// A front point whose objectives all differ, so a test cannot pass by symmetry.
+///
+/// Derived from the arity rather than written out: a literal row is one more
+/// place the objective set has to be edited when it grows, and the compiler
+/// reports it as a size mismatch a long way from the reason.
+fn ramp(base: f64) -> [f64; N_OBJECTIVES] {
+    std::array::from_fn(|j| base + 0.03 * (j % 4) as f64)
+}
+
+/// `n` choose `k`, exactly, for the region combinatorics below.
+fn binom(n: usize, k: usize) -> usize {
+    if k > n {
+        return 0;
+    }
+    (0..k.min(n - k)).fold(1, |acc, i| acc * (n - i) / (i + 1))
+}
+
+/// Count vectors of `k` non-negative integers summing to `s`: `C(s + k - 1, k - 1)`.
+fn compositions(s: usize, k: usize) -> usize {
+    if k == 0 {
+        return usize::from(s == 0);
+    }
+    binom(s + k - 1, k - 1)
+}
+
+/// Size of the "at least half the mass on `m` of the `N_OBJECTIVES` axes" region.
+///
+/// Split on `t`, the mass the region's own axes carry: the members take one of
+/// `compositions(t, m)` arrangements and the rest take one of
+/// `compositions(s - t, N_OBJECTIVES - m)`.
+fn region_size(m: usize, s: usize) -> usize {
+    let half = s.div_ceil(2);
+    (half..=s)
+        .map(|t| compositions(t, m) * compositions(s - t, N_OBJECTIVES - m))
+        .sum()
+}
+
 /// R2 of a front under a named region.
 fn score(front: &[[f64; N_OBJECTIVES]], w: &Weights, region: &str) -> f64 {
     let u = front_utilities(front, &w.vectors);
@@ -26,9 +63,9 @@ fn score(front: &[[f64; N_OBJECTIVES]], w: &Weights, region: &str) -> f64 {
 #[test]
 fn simplex_has_the_expected_size_and_every_vector_sums_to_one() {
     let w = Weights::new();
-    // C(s + k - 1, k - 1) = C(9, 4) = 126 for k = 5, s = 5.
+    // C(s + k - 1, k - 1): the number of ways to split s units over k axes.
     assert_eq!(w.s, Weights::DEFAULT_S);
-    assert_eq!(w.vectors.len(), 126);
+    assert_eq!(w.vectors.len(), compositions(w.s, N_OBJECTIVES));
     assert_eq!(w.counts.len(), w.vectors.len());
 
     for (counts, lambda) in w.counts.iter().zip(&w.vectors) {
@@ -42,9 +79,10 @@ fn simplex_has_the_expected_size_and_every_vector_sums_to_one() {
 #[test]
 fn resolution_flows_through_the_enumeration_and_the_regions() {
     let w = Weights::with_resolution(2);
-    // C(2 + 4, 4) = 15, and "at least half the mass" is now a count of 1.
+    // Two units instead of five, so "at least half the mass" is now a count of 1.
     assert_eq!(w.s, 2);
-    assert_eq!(w.vectors.len(), 15);
+    assert_eq!(w.vectors.len(), compositions(2, N_OBJECTIVES));
+    assert_ne!(w.vectors.len(), Weights::new().vectors.len());
     for counts in &w.counts {
         let total: u32 = counts.iter().map(|&c| u32::from(c)).sum();
         assert_eq!(total, 2, "counts {counts:?} must sum to s");
@@ -107,32 +145,34 @@ fn every_objective_resolves_on_a_record() {
 fn region_sizes_match_the_combinatorics() {
     let w = Weights::new();
 
-    assert_eq!(w.region(REGION_ALL).unwrap().indices.len(), 126);
+    assert_eq!(w.region(REGION_ALL).unwrap().indices.len(), w.vectors.len());
 
-    // At least 3 of 5 units on the family's own objectives, the remaining
-    // objectives taking the rest. For a two-objective family out of five:
-    //   t=3: 4·C(4,2)=24, t=4: 5·C(3,2)=15, t=5: 6·C(2,2)=6  ⇒ 45.
-    // A one-objective family is the single-objective count below, 15 — which
-    // is exactly why `class_separation` currently duplicates the
-    // `neighborhood_hit` region.
+    // At least half the mass on the family's own objectives, the remaining
+    // objectives taking the rest — `region_size` is that split, summed over how
+    // much mass the family carries. A family and a single objective use the
+    // same rule, so a one-member family scores exactly the region of its lone
+    // objective; that is what `class_separation` did while `neighborhood_hit`
+    // was its only member.
     for (family, members) in FAMILIES {
-        let want = if members.len() == 2 { 45 } else { 15 };
         assert_eq!(
             w.region(family).unwrap().indices.len(),
-            want,
+            region_size(members.len(), w.s),
             "region {family}"
         );
     }
 
-    // At least 3 of 5 units on one objective, the other four taking the rest:
-    //   l=3: C(5,3)=10, l=4: C(4,3)=4, l=5: 1  ⇒ 15.
     for objective in OBJECTIVES {
         assert_eq!(
             w.region(objective.name()).unwrap().indices.len(),
-            15,
+            region_size(1, w.s),
             "region {objective}"
         );
     }
+
+    // The rule has to actually be selective: a region that admitted everything,
+    // or nothing, would satisfy the equalities above just as well.
+    assert!(region_size(1, w.s) > 0);
+    assert!(region_size(FAMILIES[0].1.len(), w.s) < w.vectors.len());
 }
 
 #[test]
@@ -214,8 +254,8 @@ fn the_ideal_point_scores_zero_and_the_nadir_scores_worst() {
 fn the_indicator_is_weakly_pareto_compliant() {
     // The property ΔR2 > 0 rests on: a dominating front can never score worse.
     let w = Weights::new();
-    let worse = [0.3, 0.4, 0.5, 0.2, 0.6];
-    let better = [0.4, 0.5, 0.5, 0.3, 0.8];
+    let worse = ramp(0.3);
+    let better = worse.map(|v| v + 0.1);
     for region in &w.regions {
         let (region, b, a) = (
             region.name.as_str(),

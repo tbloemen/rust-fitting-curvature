@@ -171,6 +171,7 @@ pub(crate) fn eval_or_reuse_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics::Direction;
     use crate::pareto::default_pareto_metrics;
 
     /// Every objective the optimizer searches must survive a round trip
@@ -241,23 +242,32 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
 
         assert_eq!(prior.len(), 1, "a pre-registry line must still load");
-        // shepard_goodness is maximised, so its `null` replays as the 0.0
-        // worst-case substitute — the same thing the old code did.
-        let by_name: Vec<(&str, f64)> = metrics
-            .iter()
-            .map(|m| m.name())
-            .zip(prior[0].metric_vec.iter().copied())
-            .collect();
-        assert_eq!(
-            by_name,
-            vec![
-                ("trustworthiness", 0.9),
-                ("continuity", 0.8),
-                ("normalized_stress", 0.3),
-                ("shepard_goodness", 0.0),
-                ("neighborhood_hit", 0.7),
-            ]
-        );
+        // The columns the line actually carries a number for. Everything else —
+        // `shepard_goodness`, explicitly `null` from a diverged trial, and any
+        // objective added after these files were written — replays as the
+        // metric's worst-case substitute, which is what keeps a partial line
+        // from scoring well. Listed by name rather than positionally, so a new
+        // objective does not have to be added here to keep the test honest.
+        let carried = [
+            ("trustworthiness", 0.9),
+            ("continuity", 0.8),
+            ("normalized_stress", 0.3),
+            ("neighborhood_hit", 0.7),
+        ];
+        assert_eq!(prior[0].metric_vec.len(), metrics.len());
+        for (metric, got) in metrics.iter().zip(prior[0].metric_vec.iter().copied()) {
+            let want = carried
+                .iter()
+                .find(|(name, _)| *name == metric.name())
+                .map_or(
+                    match metric.direction() {
+                        Direction::Maximize => 0.0,
+                        Direction::Minimize => 1.0,
+                    },
+                    |&(_, v)| v,
+                );
+            assert_eq!(got, want, "{} replayed as {got}", metric.name());
+        }
         assert_eq!(prior[0].r_max, 1.0);
     }
 }
