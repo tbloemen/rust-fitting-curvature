@@ -3,12 +3,6 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use crate::metrics::MetricValues;
-use fitting_core::metrics::{
-    CLUSTER_DENSITY_MEASURE, CONTINUITY, CONTINUITY_MANIFOLD, DAVIES_BOULDIN_RATIO, DUNN_INDEX,
-    NEIGHBORHOOD_HIT, NEIGHBORHOOD_HIT_MANIFOLD, NORMALIZED_STRESS, NORMALIZED_STRESS_MANIFOLD,
-    R_GYRATION, R_MAX, R_RMS, SHEPARD_GOODNESS, SHEPARD_GOODNESS_MANIFOLD, TRUSTWORTHINESS,
-    TRUSTWORTHINESS_MANIFOLD,
-};
 use crate::search_space::TrialConfig;
 
 #[derive(Debug, Serialize)]
@@ -31,22 +25,12 @@ pub(crate) struct TrialResult {
     pub(crate) norm_loss_weight: f64,
     pub(crate) early_exaggeration_factor: f64,
 
-    pub(crate) trustworthiness: Option<f64>,
-    pub(crate) trustworthiness_manifold: Option<f64>,
-    pub(crate) continuity: Option<f64>,
-    pub(crate) continuity_manifold: Option<f64>,
-    pub(crate) neighborhood_hit: Option<f64>,
-    pub(crate) neighborhood_hit_manifold: Option<f64>,
-    pub(crate) normalized_stress: Option<f64>,
-    pub(crate) normalized_stress_manifold: Option<f64>,
-    pub(crate) shepard_goodness: Option<f64>,
-    pub(crate) shepard_goodness_manifold: Option<f64>,
-    pub(crate) davies_bouldin_ratio: Option<f64>,
-    pub(crate) dunn_index: Option<f64>,
-    pub(crate) cluster_density_measure: Option<f64>,
-    pub(crate) r_max: Option<f64>,
-    pub(crate) r_rms: Option<f64>,
-    pub(crate) r_gyration: Option<f64>,
+    /// Every metric, flattened to the top level so each is its own JSONL
+    /// column — the same schema the sixteen `Option<f64>` fields here used to
+    /// produce, and the same key order, since `MetricValues` serialises in
+    /// `metrics::ALL` order and that order is this struct's old field order.
+    #[serde(flatten)]
+    pub(crate) metrics: MetricValues,
 
     pub(crate) time_ms: u64,
 
@@ -77,44 +61,14 @@ impl TrialResult {
             global_loss_weight: config.global_loss_weight.value(),
             norm_loss_weight: config.norm_loss_weight.value(),
             early_exaggeration_factor: config.early_exaggeration_factor.value(),
-            trustworthiness: None,
-            trustworthiness_manifold: None,
-            continuity: None,
-            continuity_manifold: None,
-            neighborhood_hit: None,
-            neighborhood_hit_manifold: None,
-            normalized_stress: None,
-            normalized_stress_manifold: None,
-            shepard_goodness: None,
-            shepard_goodness_manifold: None,
-            davies_bouldin_ratio: None,
-            dunn_index: None,
-            cluster_density_measure: None,
-            r_max: None,
-            r_rms: None,
-            r_gyration: None,
+            metrics: MetricValues::MISSING,
             time_ms,
             scan_param: None,
         }
     }
 
     pub(crate) fn with_all_metrics(mut self, m: &MetricValues) -> Self {
-        self.trustworthiness = m.get(TRUSTWORTHINESS);
-        self.trustworthiness_manifold = m.get(TRUSTWORTHINESS_MANIFOLD);
-        self.continuity = m.get(CONTINUITY);
-        self.continuity_manifold = m.get(CONTINUITY_MANIFOLD);
-        self.neighborhood_hit = m.get(NEIGHBORHOOD_HIT);
-        self.neighborhood_hit_manifold = m.get(NEIGHBORHOOD_HIT_MANIFOLD);
-        self.normalized_stress = m.get(NORMALIZED_STRESS);
-        self.normalized_stress_manifold = m.get(NORMALIZED_STRESS_MANIFOLD);
-        self.shepard_goodness = m.get(SHEPARD_GOODNESS);
-        self.shepard_goodness_manifold = m.get(SHEPARD_GOODNESS_MANIFOLD);
-        self.davies_bouldin_ratio = m.get(DAVIES_BOULDIN_RATIO);
-        self.dunn_index = m.get(DUNN_INDEX);
-        self.cluster_density_measure = m.get(CLUSTER_DENSITY_MEASURE);
-        self.r_max = m.get(R_MAX);
-        self.r_rms = m.get(R_RMS);
-        self.r_gyration = m.get(R_GYRATION);
+        self.metrics = *m;
         self
     }
 }
@@ -127,4 +81,55 @@ pub(crate) fn write_result(result: &TrialResult, out_path: &str) {
         .unwrap();
     let json = serde_json::to_string(result).unwrap();
     writeln!(file, "{}", json).ok();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::parse_experiment;
+
+    fn unscored() -> TrialResult {
+        let mut rng = fitting_core::synthetic_data::Rng::new(1);
+        let config = parse_experiment("all_free").sample(&mut rng);
+        TrialResult::new(&config, "tree", 100, 1, 0.0, 5)
+    }
+
+    /// A result that was never scored must still carry the whole metric block,
+    /// every column `null`.
+    ///
+    /// `--mode scan` builds results this way — it calls `TrialResult::new` and
+    /// never `with_all_metrics` — so this is that path's on-disk shape. It is a
+    /// test rather than a run of the binary because `--mode scan` panics before
+    /// it writes anything, for reasons that predate this work
+    /// (`ParamSpec::value()` on an `Optimize` spec, `search_space.rs:106`).
+    #[test]
+    fn an_unscored_result_writes_the_metric_block_as_nulls() {
+        let json = serde_json::to_value(unscored()).unwrap();
+        let obj = json.as_object().unwrap();
+        for m in crate::metrics::ALL_METRICS {
+            assert_eq!(
+                obj.get(m.name()),
+                Some(&serde_json::Value::Null),
+                "{} is missing or not null",
+                m.name()
+            );
+        }
+    }
+
+    /// The metric block sits between the hyperparameters and `time_ms`, which
+    /// is where the individual `Option<f64>` columns used to be. Key order is
+    /// what makes a byte-diff against a pre-refactor results file meaningful.
+    #[test]
+    fn the_metric_block_keeps_its_position_in_the_line() {
+        let json = serde_json::to_string(&unscored().with_all_metrics(&MetricValues::MISSING))
+            .unwrap();
+        let keys: Vec<&str> = json
+            .trim_matches(|c| c == '{' || c == '}')
+            .split(',')
+            .map(|kv| kv.split(':').next().unwrap().trim_matches('"'))
+            .collect();
+        let first = keys.iter().position(|k| *k == "trustworthiness").unwrap();
+        assert_eq!(keys[first - 1], "early_exaggeration_factor");
+        assert_eq!(keys[first + crate::metrics::ALL_METRICS.len()], "time_ms");
+    }
 }

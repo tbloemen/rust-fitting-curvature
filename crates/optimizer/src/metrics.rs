@@ -8,3 +8,6 @@
 //! `fitting_core::metrics`, which `crates/web` and `crates/analysis` read too.
 
 pub use fitting_core::metrics::{Direction, Metric, MetricValues, OBJECTIVES};
+
+#[cfg(test)]
+pub use fitting_core::metrics::ALL as ALL_METRICS;
