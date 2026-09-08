@@ -353,6 +353,8 @@ name = "fitting-core"
 version = "0.1.0"
 dependencies = [
  "plotters",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
