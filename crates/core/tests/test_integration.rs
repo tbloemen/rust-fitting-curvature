@@ -504,8 +504,8 @@ fn test_compute_metrics_values_in_range() {
     assert!(measured(&m, NORMALIZED_STRESS) >= 0.0);
     assert!((0.0..=1.0).contains(&measured(&m, SHEPARD_GOODNESS_MANIFOLD)));
     assert!((0.0..=1.0).contains(&measured(&m, SHEPARD_GOODNESS)));
-    assert!(!m.get(TRUSTWORTHINESS_MANIFOLD).is_none());
-    assert!(!m.get(TRUSTWORTHINESS).is_none());
+    assert!(m.get(TRUSTWORTHINESS_MANIFOLD).is_some());
+    assert!(m.get(TRUSTWORTHINESS).is_some());
 }
 
 #[test]
@@ -518,15 +518,15 @@ fn test_with_projection_spherical_no_nan() {
     state.run(|_| true);
     let (m, _spread) = state.compute_metrics();
     assert!(
-        !m.get(TRUSTWORTHINESS).is_none(),
+        m.get(TRUSTWORTHINESS).is_some(),
         "NaN in trustworthiness_2d"
     );
     assert!(
-        !m.get(NORMALIZED_STRESS).is_none(),
+        m.get(NORMALIZED_STRESS).is_some(),
         "NaN in normalized_stress_2d"
     );
     assert!(
-        !m.get(SHEPARD_GOODNESS).is_none(),
+        m.get(SHEPARD_GOODNESS).is_some(),
         "NaN in shepard_goodness_2d"
     );
 }
@@ -541,11 +541,11 @@ fn test_with_projection_hyperbolic_no_nan() {
     state.run(|_| true);
     let (m, _spread) = state.compute_metrics();
     assert!(
-        !m.get(TRUSTWORTHINESS).is_none(),
+        m.get(TRUSTWORTHINESS).is_some(),
         "NaN in trustworthiness_2d"
     );
     assert!(
-        !m.get(NORMALIZED_STRESS).is_none(),
+        m.get(NORMALIZED_STRESS).is_some(),
         "NaN in normalized_stress_2d"
     );
 }
@@ -623,8 +623,8 @@ fn test_compute_metrics_from_distances() {
     let mut state = EmbeddingState::from_distances(&dist, n, &cfg);
     state.run(|_| true);
     let (m, _spread) = state.compute_metrics();
-    assert!(!m.get(TRUSTWORTHINESS_MANIFOLD).is_none());
-    assert!(!m.get(TRUSTWORTHINESS).is_none());
+    assert!(m.get(TRUSTWORTHINESS_MANIFOLD).is_some());
+    assert!(m.get(TRUSTWORTHINESS).is_some());
 }
 
 /// Regression: the hyperbolic feature norm loss must target the *bounded* input

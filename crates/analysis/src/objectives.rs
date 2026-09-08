@@ -113,6 +113,7 @@ pub const N_METRIC_PAIRS: usize = 5;
 /// Was a `MINIMIZE: [&str; 1]` constant listing `normalized_stress`; the
 /// registry states each metric's own orientation, and
 /// `only_normalized_stress_is_minimized` pins that this is still the only one.
+#[must_use]
 pub fn is_minimized_metric(metric: Metric) -> bool {
     metric.direction() == Direction::Minimize
 }
@@ -132,6 +133,7 @@ pub fn is_minimized(name: &str) -> bool {
 /// A reading with no number — a diverged trial, an unwritten column — is the
 /// worst case (0.0), matching the optimizer's `metrics_to_vec` substitution so
 /// such a trial scores badly rather than being dropped silently.
+#[must_use]
 pub fn oriented(metric: Metric, v: Option<f64>) -> f64 {
     let Some(x) = v else { return 0.0 };
     if !x.is_finite() {
@@ -147,6 +149,7 @@ pub fn oriented(metric: Metric, v: Option<f64>) -> f64 {
 }
 
 /// [`oriented`] by name, for callers that start from a string.
+#[must_use]
 pub fn oriented_value(name: &str, v: Option<f64>) -> f64 {
     match Metric::by_name(name) {
         Some(metric) => oriented(metric, v),
