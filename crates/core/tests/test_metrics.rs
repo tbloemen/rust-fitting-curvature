@@ -3,6 +3,7 @@
 
 use fitting_core::metrics::*;
 use fitting_core::synthetic_data::Rng;
+use fitting_core::visualisation::SphericalProjection;
 
 // ---------------------------------------------------------------------------
 // Helpers shared by multiple tests
@@ -477,80 +478,141 @@ fn test_davies_bouldin_separated() {
 }
 
 // ---------------------------------------------------------------------------
-// compute_snapshot
+// MetricValues::compute
 // ---------------------------------------------------------------------------
 
-#[test]
-fn test_compute_snapshot_without_labels_gives_none() {
-    let (pts_2d, _) = make_clustered_2d(2, 12, 1.0, 42);
+/// A flat context over 2-D points, which is what these tests need: at
+/// curvature 0 the "manifold" is the plane itself, so the manifold and
+/// projected readings are the same geometry and any difference between them is
+/// the projection's rescaling rather than curvature.
+fn flat_context<'a>(
+    high_dim_dist: &'a [f64],
+    pts_2d: &'a [f64],
+    labels: Option<&'a [u32]>,
+    k: usize,
+) -> MetricContext<'a> {
     let n = pts_2d.len() / 2;
-    let d = make_distance_matrix(n, 42);
-    let snap = compute_snapshot(&d, &d, &pts_2d, None, n, 5);
-    assert!(snap.neighborhood_hit_manifold.is_none());
-    assert!(snap.neighborhood_hit_2d.is_none());
-    assert!(snap.cluster_density_measure.is_none());
-    assert!(snap.davies_bouldin_ratio.is_none());
+    MetricContext::new(
+        high_dim_dist,
+        pts_2d,
+        labels,
+        n,
+        2,
+        0.0,
+        k,
+        SphericalProjection::AzimuthalEquidistant,
+    )
 }
 
 #[test]
-fn test_compute_snapshot_with_labels_gives_some() {
+fn test_compute_without_labels_leaves_label_metrics_absent() {
+    let (pts_2d, _) = make_clustered_2d(2, 12, 1.0, 42);
+    let d = make_distance_matrix(pts_2d.len() / 2, 42);
+    let m = MetricValues::compute(&flat_context(&d, &pts_2d, None, 5));
+
+    for metric in [
+        NEIGHBORHOOD_HIT,
+        NEIGHBORHOOD_HIT_MANIFOLD,
+        CLUSTER_DENSITY_MEASURE,
+        DAVIES_BOULDIN_RATIO,
+        DUNN_INDEX,
+    ] {
+        assert_eq!(m.get(metric), None, "{} needs labels", metric.name());
+    }
+    // The label-free metrics are unaffected.
+    assert!(m.get(TRUSTWORTHINESS).is_some());
+    assert!(m.get(NORMALIZED_STRESS).is_some());
+}
+
+#[test]
+fn test_compute_with_labels_scores_the_label_metrics() {
     let (pts_2d, labels) = make_clustered_2d(3, 10, 0.5, 42);
+    let d = euclidean_dist_2d(&pts_2d, pts_2d.len() / 2);
+    let m = MetricValues::compute(&flat_context(&d, &pts_2d, Some(&labels), 7));
+
+    for metric in [
+        NEIGHBORHOOD_HIT,
+        NEIGHBORHOOD_HIT_MANIFOLD,
+        CLUSTER_DENSITY_MEASURE,
+        DAVIES_BOULDIN_RATIO,
+        DUNN_INDEX,
+    ] {
+        assert!(m.get(metric).is_some(), "{} unscored", metric.name());
+    }
+}
+
+#[test]
+fn test_compute_perfect_embedding_scores() {
+    // High-dimensional distances *are* the embedding's own distances, so the
+    // manifold reading is a self-comparison and every metric must be at its
+    // best: 1.0 for the maximised ones, 0 for stress.
+    let (pts_2d, _) = make_clustered_2d(4, 8, 1.0, 42);
     let n = pts_2d.len() / 2;
     let d = euclidean_dist_2d(&pts_2d, n);
-    let snap = compute_snapshot(&d, &d, &pts_2d, Some(&labels), n, 7);
-    assert!(snap.neighborhood_hit_manifold.is_some());
-    assert!(snap.neighborhood_hit_2d.is_some());
-    assert!(snap.cluster_density_measure.is_some());
-    assert!(snap.davies_bouldin_ratio.is_some());
-}
+    let m = MetricValues::compute(&flat_context(&d, &pts_2d, None, 5));
 
-#[test]
-fn test_compute_snapshot_perfect_embedding_scores() {
-    // When embed_dist == high_dim_dist: trustworthiness/continuity
-    // should all be 1.0 and normalized_stress/shepard_goodness should be 0/1.
-    let n = 20;
-    let d = make_distance_matrix(n, 42);
-    let pts_2d = vec![0.0f64; n * 2]; // dummy 2D coords for the 2D half
-    let snap = compute_snapshot(&d, &d, &pts_2d, None, n, 5);
     assert!(
-        (snap.trustworthiness_manifold - 1.0).abs() < 1e-10,
-        "trustworthiness_manifold should be 1.0, got {}",
-        snap.trustworthiness_manifold
+        (m[TRUSTWORTHINESS_MANIFOLD] - 1.0).abs() < 1e-10,
+        "trustworthiness_manifold {}",
+        m[TRUSTWORTHINESS_MANIFOLD]
     );
     assert!(
-        (snap.continuity_manifold - 1.0).abs() < 1e-10,
-        "continuity_manifold should be 1.0, got {}",
-        snap.continuity_manifold
+        (m[CONTINUITY_MANIFOLD] - 1.0).abs() < 1e-10,
+        "continuity_manifold {}",
+        m[CONTINUITY_MANIFOLD]
     );
     assert!(
-        snap.normalized_stress_manifold.abs() < 1e-10,
-        "normalized_stress_manifold should be 0, got {}",
-        snap.normalized_stress_manifold
+        m[NORMALIZED_STRESS_MANIFOLD].abs() < 1e-10,
+        "normalized_stress_manifold {}",
+        m[NORMALIZED_STRESS_MANIFOLD]
     );
     assert!(
-        (snap.shepard_goodness_manifold - 1.0).abs() < 1e-10,
-        "shepard_goodness_manifold should be 1.0, got {}",
-        snap.shepard_goodness_manifold
+        (m[SHEPARD_GOODNESS_MANIFOLD] - 1.0).abs() < 1e-10,
+        "shepard_goodness_manifold {}",
+        m[SHEPARD_GOODNESS_MANIFOLD]
     );
 }
 
 #[test]
-fn test_compute_snapshot_all_values_in_range() {
+fn test_compute_all_values_in_range() {
     let (pts_2d, labels) = make_clustered_2d(3, 10, 0.5, 99);
-    let n = pts_2d.len() / 2;
-    let d_high = make_distance_matrix(n, 1);
-    let d_embed = euclidean_dist_2d(&pts_2d, n);
-    let snap = compute_snapshot(&d_high, &d_embed, &pts_2d, Some(&labels), n, 5);
-    assert!((0.0..=1.0).contains(&snap.trustworthiness_manifold));
-    assert!((0.0..=1.0).contains(&snap.trustworthiness_2d));
-    assert!((0.0..=1.0).contains(&snap.continuity_manifold));
-    assert!((0.0..=1.0).contains(&snap.continuity_2d));
-    assert!(snap.normalized_stress_manifold >= 0.0);
-    assert!(snap.normalized_stress_2d >= 0.0);
-    assert!((0.0..=1.0).contains(&snap.shepard_goodness_manifold));
-    assert!((0.0..=1.0).contains(&snap.shepard_goodness_2d));
-    assert!((0.0..=1.0).contains(&snap.neighborhood_hit_manifold.unwrap()));
-    assert!((0.0..=1.0).contains(&snap.neighborhood_hit_2d.unwrap()));
+    let d_high = make_distance_matrix(pts_2d.len() / 2, 1);
+    let m = MetricValues::compute(&flat_context(&d_high, &pts_2d, Some(&labels), 5));
+
+    for metric in [
+        TRUSTWORTHINESS,
+        TRUSTWORTHINESS_MANIFOLD,
+        CONTINUITY,
+        CONTINUITY_MANIFOLD,
+        SHEPARD_GOODNESS,
+        SHEPARD_GOODNESS_MANIFOLD,
+        NEIGHBORHOOD_HIT,
+        NEIGHBORHOOD_HIT_MANIFOLD,
+    ] {
+        let v = m.get(metric).unwrap_or_else(|| panic!("{} absent", metric.name()));
+        assert!(
+            (0.0..=1.0).contains(&v),
+            "{} = {v} is outside [0, 1], which every objective is assumed to be",
+            metric.name()
+        );
+    }
+    assert!(m[NORMALIZED_STRESS] >= 0.0);
+    assert!(m[NORMALIZED_STRESS_MANIFOLD] >= 0.0);
+}
+
+#[test]
+fn test_the_spread_diagnostics_are_scored_alongside_the_rest() {
+    // They are registry entries, not special cases — that is what lets the
+    // resume path deserialise one vector rather than rebuilding a struct.
+    let (pts_2d, _) = make_clustered_2d(3, 10, 1.0, 7);
+    let d = euclidean_dist_2d(&pts_2d, pts_2d.len() / 2);
+    let m = MetricValues::compute(&flat_context(&d, &pts_2d, None, 5));
+
+    let r_max = m.get(R_MAX).expect("r_max");
+    let r_rms = m.get(R_RMS).expect("r_rms");
+    let r_gyr = m.get(R_GYRATION).expect("r_gyration");
+    assert!(r_max >= r_rms, "r_max {r_max} < r_rms {r_rms}");
+    assert!(r_gyr > 0.0, "a spread-out configuration has nonzero gyration");
 }
 
 #[test]
@@ -571,24 +633,3 @@ fn test_normalized_stress_scale_invariant() {
     );
 }
 
-#[test]
-fn test_compute_snapshot_manifold_and_2d_can_differ() {
-    // When the 2D distances differ from embed_dist the two variants must differ.
-    let (pts_2d, _) = make_clustered_2d(2, 15, 1.0, 42);
-    let n = pts_2d.len() / 2;
-    let d = euclidean_dist_2d(&pts_2d, n);
-    // Scaled 2D: shrink x, stretch y — creates different pairwise distances.
-    let pts_scaled: Vec<f64> = pts_2d
-        .iter()
-        .enumerate()
-        .map(|(i, &v)| if i % 2 == 0 { v * 3.0 } else { v * 0.3 })
-        .collect();
-    let snap = compute_snapshot(&d, &d, &pts_scaled, None, n, 5);
-    // Manifold = self-comparison → stress 0; 2D uses different distances → stress > 0.
-    assert!(
-        snap.normalized_stress_2d > snap.normalized_stress_manifold,
-        "2D stress ({}) should exceed manifold stress ({})",
-        snap.normalized_stress_2d,
-        snap.normalized_stress_manifold
-    );
-}

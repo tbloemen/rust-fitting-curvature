@@ -592,6 +592,18 @@ impl Metric {
             .join(", ")
     }
 
+    /// Whether this metric's base has a second reading on the other side of the
+    /// projection.
+    ///
+    /// Only a metric with a twin needs its readings told apart — which is why
+    /// the browser suffixes `_2d` for those and uses the bare name for
+    /// `dunn_index`, `davies_bouldin_ratio` and `cluster_density_measure`,
+    /// where there is nothing to disambiguate against.
+    pub fn has_twin(self) -> bool {
+        ALL.iter()
+            .any(|o| o.base() == self.base() && o.space() != self.space())
+    }
+
     /// The `(projected, manifold)` pairs, for the figures that compare a
     /// metric's two readings. Derived by matching [`QualityMetric::base`].
     pub fn dual_pairs() -> impl Iterator<Item = (Metric, Metric)> {

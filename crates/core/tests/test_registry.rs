@@ -169,3 +169,40 @@ fn dual_pairs_are_the_metrics_with_two_readings() {
         assert_ne!(p.space(), m.space());
     }
 }
+
+#[test]
+fn only_the_paired_metrics_report_a_twin() {
+    // `crates/web` suffixes `_2d` exactly for the metrics with a twin, and the
+    // browser's metrics panel reads the rest by their bare wire name. Getting
+    // this set wrong renames a key the panel is looking for, and the row simply
+    // disappears from the UI with no error anywhere.
+    let twinned: Vec<&str> = ALL.iter().filter(|m| m.has_twin()).map(|m| m.name()).collect();
+    assert_eq!(
+        twinned,
+        vec![
+            "trustworthiness",
+            "trustworthiness_manifold",
+            "continuity",
+            "continuity_manifold",
+            "neighborhood_hit",
+            "neighborhood_hit_manifold",
+            "normalized_stress",
+            "normalized_stress_manifold",
+            "shepard_goodness",
+            "shepard_goodness_manifold",
+        ]
+    );
+    for solo in [
+        "davies_bouldin_ratio",
+        "dunn_index",
+        "cluster_density_measure",
+        "r_max",
+        "r_rms",
+        "r_gyration",
+    ] {
+        assert!(
+            !Metric::by_name(solo).unwrap().has_twin(),
+            "{solo} claims a twin"
+        );
+    }
+}

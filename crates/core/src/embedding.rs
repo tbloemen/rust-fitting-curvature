@@ -9,10 +9,10 @@ use crate::kl_divergence::{
 use crate::manifolds;
 use crate::manifolds::Manifold;
 use crate::matrices::{compute_euclidean_distance_matrix, pca, pca_from_distances};
-use crate::metrics::{self, MetricsSnapshot};
+use crate::metrics::{MetricContext, MetricValues};
 use crate::optimizer::RiemannianSGDMomentum;
 use crate::scaling_loss;
-use crate::visualisation::{self, SphericalProjection};
+use crate::visualisation::SphericalProjection;
 
 /// Embedding state for step-by-step iteration.
 ///
@@ -280,29 +280,35 @@ impl EmbeddingState {
         self
     }
 
-    /// Compute a full metrics snapshot for the current embedding state.
-    pub fn compute_snapshot(&self) -> MetricsSnapshot {
+    /// Score the current embedding on every metric in
+    /// [`metrics::ALL`](crate::metrics::ALL).
+    ///
+    /// `k` and the projection come from this state, not from the registry: the
+    /// interactive view scores at the configured perplexity under whichever
+    /// projection the user picked, where the optimizer uses
+    /// `k = min(30, 0.1n)` under `AzimuthalEquidistant`. Both readings are
+    /// valid; they are just not the same number, and `MetricContext` takes them
+    /// as inputs so neither caller can quietly adopt the other's.
+    pub fn compute_metrics(&self) -> MetricValues {
         let n = self.n_points;
         let k = (self.config.perplexity as usize)
             .min(n.saturating_sub(2))
             .max(1);
         let high_dim = self.high_dim_distances();
-        let embed_dist = self.embedded_distances();
-        let proj = visualisation::project_to_2d(
+        let ctx = MetricContext::new(
+            &high_dim,
             &self.points,
+            self.labels.as_deref(),
             n,
             self.ambient_dim,
             self.config.curvature,
-            self.projection,
-        );
-        metrics::compute_snapshot(
-            &high_dim,
-            &embed_dist,
-            &proj.coords,
-            self.labels.as_deref(),
-            n,
             k,
+            self.projection,
         )
+        // Already derived by `embedded_distances`; deriving them a second time
+        // would be both wasted work and a chance for the two to disagree.
+        .with_manifold_dist(self.embedded_distances());
+        MetricValues::compute(&ctx)
     }
 
     /// Run one training iteration. Returns the current phase name.

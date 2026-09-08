@@ -3,6 +3,7 @@ use web_sys::HtmlCanvasElement;
 
 use fitting_core::config::{ScalingLossType, TrainingConfig};
 use fitting_core::embedding::EmbeddingState;
+use fitting_core::metrics;
 use fitting_core::synthetic_data;
 use fitting_core::visualisation::{self, SphericalProjection};
 
@@ -355,47 +356,38 @@ impl EmbeddingRunner {
 
     /// Compute all quality metrics after training.
     ///
-    /// Returns a JS object where each metric is stored in two variants:
-    /// - `{name}_manifold`: computed using manifold geodesic distances (embedding quality)
-    /// - `{name}_2d`: computed using Euclidean distances in projected 2D space (visualization quality)
-    ///
-    /// Label-dependent metrics are omitted when no labels are available.
+    /// Returns a JS object keyed by [`web_name`], so a metric with two
+    /// readings appears as `{base}_manifold` and `{base}_2d`. A metric that is
+    /// undefined for this state — every label-aware one, on unlabelled data —
+    /// is omitted rather than sent as NaN, which is what lets the panel filter
+    /// on `undefined`.
     pub fn compute_metrics(&self) -> Result<JsValue, JsValue> {
-        let snap = self.state.compute_snapshot();
+        let values = self.state.compute_metrics();
         let obj = js_sys::Object::new();
-        set_prop(
-            &obj,
-            "trustworthiness_manifold",
-            snap.trustworthiness_manifold,
-        )?;
-        set_prop(&obj, "trustworthiness_2d", snap.trustworthiness_2d)?;
-        set_prop(&obj, "continuity_manifold", snap.continuity_manifold)?;
-        set_prop(&obj, "continuity_2d", snap.continuity_2d)?;
-        set_prop(
-            &obj,
-            "normalized_stress_manifold",
-            snap.normalized_stress_manifold,
-        )?;
-        set_prop(&obj, "normalized_stress_2d", snap.normalized_stress_2d)?;
-        set_prop(
-            &obj,
-            "shepard_goodness_manifold",
-            snap.shepard_goodness_manifold,
-        )?;
-        set_prop(&obj, "shepard_goodness_2d", snap.shepard_goodness_2d)?;
-        if let Some(v) = snap.neighborhood_hit_manifold {
-            set_prop(&obj, "neighborhood_hit_manifold", v)?;
-        }
-        if let Some(v) = snap.neighborhood_hit_2d {
-            set_prop(&obj, "neighborhood_hit_2d", v)?;
-        }
-        if let Some(v) = snap.cluster_density_measure {
-            set_prop(&obj, "cluster_density_measure", v)?;
-        }
-        if let Some(v) = snap.davies_bouldin_ratio {
-            set_prop(&obj, "davies_bouldin_ratio", v)?;
+        for m in metrics::ALL {
+            if let Some(v) = values.get(*m) {
+                set_prop(&obj, &web_name(*m), v)?;
+            }
         }
         Ok(obj.into())
+    }
+}
+
+/// The browser's name for a metric.
+///
+/// The browser labels the projected reading `_2d` where the JSONL calls it by
+/// the bare name. Both conventions are load-bearing — one is baked into 350 MB
+/// of results files, the other into the metrics panel's column layout — so the
+/// registry carries the wire name and this is the single place the browser's
+/// differs from it.
+fn web_name(m: metrics::Metric) -> String {
+    match m.space() {
+        // Only a metric with two readings needs them told apart. The rest keep
+        // their wire name, which is what the metrics panel's single-value rows
+        // read.
+        metrics::Space::Projected if m.has_twin() => format!("{}_2d", m.base()),
+        metrics::Space::Manifold => format!("{}_manifold", m.base()),
+        _ => m.name().to_string(),
     }
 }
 

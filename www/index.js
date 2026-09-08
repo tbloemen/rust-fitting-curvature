@@ -751,6 +751,19 @@ const METRIC_GROUPS = [
     metrics: [
       { key: "cluster_density_measure", label: "Cluster Density", dir: "↑" },
       { key: "davies_bouldin_ratio", label: "DB Ratio", dir: "↑" },
+      { key: "dunn_index", label: "Dunn Index", dir: "↑" },
+    ],
+  },
+  // The spread diagnostics κ = |K|·R² is gauged against. Not optimised, and
+  // r_gyration is the one to read: r_max/r_rms are measured from a fixed pole,
+  // which is meaningful on the hyperboloid and vacuous on the sphere.
+  {
+    title: "Spread",
+    dual: false,
+    metrics: [
+      { key: "r_gyration", label: "R gyration", dir: "-" },
+      { key: "r_rms", label: "R rms", dir: "-" },
+      { key: "r_max", label: "R max", dir: "-" },
     ],
   },
 ];

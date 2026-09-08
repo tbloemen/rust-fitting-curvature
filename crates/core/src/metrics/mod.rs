@@ -21,7 +21,6 @@
 mod context;
 mod functions;
 mod quality;
-mod snapshot;
 mod values;
 
 pub use context::MetricContext;
@@ -33,5 +32,4 @@ pub use quality::{
     R_MAX, R_RMS, SHEPARD_GOODNESS, SHEPARD_GOODNESS_MANIFOLD, TRUSTWORTHINESS,
     TRUSTWORTHINESS_MANIFOLD,
 };
-pub use snapshot::{compute_snapshot, MetricsSnapshot};
 pub use values::MetricValues;
