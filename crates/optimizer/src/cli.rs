@@ -21,7 +21,7 @@ pub(crate) struct Args {
     pub(crate) output: String,
 
     /// Dataset to run. Use "all" for all datasets, "real" for real datasets only
-    /// (mnist, fashion_mnist, pbmc, wordnet_mammals), or a single dataset name.
+    /// (mnist, `fashion_mnist`, pbmc, `wordnet_mammals`), or a single dataset name.
     #[arg(long)]
     pub(crate) dataset: Option<String>,
 
@@ -32,7 +32,7 @@ pub(crate) struct Args {
     /// scan:   sweep each parameter individually from a base config (requires --metric).
     /// pareto: qParEGO multi-objective optimisation over 6 objectives (no --metric needed).
     /// detect: run curvature detection on the data distances; one JSONL line per
-    ///         dataset, carrying κ_data plus all three Wilson arms and the δ(k)
+    ///         dataset, carrying `κ_data` plus all three Wilson arms and the δ(k)
     ///         diagnostics. This is what `fitting-analysis`'s `exp1` reads.
     #[arg(long, default_value = "random")]
     pub(crate) mode: String,
@@ -72,9 +72,9 @@ pub(crate) struct Args {
     pub(crate) threads: Option<usize>,
 
     /// Experiment variant controlling which loss weights are optimized vs fixed to 0.
-    /// Values: all_off, centering_only, global_only, norm_only, all_free (default).
-    /// In all variants: lr, perplexity, early_exaggeration_factor are always optimized;
-    /// momentum_main is always fixed at 0.8; scaling_loss_type is always MeanDistance.
+    /// Values: `all_off`, `centering_only`, `global_only`, `norm_only`, `all_free` (default).
+    /// In all variants: lr, perplexity, `early_exaggeration_factor` are always optimized;
+    /// `momentum_main` is always fixed at 0.8; `scaling_loss_type` is always `MeanDistance`.
     #[arg(long, default_value = "all_free")]
     pub(crate) experiment: String,
 

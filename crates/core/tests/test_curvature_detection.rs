@@ -90,7 +90,7 @@ fn eigenvalues_symmetric_preserves_trace_and_frobenius() {
 fn spherical_residual_vanishes_at_true_radius() {
     const M: usize = 60;
     let data = generate_uniform_sphere(M, SEED);
-    let d_max = data.distances.iter().cloned().fold(0.0_f64, f64::max);
+    let d_max = data.distances.iter().copied().fold(0.0_f64, f64::max);
     let res = spherical_residual_at(&data.distances, M, DIM, 1.0);
     // Same `n · d_max²` gauge `WilsonFit::residual_normalised` uses, so the
     // tolerance means the same thing here as at the detection threshold.
@@ -154,7 +154,7 @@ fn fit_spherical_euclidean_pins_at_upper_bound() {
     );
 }
 
-/// On a hyperbolic dataset with max_rho=5, the recovered radius is
+/// On a hyperbolic dataset with `max_rho=5`, the recovered radius is
 /// expected near 1 (the true curvature radius of the generator).
 #[test]
 #[ignore = "too slow"]
@@ -279,7 +279,7 @@ fn diag_residual_curve() {
     ];
 
     for (name, dist) in &cases {
-        let d_max = dist.iter().cloned().fold(0.0f64, f64::max);
+        let d_max = dist.iter().copied().fold(0.0f64, f64::max);
         println!("\n── {name} (d_max={d_max:.2}) ──");
         println!("       r        Σ|λ_res|(sph)      Σ|λ_res|(hyp)");
         // Span the full hyperbolic search range from d_max/20 to 5*d_max
@@ -288,7 +288,7 @@ fn diag_residual_curve() {
         let r_lo = d_max / 20.0;
         let r_hi = 5.0 * d_max;
         for i in 0..20 {
-            let t = i as f64 / 19.0;
+            let t = f64::from(i) / 19.0;
             let r = r_lo * (r_hi / r_lo).powf(t);
             let s_res = if r >= d_max / std::f64::consts::PI {
                 spherical_residual_at(dist, N, DIM, r)

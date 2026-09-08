@@ -13,6 +13,7 @@
 
 /// Gromov 4-point δ of one quadruple: `S_max − S_mid` over the three
 /// pair-sums (the NeTS-proposal four-point condition, no ½ factor).
+#[must_use]
 pub fn quad_delta(distances: &[f64], n: usize, a: usize, b: usize, c: usize, d: usize) -> f64 {
     let s1 = distances[a * n + b] + distances[c * n + d];
     let s2 = distances[a * n + c] + distances[b * n + d];
@@ -23,6 +24,7 @@ pub fn quad_delta(distances: &[f64], n: usize, a: usize, b: usize, c: usize, d: 
 }
 
 /// Median of the `n(n−1)/2` upper-triangle pairwise distances.
+#[must_use]
 pub fn median_pairwise_distance(distances: &[f64], n: usize) -> f64 {
     let mut v = Vec::with_capacity(n * (n - 1) / 2);
     for i in 0..n {

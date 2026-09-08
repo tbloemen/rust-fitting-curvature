@@ -7,7 +7,7 @@ pub struct Dataset {
     pub n_points: usize,
     pub n_features: usize,
     /// Pre-computed pairwise distance matrix (flat n × n, row-major).
-    /// Non-empty for datasets like WordNet where intrinsic distances drive
+    /// Non-empty for datasets like `WordNet` where intrinsic distances drive
     /// affinities and evaluation instead of Euclidean distances in feature space.
     pub precomputed_distances: Vec<f64>,
 }
@@ -26,7 +26,10 @@ impl From<DataPoints> for Dataset {
 
 impl Dataset {
     pub fn load_synthetic(name: &str, n_samples: usize, seed: u64) -> Result<Self, String> {
-        use fitting_core::synthetic_data::*;
+        use fitting_core::synthetic_data::{
+            generate_hd_antipodal_clusters, generate_hd_hyperbolic_shells, generate_hd_sphere,
+            generate_hd_tree, generate_hd_uniform_grid,
+        };
         let sd = match name {
             "sphere" => generate_hd_sphere(n_samples, 10, seed),
             "antipodal_clusters" => generate_hd_antipodal_clusters(n_samples, 10, seed),
@@ -47,18 +50,18 @@ impl Dataset {
     }
 
     pub fn load_mnist(path: &str, n_samples: usize) -> Result<Self, String> {
-        fitting_core::data::load_mnist(path, n_samples).map(|sd| sd.into())
+        fitting_core::data::load_mnist(path, n_samples).map(std::convert::Into::into)
     }
 
     pub fn load_fashion_mnist(path: &str, n_samples: usize) -> Result<Self, String> {
-        fitting_core::data::load_fashion_mnist(path, n_samples).map(|sd| sd.into())
+        fitting_core::data::load_fashion_mnist(path, n_samples).map(std::convert::Into::into)
     }
 
     pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<Self, String> {
-        fitting_core::data::load_wordnet_mammals(path, n_samples).map(|sd| sd.into())
+        fitting_core::data::load_wordnet_mammals(path, n_samples).map(std::convert::Into::into)
     }
 
     pub fn load_pbmc(path: &str, n_samples: usize) -> Result<Self, String> {
-        fitting_core::data::load_pbmc(path, n_samples).map(|sd| sd.into())
+        fitting_core::data::load_pbmc(path, n_samples).map(std::convert::Into::into)
     }
 }

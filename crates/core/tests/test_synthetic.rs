@@ -1,5 +1,5 @@
 //! Tests for synthetic dataset generators.
-//! Ported from Python test/test_synthetic.py
+//! Ported from Python `test/test_synthetic.py`
 
 use fitting_core::synthetic_data::*;
 

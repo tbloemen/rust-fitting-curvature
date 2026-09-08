@@ -69,7 +69,7 @@ where
     let auto_half = calculate_auto_half(params.curvature, params.n_points, &projected);
 
     let aspect = if height > 0 {
-        width as f64 / height as f64
+        f64::from(width) / f64::from(height)
     } else {
         1.0
     };
@@ -140,7 +140,7 @@ where
 
     if let Some(labels) = labels {
         let mut label_set: Vec<u32> = labels.to_vec();
-        label_set.sort();
+        label_set.sort_unstable();
         label_set.dedup();
 
         // Only render a legend when there are few enough distinct labels to be readable.
@@ -166,13 +166,13 @@ where
 
             if show_legend {
                 let default_name;
-                let display: &str = match label_names.and_then(|names| names.get(label as usize)) {
-                    Some(name) => name.as_str(),
-                    None => {
+                let display: &str =
+                    if let Some(name) = label_names.and_then(|names| names.get(label as usize)) {
+                        name.as_str()
+                    } else {
                         default_name = format!("Label {label}");
                         &default_name
-                    }
-                };
+                    };
                 series
                     .label(display)
                     .legend(move |(x, y)| Circle::new((x + 10, y), 3, RGBColor(r, g, b).filled()));
@@ -465,7 +465,7 @@ where
     let (x_min, x_max) = (cx - half_x, cx + half_x);
     let (y_min, y_max) = (cy - half_y, cy + half_y);
     for i in 0..6 {
-        let ang = (i as f64) * std::f64::consts::PI / 6.0;
+        let ang = f64::from(i) * std::f64::consts::PI / 6.0;
         let (dx, dy) = (ang.cos(), ang.sin());
         if let Some((a, b)) = clip_line((-dx, -dy), (dx, dy), x_min, y_min, x_max, y_max) {
             chart
@@ -590,7 +590,7 @@ fn format_tick(v: f64) -> String {
     if (v - rounded).abs() < 1e-9 {
         format!("{}", rounded as i64)
     } else {
-        format!("{:.1}", v)
+        format!("{v:.1}")
     }
 }
 

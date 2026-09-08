@@ -1,5 +1,5 @@
 //! Tests for manifold implementations.
-//! Ported from Python test/test_grad.py and test/test_rsgd.py (manifold-related parts).
+//! Ported from Python `test/test_grad.py` and `test/test_rsgd.py` (manifold-related parts).
 
 use fitting_core::manifolds::{Euclidean, Hyperboloid, Manifold, Sphere};
 use fitting_core::synthetic_data::Rng;

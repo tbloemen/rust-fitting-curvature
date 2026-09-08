@@ -9,6 +9,7 @@
 //! uses on the ΔR2 table.
 
 /// Mean of a slice; `None` when empty.
+#[must_use]
 pub fn mean(xs: &[f64]) -> Option<f64> {
     if xs.is_empty() {
         return None;
@@ -18,6 +19,7 @@ pub fn mean(xs: &[f64]) -> Option<f64> {
 
 /// Median of a slice (average of the two middle values for even length).
 /// `None` when empty. Non-finite values are not filtered — callers do that.
+#[must_use]
 pub fn median(xs: &[f64]) -> Option<f64> {
     if xs.is_empty() {
         return None;
@@ -36,6 +38,7 @@ pub fn median(xs: &[f64]) -> Option<f64> {
 /// (numpy's `quantile(method="linear")`, scipy's default). `None` when empty or
 /// when *q* is outside [0, 1]. Non-finite values are not filtered — callers do
 /// that.
+#[must_use]
 pub fn quantile(xs: &[f64], q: f64) -> Option<f64> {
     if xs.is_empty() || !(0.0..=1.0).contains(&q) {
         return None;
@@ -50,6 +53,7 @@ pub fn quantile(xs: &[f64], q: f64) -> Option<f64> {
 }
 
 /// Fractional ranks with ties averaged (scipy's `rankdata(method="average")`).
+#[must_use]
 pub fn rankdata(xs: &[f64]) -> Vec<f64> {
     let n = xs.len();
     let mut idx: Vec<usize> = (0..n).collect();
@@ -77,6 +81,7 @@ pub fn rankdata(xs: &[f64]) -> Vec<f64> {
 }
 
 /// Pearson correlation of two equal-length slices; `None` if either is constant.
+#[must_use]
 pub fn pearson(x: &[f64], y: &[f64]) -> Option<f64> {
     let n = x.len();
     if n < 2 || y.len() != n {
@@ -106,6 +111,7 @@ pub fn pearson(x: &[f64], y: &[f64]) -> Option<f64> {
 /// p-value uses the t-distribution approximation
 /// `t = ρ·sqrt(dof / (1 − ρ²))`, `dof = n − 2` — scipy's default, asymptotic but
 /// applied at all n. Returns `None` when n < 3 or a variable is constant.
+#[must_use]
 pub fn spearman(x: &[f64], y: &[f64]) -> Option<(f64, f64)> {
     let n = x.len();
     if n < 3 || y.len() != n {
@@ -144,6 +150,7 @@ fn tie_group_sizes(xs: &[f64]) -> Vec<usize> {
 // ─── Distribution tails ───────────────────────────────────────────────────────
 
 /// Upper tail of the standard normal, `P(Z > z)`.
+#[must_use]
 pub fn normal_sf(z: f64) -> f64 {
     0.5 * erfc(z / std::f64::consts::SQRT_2)
 }
@@ -175,6 +182,7 @@ fn erfc(x: f64) -> f64 {
 /// Upper tail of Student's t, `P(T > t)` for `dof` degrees of freedom.
 ///
 /// `sf(t) = ½·I_x(dof/2, ½)` with `x = dof/(dof + t²)`, for `t ≥ 0`.
+#[must_use]
 pub fn student_t_sf(t: f64, dof: f64) -> f64 {
     if dof <= 0.0 {
         return f64::NAN;
@@ -285,7 +293,7 @@ fn ln_gamma(x: f64) -> f64 {
 /// Result of a Friedman test over `n_blocks` blocks and `k` treatments.
 #[derive(Debug, Clone)]
 pub struct Friedman {
-    /// Tie-corrected χ²_F statistic.
+    /// Tie-corrected `χ²_F` statistic.
     pub statistic: f64,
     /// Upper tail of χ² with `k − 1` degrees of freedom.
     pub p: f64,
@@ -306,6 +314,7 @@ pub struct Friedman {
 /// `None` when there are fewer than two blocks, fewer than three treatments, a
 /// ragged or non-finite block, or when every value in every block is tied (the
 /// tie correction would divide by zero).
+#[must_use]
 pub fn friedman(blocks: &[Vec<f64>]) -> Option<Friedman> {
     let n = blocks.len();
     if n < 2 {
@@ -366,6 +375,7 @@ pub fn friedman(blocks: &[Vec<f64>]) -> Option<Friedman> {
 ///
 /// Adjusted p-values are compared against α directly; they already carry the
 /// family-wise correction over the `k − 1` comparisons.
+#[must_use]
 pub fn holm_against_control(f: &Friedman, control: usize) -> Vec<Option<f64>> {
     let k = f.k;
     let n = f.n_blocks;
@@ -397,6 +407,7 @@ pub fn holm_against_control(f: &Friedman, control: usize) -> Vec<Option<f64>> {
 }
 
 /// Upper tail of the χ² distribution, `P(X > x)` with `dof` degrees of freedom.
+#[must_use]
 pub fn chi2_sf(x: f64, dof: f64) -> f64 {
     if dof <= 0.0 || x.is_nan() {
         return f64::NAN;

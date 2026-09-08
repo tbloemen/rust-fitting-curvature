@@ -42,11 +42,15 @@ use plotters::coord::Shift;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
 
-use super::*;
-use crate::objectives::oriented_value;
+use super::{
+    binned_median, draw_legend, geometry_color, log_tick, padded_log_range, padded_range,
+    snap_to_decades, CellMap, Figure, LegendEntry, Res, CURVED, METRIC_PAIRS, OK_BLACK,
+};
+use crate::objectives::{oriented_value, N_METRIC_PAIRS};
 use crate::pareto::pareto_front_records;
 use crate::stats::{median, quantile, spearman};
 use crate::style_mesh;
+use fitting_core::metrics::Metric;
 
 /// A cell needs at least this many usable trials for its ρ to mean anything.
 const MIN_TRIALS: usize = 10;
@@ -67,6 +71,7 @@ pub struct RhoManProj<'a> {
 }
 
 impl<'a> RhoManProj<'a> {
+    #[must_use]
     pub fn new(cells: &'a CellMap, n: usize) -> Self {
         Self { cells, n }
     }
@@ -75,7 +80,7 @@ impl<'a> RhoManProj<'a> {
     ///
     /// *pair* is one row of [`METRIC_PAIRS`]: the projected and manifold
     /// objective names whose ranks are correlated against each other.
-    fn points(&self, pair: (&str, &str), geometry: &str) -> Vec<(f64, f64)> {
+    fn points(&self, pair: (Metric, Metric), geometry: &str) -> Vec<(f64, f64)> {
         let (projected, manifold) = pair;
         let mut pts = Vec::new();
         for (key, recs) in self.cells {
@@ -85,7 +90,7 @@ impl<'a> RhoManProj<'a> {
             let (mut proj, mut man, mut ks) = (Vec::new(), Vec::new(), Vec::new());
             for r in recs {
                 let (Some(pv), Some(mv), Some(kv)) =
-                    (r.objective(projected), r.objective(manifold), r.kappa())
+                    (r.metrics.get(projected), r.metrics.get(manifold), r.kappa())
                 else {
                     continue;
                 };
@@ -157,7 +162,7 @@ impl Figure for RhoManProj<'_> {
 
             let mut chart = ChartBuilder::on(&panels[m_idx])
                 .margin(10)
-                .caption(pair.0, ("sans-serif", 15).into_font())
+                .caption(pair.0.name(), ("sans-serif", 15).into_font())
                 .x_label_area_size(52)
                 .y_label_area_size(if m_idx == 0 { 66 } else { 34 })
                 .build_cartesian_2d((x_lo..x_hi).log_scale(), -0.8f64..1.1f64)?;
@@ -247,7 +252,7 @@ struct GapPoint {
     /// **Not** [`oriented_value`]'s 0.0 substitution: that maps an absent value
     /// to "worst possible", which here would manufacture a gap of ±1 out of a
     /// missing column rather than dropping the point.
-    gaps: [Option<f64>; METRIC_PAIRS.len()],
+    gaps: [Option<f64>; N_METRIC_PAIRS],
 }
 
 /// Experiment 4, second figure — the *size* of the manifold-vs-projection
@@ -311,14 +316,16 @@ impl ProjGap {
                 let Some(kappa) = r.kappa().filter(|k| k.is_finite() && *k > 0.0) else {
                     continue;
                 };
-                let mut gaps = [None; METRIC_PAIRS.len()];
-                for (slot, (proj, man)) in gaps.iter_mut().zip(METRIC_PAIRS) {
-                    let (Some(pv), Some(mv)) = (r.objective(proj), r.objective(man)) else {
+                let mut gaps = [None; N_METRIC_PAIRS];
+                for (slot, (proj, man)) in gaps.iter_mut().zip(METRIC_PAIRS.iter()) {
+                    let (Some(pv), Some(mv)) = (r.metrics.get(*proj), r.metrics.get(*man)) else {
                         continue;
                     };
                     if pv.is_finite() && mv.is_finite() {
-                        *slot =
-                            Some(oriented_value(man, Some(mv)) - oriented_value(proj, Some(pv)));
+                        *slot = Some(
+                            oriented_value(man.name(), Some(mv))
+                                - oriented_value(proj.name(), Some(pv)),
+                        );
                     }
                 }
                 points[slot].push(GapPoint { kappa, gaps });
@@ -332,6 +339,7 @@ impl ProjGap {
     }
 
     /// The same figure restricted to `κ >= kappa_min`, written to its own file.
+    #[must_use]
     pub fn zoomed(self, kappa_min: f64) -> Self {
         Self { kappa_min, ..self }
     }
@@ -362,6 +370,7 @@ impl ProjGap {
             .collect()
     }
 
+    #[must_use]
     pub fn has_data(&self) -> bool {
         !self.kappas().is_empty()
     }
@@ -443,7 +452,7 @@ impl Figure for ProjGap {
 
             let mut chart = ChartBuilder::on(&panels[m_idx])
                 .margin(10)
-                .caption(pair.0, ("sans-serif", 15).into_font())
+                .caption(pair.0.name(), ("sans-serif", 15).into_font())
                 .x_label_area_size(52)
                 .y_label_area_size(if m_idx == 0 { 66 } else { 44 })
                 .build_cartesian_2d((x_lo..x_hi).log_scale(), y_lo..y_hi)?;

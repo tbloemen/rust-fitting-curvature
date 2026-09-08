@@ -5,7 +5,11 @@ use plotters::coord::Shift;
 use plotters::prelude::*;
 
 use super::exp3::{draw_histogram, log_histogram, Bin};
-use super::*;
+use super::{
+    convex_lower_hull, draw_legend, finite_xy, geometry_color, log_tick, padded_log_range,
+    padded_range, snap_to_decades, CellMap, Figure, LegendEntry, Res, GEOMETRIES, OK_BLACK,
+    REAL_DATASETS, X_LABEL, X_METRIC, Y_LABEL, Y_METRIC,
+};
 use crate::cell::Cell;
 use crate::pareto::pareto_front_records;
 use crate::style_mesh;
@@ -18,6 +22,7 @@ pub struct FrontGrid<'a> {
 }
 
 impl<'a> FrontGrid<'a> {
+    #[must_use]
     pub fn new(cells: &'a CellMap, n: usize) -> Self {
         Self { cells, n }
     }
@@ -30,6 +35,7 @@ impl<'a> FrontGrid<'a> {
         }
     }
 
+    #[must_use]
     pub fn has_data(&self) -> bool {
         REAL_DATASETS.iter().any(|ds| {
             GEOMETRIES
@@ -130,6 +136,7 @@ pub struct Marginals<'a> {
 }
 
 impl<'a> Marginals<'a> {
+    #[must_use]
     pub fn new(cells: &'a CellMap, n: usize) -> Self {
         Self { cells, n }
     }
@@ -151,6 +158,7 @@ impl<'a> Marginals<'a> {
             .collect()
     }
 
+    #[must_use]
     pub fn has_data(&self) -> bool {
         REAL_DATASETS.iter().any(|ds| {
             HYPERPARAMS

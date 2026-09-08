@@ -123,7 +123,7 @@ fn abs_log(absolute: f64, n: usize, d_max: f64) -> f64 {
 /// Why `detect_geometry` would or would not accept this spherical fit: it
 /// needs an interior `r*` (not pinned at the flat-ward bound) *and* a
 /// normalised residual below [`SPHERICAL_RESIDUAL_MAX`].  Both conditions
-/// matter — pbmc and wordnet_mammals land interior but miss the residual test.
+/// matter — pbmc and `wordnet_mammals` land interior but miss the residual test.
 fn spherical_verdict(fit: &WilsonFit) -> &'static str {
     match (
         fit.at_upper_bound,
@@ -332,7 +332,7 @@ fn plot(
     root.fill(&WHITE)?;
 
     let (x_min, x_max) = x_window.unwrap_or_else(|| {
-        let xs = || cases.iter().flat_map(|c| c.xs.iter().cloned());
+        let xs = || cases.iter().flat_map(|c| c.xs.iter().copied());
         (
             xs().fold(f64::INFINITY, f64::min),
             xs().fold(f64::NEG_INFINITY, f64::max),
@@ -385,8 +385,8 @@ fn plot(
         let line: Vec<(f64, f64)> = case
             .xs
             .iter()
-            .cloned()
-            .zip(ys.iter().cloned())
+            .copied()
+            .zip(ys.iter().copied())
             .filter(|&(x, _)| in_x(x, x_window))
             .collect();
         chart

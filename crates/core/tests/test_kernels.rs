@@ -1,5 +1,5 @@
 //! Tests for t-distribution kernel functions.
-//! Ported from Python test/test_tsne.py::TestKernels
+//! Ported from Python `test/test_tsne.py::TestKernels`
 
 use fitting_core::kernels::{compute_q_matrix, t_distribution_kernel};
 use fitting_core::manifolds::{Euclidean, Hyperboloid, Sphere};
@@ -21,7 +21,7 @@ fn test_t_distribution_values() {
 
 #[test]
 fn test_t_distribution_monotonic() {
-    let distances: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+    let distances: Vec<f64> = (0..100).map(|i| f64::from(i) * 0.1).collect();
     let kernel_vals = t_distribution_kernel(&distances, 1.0);
 
     for i in 1..kernel_vals.len() {

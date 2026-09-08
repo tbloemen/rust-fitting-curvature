@@ -1,12 +1,12 @@
 use indicatif::ProgressBar;
-use serde::Deserialize;
 use std::thread;
 
 use crate::common::eval_all_metrics;
 use crate::evaluate::Evaluator;
-use crate::metrics::{AllMetrics, Metric};
+use crate::metrics::{Metric, MetricValues};
 use crate::pareto::metrics_to_vec;
 use crate::search_space::TrialConfig;
+use fitting_core::spread::SpreadDiagnostics;
 
 // ─── Resume support ───────────────────────────────────────────────────────────
 
@@ -22,27 +22,15 @@ pub(crate) struct PriorEval {
     pub(crate) r_rms: f64,
 }
 
-/// Subset of a `TrialResult` JSONL line needed to reconstruct the objective
-/// vector. Each field is `Option` because a diverged trial serialises its
-/// non-finite metrics as JSON `null`; those are mapped back to the same
-/// worst-case substitute `metrics_to_vec` applies, so the replayed observation
-/// is identical to the original.
-///
-/// **This list must match `pareto::default_pareto_metrics` exactly.** A field
-/// missing here deserialises as `None` and is replayed as the worst-case
-/// substitute, which silently makes the resumed observation differ from the
-/// original — no error, just a different GP. The test module below pins the two
-/// lists against each other.
-#[derive(Deserialize)]
-struct PriorTrialRecord {
-    trustworthiness: Option<f64>,
-    continuity: Option<f64>,
-    normalized_stress: Option<f64>,
-    shepard_goodness: Option<f64>,
-    neighborhood_hit: Option<f64>,
-    class_density_measure: Option<f64>,
-    r_max: Option<f64>,
-    r_rms: Option<f64>,
+/// The two flattened blocks a results line carries, which is all `--resume`
+/// reads off it. Everything else on the line — hyperparameters, dataset,
+/// timings — is re-derived by replaying `suggest_batch`, so it is ignored here.
+#[derive(serde::Deserialize)]
+struct PriorLine {
+    #[serde(flatten)]
+    metrics: MetricValues,
+    #[serde(flatten)]
+    spread: SpreadDiagnostics,
 }
 
 /// Load prior pareto trials from `path`, in file order (which is exactly the
@@ -64,40 +52,18 @@ pub(crate) fn load_prior_evals(path: &str, metrics: &[Metric]) -> Vec<PriorEval>
     let n = lines.len();
     let mut out = Vec::with_capacity(n);
     for (i, line) in lines.iter().enumerate() {
-        match serde_json::from_str::<PriorTrialRecord>(line) {
-            Ok(rec) => {
-                let nan = f64::NAN;
-                // Only the 6 pareto objectives + r_max/r_rms matter to the
-                // optimizer; the other AllMetrics fields are unused here.
-                let all = AllMetrics {
-                    trustworthiness: rec.trustworthiness.unwrap_or(nan),
-                    trustworthiness_manifold: 0.0,
-                    continuity: rec.continuity.unwrap_or(nan),
-                    continuity_manifold: 0.0,
-                    knn_overlap: 0.0,
-                    knn_overlap_manifold: 0.0,
-                    neighborhood_hit: rec.neighborhood_hit.unwrap_or(nan),
-                    neighborhood_hit_manifold: 0.0,
-                    normalized_stress: rec.normalized_stress.unwrap_or(nan),
-                    normalized_stress_manifold: 0.0,
-                    shepard_goodness: rec.shepard_goodness.unwrap_or(nan),
-                    shepard_goodness_manifold: 0.0,
-                    davies_bouldin_ratio: 0.0,
-                    dunn_index: 0.0,
-                    class_density_measure: rec.class_density_measure.unwrap_or(nan),
-                    cluster_density_measure: 0.0,
-                    r_max: rec.r_max.unwrap_or(nan),
-                    r_rms: rec.r_rms.unwrap_or(nan),
-                    // Never read on the replay path: a reused trial only
-                    // re-`observe`s (which ignores it) and never rewrites its
-                    // JSONL line, so the value on disk — written by the chunk
-                    // that evaluated it fresh — is the one that survives.
-                    r_gyration: nan,
-                };
+        // The whole metric block, read by name. This replaced a
+        // `PriorTrialRecord` that listed the pareto objectives by hand and
+        // warned in its doc comment that a field missing from it would
+        // deserialise as `None`, replay as the worst-case substitute, and
+        // silently give a resumed run a different GP — no error. There is no
+        // longer a second list to fall out of step with the first.
+        match serde_json::from_str::<PriorLine>(line) {
+            Ok(prior) => {
                 out.push(PriorEval {
-                    metric_vec: metrics_to_vec(&all, metrics),
-                    r_max: all.r_max,
-                    r_rms: all.r_rms,
+                    metric_vec: metrics_to_vec(&prior.metrics, metrics),
+                    r_max: prior.spread.r_max().unwrap_or(f64::NAN),
+                    r_rms: prior.spread.r_rms().unwrap_or(f64::NAN),
                 });
             }
             Err(e) => {
@@ -122,11 +88,19 @@ pub(crate) enum BatchOutcome {
         r_rms: f64,
     },
     /// Freshly evaluated — carries everything needed to log a JSONL line.
-    Fresh {
-        all: AllMetrics,
-        actual_curvature: f64,
-        elapsed_ms: u64,
-    },
+    ///
+    /// Boxed because the readings are 256 bytes against `Reused`'s 40, and this
+    /// enum is built one per config per batch: unboxed, every replayed trial
+    /// would carry the fresh variant's footprint for nothing.
+    Fresh(Box<FreshEval>),
+}
+
+/// The outcome of actually running an embedding.
+pub(crate) struct FreshEval {
+    pub(crate) all: MetricValues,
+    pub(crate) spread: SpreadDiagnostics,
+    pub(crate) actual_curvature: f64,
+    pub(crate) elapsed_ms: u64,
 }
 
 /// Evaluate a batch of configs in parallel, reusing recorded results for any
@@ -146,7 +120,7 @@ pub(crate) fn eval_or_reuse_batch(
 ) -> Vec<BatchOutcome> {
     let reused = prior.len().saturating_sub(base_global).min(configs.len());
 
-    let fresh_results: Vec<(f64, AllMetrics, u64)> = thread::scope(|s| {
+    let fresh_results: Vec<(f64, MetricValues, SpreadDiagnostics, u64)> = thread::scope(|s| {
         configs[reused..]
             .iter()
             .enumerate()
@@ -156,7 +130,7 @@ pub(crate) fn eval_or_reuse_batch(
                 s.spawn(move || {
                     let pb_iters = ProgressBar::hidden();
                     let start = std::time::Instant::now();
-                    let all = eval_all_metrics(
+                    let (all, spread) = eval_all_metrics(
                         evaluator,
                         config,
                         curvature_sign,
@@ -165,7 +139,7 @@ pub(crate) fn eval_or_reuse_batch(
                         &pb_iters,
                     );
                     let elapsed = start.elapsed().as_millis() as u64;
-                    (actual_curvature, all, elapsed)
+                    (actual_curvature, all, spread, elapsed)
                 })
             })
             .collect::<Vec<_>>()
@@ -183,12 +157,13 @@ pub(crate) fn eval_or_reuse_batch(
             r_rms: p.r_rms,
         });
     }
-    for (actual_curvature, all, elapsed_ms) in fresh_results {
-        outcomes.push(BatchOutcome::Fresh {
+    for (actual_curvature, all, spread, elapsed_ms) in fresh_results {
+        outcomes.push(BatchOutcome::Fresh(Box::new(FreshEval {
             all,
+            spread,
             actual_curvature,
             elapsed_ms,
-        });
+        })));
     }
     outcomes
 }
@@ -196,16 +171,19 @@ pub(crate) fn eval_or_reuse_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics::Direction;
     use crate::pareto::default_pareto_metrics;
 
-    /// Every objective the optimizer actually searches must have a field on
-    /// `PriorTrialRecord`, or `--resume` replays it as the worst-case
+    /// Every objective the optimizer searches must survive a round trip
+    /// through the JSONL, or `--resume` replays it as the worst-case
     /// substitute instead of its recorded value — silently, with no error.
     ///
-    /// The check is behavioural rather than structural: write one JSONL line
-    /// carrying a distinct value per objective, load it back, and require the
-    /// replayed vector to be those values. A field dropped from the struct
-    /// turns its slot into the substitute and fails here.
+    /// This used to guard a hand-written `PriorTrialRecord` that listed the
+    /// objectives a second time; it now passes because there is only one list,
+    /// which is the point. It is kept because it is behavioural rather than
+    /// structural — it writes a line, loads it back, and requires the replayed
+    /// vector to be the values written — so it still catches a wire name that
+    /// stops round-tripping for any other reason.
     #[test]
     fn prior_record_covers_every_pareto_objective() {
         let metrics = default_pareto_metrics();
@@ -233,12 +211,63 @@ mod tests {
         for ((got, want), metric) in prior[0].metric_vec.iter().zip(&values).zip(&metrics) {
             assert!(
                 (got - want).abs() < 1e-12,
-                "objective `{}` replayed as {got} instead of {want} — it is \
-                 missing from PriorTrialRecord",
+                "objective `{}` replayed as {got} instead of {want}",
                 metric.name()
             );
         }
         assert_eq!(prior[0].r_max, 1.0);
         assert_eq!(prior[0].r_rms, 2.0);
+    }
+
+    /// A line from `results/` as it is actually shaped: retired metric columns
+    /// that no longer parse, no `r_gyration`, a `null` from a diverged trial,
+    /// and non-numeric columns alongside. All of it has to load, because
+    /// `--resume` reads files written by builds that predate the registry.
+    #[test]
+    fn a_pre_registry_results_line_still_replays() {
+        let metrics = default_pareto_metrics();
+        let line = r#"{"dataset_name":"antipodal_clusters","geometry":"euclidean","n_samples":1000,
+            "knn_overlap":0.4,"class_density_measure":12.5,
+            "trustworthiness":0.9,"continuity":0.8,"normalized_stress":0.3,
+            "shepard_goodness":null,"neighborhood_hit":0.7,
+            "r_max":1.0,"r_rms":2.0,"time_ms":42}"#
+            .replace('\n', "");
+
+        let dir = std::env::temp_dir().join(format!("resume_legacy_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("prior.jsonl");
+        std::fs::write(&path, format!("{line}\n")).unwrap();
+
+        let prior = load_prior_evals(path.to_str().unwrap(), &metrics);
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(prior.len(), 1, "a pre-registry line must still load");
+        // The columns the line actually carries a number for. Everything else —
+        // `shepard_goodness`, explicitly `null` from a diverged trial, and any
+        // objective added after these files were written — replays as the
+        // metric's worst-case substitute, which is what keeps a partial line
+        // from scoring well. Listed by name rather than positionally, so a new
+        // objective does not have to be added here to keep the test honest.
+        let carried = [
+            ("trustworthiness", 0.9),
+            ("continuity", 0.8),
+            ("normalized_stress", 0.3),
+            ("neighborhood_hit", 0.7),
+        ];
+        assert_eq!(prior[0].metric_vec.len(), metrics.len());
+        for (metric, got) in metrics.iter().zip(prior[0].metric_vec.iter().copied()) {
+            let want = carried
+                .iter()
+                .find(|(name, _)| *name == metric.name())
+                .map_or(
+                    match metric.direction() {
+                        Direction::Maximize => 0.0,
+                        Direction::Minimize => 1.0,
+                    },
+                    |&(_, v)| v,
+                );
+            assert_eq!(got, want, "{} replayed as {got}", metric.name());
+        }
+        assert_eq!(prior[0].r_max, 1.0);
     }
 }

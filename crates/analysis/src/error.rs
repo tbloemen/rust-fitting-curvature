@@ -1,7 +1,7 @@
 //! The crate's error type.
 //!
 //! Everything fallible here is a file the sweeps wrote — a results JSONL, a
-//! stage-1 indicator table, a κ_data table — or a CLI argument that names
+//! stage-1 indicator table, a `κ_data` table — or a CLI argument that names
 //! something the data does not contain. Loading is **strict**: an unreadable
 //! file and an unparseable line are both errors, carrying the path (and line)
 //! that caused them, so a sweep killed mid-write fails the analysis instead of

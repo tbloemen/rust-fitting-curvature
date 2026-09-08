@@ -1,5 +1,5 @@
 //! Plot the Gromov δ-hyperbolicity against ball size `k`, following the
-//! growing-ball procedure of the NeTS proposal (Krioukov, Boguñá,
+//! growing-ball procedure of the `NeTS` proposal (Krioukov, Boguñá,
 //! Claffy; "δ-hyperbolic spaces", Task 2):
 //!
 //!   For each ball size `k`, sample random centres, take each centre's

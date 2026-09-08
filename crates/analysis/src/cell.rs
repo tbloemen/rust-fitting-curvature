@@ -47,6 +47,7 @@ pub const SYNTH_TRUTH: [(&str, &str); 5] = [
 
 /// The geometry `dataset` is built to have, or `None` for a real dataset (or
 /// any name not in [`SYNTH_TRUTH`]).
+#[must_use]
 pub fn truth_of(dataset: &str) -> Option<&'static str> {
     SYNTH_TRUTH
         .iter()
@@ -64,6 +65,7 @@ pub struct Cell {
 }
 
 impl Cell {
+    #[must_use]
     pub fn new(setting: &str, dataset: &str, n: usize, geometry: &str) -> Self {
         Self {
             setting: setting.to_string(),
@@ -94,6 +96,7 @@ impl Variant {
     pub const ALL: [Variant; 1] = [Variant::Rgyr];
 
     /// The stem suffix this variant is written as, without the separating `_`.
+    #[must_use]
     pub const fn suffix(self) -> &'static str {
         match self {
             Variant::Rgyr => "rgyr",
@@ -101,6 +104,7 @@ impl Variant {
     }
 
     /// The variant a suffix names, or `None` if it names none.
+    #[must_use]
     pub fn from_suffix(suffix: &str) -> Option<Self> {
         Variant::ALL.into_iter().find(|v| v.suffix() == suffix)
     }
@@ -127,11 +131,13 @@ impl std::fmt::Display for Variant {
 /// directory selects the set; the marker only labels the file. Two files in one
 /// directory that parse to the same `Cell` are rejected by [`discover_cells`]
 /// rather than silently collapsing into one.
+#[must_use]
 pub fn parse_cell_stem(stem: &str) -> Option<Cell> {
     parse_cell_stem_variant(stem).map(|(cell, _)| cell)
 }
 
 /// [`parse_cell_stem`], also returning the [`Variant`] the stem carried.
+#[must_use]
 pub fn parse_cell_stem_variant(stem: &str) -> Option<(Cell, Option<Variant>)> {
     if stem.contains("_pareto_") {
         return None;
@@ -187,7 +193,7 @@ pub struct CellFile {
     pub variant: Option<Variant>,
 }
 
-/// Every trial-results JSONL under *results_dir*, with its parsed cell.
+/// Every trial-results JSONL under *`results_dir`*, with its parsed cell.
 ///
 /// Front files (`*_pareto_*.json`) and anything whose stem doesn't parse as a
 /// cell are skipped. Sorted by stem so the output order is stable.

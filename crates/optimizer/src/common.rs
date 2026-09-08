@@ -1,8 +1,9 @@
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use crate::evaluate::Evaluator;
-use crate::metrics::{AllMetrics, Metric};
+use crate::metrics::{Metric, MetricValues};
 use crate::search_space::TrialConfig;
+use fitting_core::spread::SpreadDiagnostics;
 
 // ─── Experiment variants ──────────────────────────────────────────────────────
 
@@ -16,9 +17,8 @@ pub(crate) fn parse_experiment(name: &str) -> TrialConfig {
         "rms_anchored" => TrialConfig::rms_anchored(),
         other => {
             eprintln!(
-                "Unknown --experiment '{}'. Valid: all_off, centering_only, global_only, \
-                 norm_only, all_free, rms_anchored.",
-                other
+                "Unknown --experiment '{other}'. Valid: all_off, centering_only, global_only, \
+                 norm_only, all_free, rms_anchored."
             );
             std::process::exit(1);
         }
@@ -47,15 +47,21 @@ pub(crate) fn eval_single_metric(
     trial_idx: usize,
     pb_iters: &ProgressBar,
 ) -> (f64, f64) {
+    // A seed whose reading is absent is dropped rather than substituted: this
+    // feeds `--mode scan`'s mean/std, which describe the seeds that produced a
+    // number. `mean_std` over an empty slice yields NaN, which is the honest
+    // answer when no seed measured anything.
     let values: Vec<f64> = (0..n_seeds)
-        .map(|si| {
-            evaluator.evaluate_with_metric(
-                config,
-                curvature,
-                metric,
-                trial_seed(trial_idx, si),
-                pb_iters,
-            )
+        .filter_map(|si| {
+            evaluator
+                .evaluate_with_metric(
+                    config,
+                    curvature,
+                    metric,
+                    trial_seed(trial_idx, si),
+                    pb_iters,
+                )
+                .value()
         })
         .collect();
     mean_std(&values)
@@ -68,13 +74,16 @@ pub(crate) fn eval_all_metrics(
     n_seeds: usize,
     trial_idx: usize,
     pb_iters: &ProgressBar,
-) -> AllMetrics {
-    let samples: Vec<AllMetrics> = (0..n_seeds)
+) -> (MetricValues, SpreadDiagnostics) {
+    let (metrics, spread): (Vec<MetricValues>, Vec<SpreadDiagnostics>) = (0..n_seeds)
         .map(|si| {
             evaluator.compute_all_metrics(config, curvature, trial_seed(trial_idx, si), pb_iters)
         })
-        .collect();
-    AllMetrics::mean(&samples)
+        .unzip();
+    (
+        MetricValues::mean(&metrics),
+        SpreadDiagnostics::mean(&spread),
+    )
 }
 
 pub(crate) fn make_progress_bar(mp: &MultiProgress, total: u64, template: &str) -> ProgressBar {
@@ -88,7 +97,7 @@ pub(crate) fn make_progress_bar(mp: &MultiProgress, total: u64, template: &str) 
 }
 
 pub(crate) fn parse_metric(name: &str) -> Metric {
-    Metric::from_str(name).unwrap_or_else(|| {
+    Metric::by_name(name).unwrap_or_else(|| {
         eprintln!(
             "Unknown metric '{}'. Valid options: {}",
             name,

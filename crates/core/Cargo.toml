@@ -6,13 +6,28 @@ rust-version = "1.82"
 
 [dependencies]
 
+# Only for `metrics::MetricValues`'s wire format, which `fitting-optimizer` and
+# `fitting-analysis` both need and `crates/web` does not. Behind a feature so
+# the default build — and therefore the wasm bundle — stays dependency-free.
+serde = { version = "1.0", optional = true }
+
 # plotters is used solely by `examples/` for diagnostic plots, and it drags in
 # font-kit/fontconfig (a system library). Gate it behind an optional feature and
 # `required-features` on the examples so the library, tests and clippy stay
 # dependency-free — CI doesn't need fontconfig to test/lint core.
 plotters = { version = "0.3", optional = true }
 
+# `test_metric_values_serde.rs` exercises the wire format, including the
+# `#[serde(flatten)]` embedding the trial records use. `float_roundtrip` is
+# enabled to match `fitting-analysis`: its default parser can land one ulp off
+# the nearest double, which is enough to drop a real Pareto front point, and the
+# test pins that flatten's buffering does not bypass it.
+[dev-dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+
 [features]
+serde = ["dep:serde"]
 plot-examples = ["dep:plotters"]
 
 [[example]]

@@ -18,7 +18,10 @@ use plotters::coord::Shift;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
 
-use super::*;
+use super::{
+    draw_legend, finite_xy, robust_range, setting_color, CellMap, Figure, LegendEntry, Res,
+    GEOMETRIES, OK_BLACK, REAL_DATASETS, SETTING_ORDER, X_LABEL, X_METRIC, Y_LABEL, Y_METRIC,
+};
 use crate::aggregate::BASELINE;
 use crate::cell::Cell;
 use crate::pareto::{slice_front_2d, step_polyline};
@@ -66,6 +69,7 @@ impl Curve {
 }
 
 impl<'a> StackedFronts<'a> {
+    #[must_use]
     pub fn new(cells: &'a CellMap, n: usize) -> Self {
         Self { cells, n }
     }
@@ -92,6 +96,7 @@ impl<'a> StackedFronts<'a> {
     }
 
     /// True when at least one panel has something to draw.
+    #[must_use]
     pub fn has_data(&self) -> bool {
         REAL_DATASETS
             .iter()

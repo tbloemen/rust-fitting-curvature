@@ -1,9 +1,15 @@
 //! Integration tests for t-SNE embedding workflow.
-//! Ported from Python test/test_integration.py
+//! Ported from Python `test/test_integration.py`
 
 use fitting_core::config::{InitMethod, ScalingLossType, TrainingConfig};
 use fitting_core::embedding::EmbeddingState;
 use fitting_core::matrices::get_default_init_scale;
+use fitting_core::metrics::{
+    CLUSTER_DENSITY_MEASURE, CONTINUITY, CONTINUITY_MANIFOLD, DAVIES_BOULDIN_RATIO,
+    DISTANCE_CONSISTENCY, NEIGHBORHOOD_HIT, NEIGHBORHOOD_HIT_MANIFOLD, NORMALIZED_STRESS,
+    NORMALIZED_STRESS_MANIFOLD, SHEPARD_GOODNESS, SHEPARD_GOODNESS_MANIFOLD, TRUSTWORTHINESS,
+    TRUSTWORTHINESS_MANIFOLD,
+};
 use fitting_core::synthetic_data::{load_synthetic, Rng};
 use fitting_core::visualisation::SphericalProjection;
 
@@ -432,8 +438,18 @@ fn test_pca_init_deterministic() {
 }
 
 // ---------------------------------------------------------------------------
-// compute_snapshot: on-demand end-of-training metrics
+// compute_metrics: on-demand end-of-training metrics
 // ---------------------------------------------------------------------------
+
+/// A metric that must have been measured.
+///
+/// Stronger than the `!is_nan()` these assertions used to make: a reading can
+/// now be absent for a stated reason, and "the pipeline produced a number here"
+/// is what these tests are actually about.
+fn measured(m: &fitting_core::metrics::MetricValues, metric: fitting_core::metrics::Metric) -> f64 {
+    m.get(metric)
+        .unwrap_or_else(|| panic!("{metric} was not measured: {:?}", m.reading(metric)))
+}
 
 fn small_config(n: usize, n_iterations: usize) -> TrainingConfig {
     TrainingConfig {
@@ -451,49 +467,47 @@ fn small_config(n: usize, n_iterations: usize) -> TrainingConfig {
 }
 
 #[test]
-fn test_compute_snapshot_manual_call() {
+fn test_compute_metrics_manual_call() {
     let data = create_test_data(50, 5, 42);
     let mut state = EmbeddingState::new(&data, 5, &small_config(50, 30));
     state.run(|_| true);
-    let snap = state.compute_snapshot();
-    assert!((0.0..=1.0).contains(&snap.trustworthiness_manifold));
-    assert!((0.0..=1.0).contains(&snap.trustworthiness_2d));
-    assert!(snap.neighborhood_hit_manifold.is_none());
+    let (m, _spread) = state.compute_metrics();
+    assert!((0.0..=1.0).contains(&measured(&m, TRUSTWORTHINESS_MANIFOLD)));
+    assert!((0.0..=1.0).contains(&measured(&m, TRUSTWORTHINESS)));
+    assert!(m.get(NEIGHBORHOOD_HIT_MANIFOLD).is_none());
 }
 
 #[test]
-fn test_compute_snapshot_with_labels_gives_some() {
+fn test_compute_metrics_with_labels_gives_some() {
     let data = create_test_data(60, 5, 42);
     let labels: Vec<u32> = (0..60u32).map(|i| i / 20).collect();
     let mut state = EmbeddingState::new(&data, 5, &small_config(60, 30)).with_labels(labels);
     state.run(|_| true);
-    let snap = state.compute_snapshot();
-    assert!(snap.neighborhood_hit_manifold.is_some());
-    assert!(snap.neighborhood_hit_2d.is_some());
-    assert!(snap.class_density_measure.is_some());
-    assert!(snap.cluster_density_measure.is_some());
-    assert!(snap.davies_bouldin_ratio.is_some());
+    let (m, _spread) = state.compute_metrics();
+    assert!(m.get(NEIGHBORHOOD_HIT_MANIFOLD).is_some());
+    assert!(m.get(NEIGHBORHOOD_HIT).is_some());
+    assert!(m.get(CLUSTER_DENSITY_MEASURE).is_some());
+    assert!(m.get(DAVIES_BOULDIN_RATIO).is_some());
+    assert!(m.get(DISTANCE_CONSISTENCY).is_some());
 }
 
 #[test]
-fn test_compute_snapshot_values_in_range() {
+fn test_compute_metrics_values_in_range() {
     let data = create_test_data(50, 5, 42);
     let labels: Vec<u32> = (0..50u32).map(|i| i / 25).collect();
     let mut state = EmbeddingState::new(&data, 5, &small_config(50, 20)).with_labels(labels);
     state.run(|_| true);
-    let snap = state.compute_snapshot();
-    assert!((0.0..=1.0).contains(&snap.trustworthiness_manifold));
-    assert!((0.0..=1.0).contains(&snap.trustworthiness_2d));
-    assert!((0.0..=1.0).contains(&snap.continuity_manifold));
-    assert!((0.0..=1.0).contains(&snap.continuity_2d));
-    assert!((0.0..=1.0).contains(&snap.knn_overlap_manifold));
-    assert!((0.0..=1.0).contains(&snap.knn_overlap_2d));
-    assert!(snap.normalized_stress_manifold >= 0.0);
-    assert!(snap.normalized_stress_2d >= 0.0);
-    assert!((0.0..=1.0).contains(&snap.shepard_goodness_manifold));
-    assert!((0.0..=1.0).contains(&snap.shepard_goodness_2d));
-    assert!(!snap.trustworthiness_manifold.is_nan());
-    assert!(!snap.trustworthiness_2d.is_nan());
+    let (m, _spread) = state.compute_metrics();
+    assert!((0.0..=1.0).contains(&measured(&m, TRUSTWORTHINESS_MANIFOLD)));
+    assert!((0.0..=1.0).contains(&measured(&m, TRUSTWORTHINESS)));
+    assert!((0.0..=1.0).contains(&measured(&m, CONTINUITY_MANIFOLD)));
+    assert!((0.0..=1.0).contains(&measured(&m, CONTINUITY)));
+    assert!(measured(&m, NORMALIZED_STRESS_MANIFOLD) >= 0.0);
+    assert!(measured(&m, NORMALIZED_STRESS) >= 0.0);
+    assert!((0.0..=1.0).contains(&measured(&m, SHEPARD_GOODNESS_MANIFOLD)));
+    assert!((0.0..=1.0).contains(&measured(&m, SHEPARD_GOODNESS)));
+    assert!(m.get(TRUSTWORTHINESS_MANIFOLD).is_some());
+    assert!(m.get(TRUSTWORTHINESS).is_some());
 }
 
 #[test]
@@ -504,17 +518,17 @@ fn test_with_projection_spherical_no_nan() {
     let mut state =
         EmbeddingState::new(&data, 5, &cfg).with_projection(SphericalProjection::Stereographic);
     state.run(|_| true);
-    let snap = state.compute_snapshot();
+    let (m, _spread) = state.compute_metrics();
     assert!(
-        !snap.trustworthiness_2d.is_nan(),
+        m.get(TRUSTWORTHINESS).is_some(),
         "NaN in trustworthiness_2d"
     );
     assert!(
-        !snap.normalized_stress_2d.is_nan(),
+        m.get(NORMALIZED_STRESS).is_some(),
         "NaN in normalized_stress_2d"
     );
     assert!(
-        !snap.shepard_goodness_2d.is_nan(),
+        m.get(SHEPARD_GOODNESS).is_some(),
         "NaN in shepard_goodness_2d"
     );
 }
@@ -527,19 +541,65 @@ fn test_with_projection_hyperbolic_no_nan() {
     let mut state = EmbeddingState::new(&data, 5, &cfg)
         .with_projection(SphericalProjection::AzimuthalEquidistant);
     state.run(|_| true);
-    let snap = state.compute_snapshot();
+    let (m, _spread) = state.compute_metrics();
     assert!(
-        !snap.trustworthiness_2d.is_nan(),
+        m.get(TRUSTWORTHINESS).is_some(),
         "NaN in trustworthiness_2d"
     );
     assert!(
-        !snap.normalized_stress_2d.is_nan(),
+        m.get(NORMALIZED_STRESS).is_some(),
         "NaN in normalized_stress_2d"
     );
 }
 
+/// The manifold and projected readings must actually be different numbers
+/// under curvature, or reporting both says nothing — and `figures/exp4.rs`,
+/// which is the evidence for having dropped the manifold objectives, would be
+/// comparing a column against itself.
+///
+/// Replaces a `compute_snapshot` test that manufactured the difference by
+/// passing coordinates unrelated to the distance matrix. `MetricContext`
+/// derives both readings from one set of points, so the difference now has to
+/// come from where it really comes from: the projection discarding curvature.
 #[test]
-fn test_compute_snapshot_from_distances() {
+fn test_manifold_and_projected_readings_differ_under_curvature() {
+    let data = create_test_data(60, 5, 42);
+    let mut cfg = small_config(60, 40);
+    cfg.curvature = -1.0;
+    let mut state = EmbeddingState::new(&data, 5, &cfg);
+    state.run(|_| true);
+    let (m, _spread) = state.compute_metrics();
+
+    assert!(
+        (measured(&m, NORMALIZED_STRESS) - measured(&m, NORMALIZED_STRESS_MANIFOLD)).abs() > 1e-9,
+        "projected stress {} and manifold stress {} are indistinguishable on a \
+         curved manifold",
+        measured(&m, NORMALIZED_STRESS),
+        measured(&m, NORMALIZED_STRESS_MANIFOLD)
+    );
+}
+
+/// The converse, and the reason `normalized_stress`'s doc says the two
+/// variants coincide for Euclidean embeddings: the optimal scale α is divided
+/// out, and `project_to_2d` only rescales flat coordinates for display. If this
+/// ever fails, the projection has started doing something to Euclidean output.
+#[test]
+fn test_the_two_readings_coincide_in_flat_space() {
+    let data = create_test_data(50, 5, 42);
+    let mut state = EmbeddingState::new(&data, 5, &small_config(50, 30));
+    state.run(|_| true);
+    let (m, _spread) = state.compute_metrics();
+
+    assert!(
+        (measured(&m, NORMALIZED_STRESS) - measured(&m, NORMALIZED_STRESS_MANIFOLD)).abs() < 1e-9,
+        "flat stress readings diverged: {} vs {}",
+        measured(&m, NORMALIZED_STRESS),
+        measured(&m, NORMALIZED_STRESS_MANIFOLD)
+    );
+}
+
+#[test]
+fn test_compute_metrics_from_distances() {
     let mut rng = Rng::new(42);
     let n = 40;
     let mut dist = vec![0.0f64; n * n];
@@ -564,9 +624,9 @@ fn test_compute_snapshot_from_distances() {
     };
     let mut state = EmbeddingState::from_distances(&dist, n, &cfg);
     state.run(|_| true);
-    let snap = state.compute_snapshot();
-    assert!(!snap.trustworthiness_manifold.is_nan());
-    assert!(!snap.trustworthiness_2d.is_nan());
+    let (m, _spread) = state.compute_metrics();
+    assert!(m.get(TRUSTWORTHINESS_MANIFOLD).is_some());
+    assert!(m.get(TRUSTWORTHINESS).is_some());
 }
 
 /// Regression: the hyperbolic feature norm loss must target the *bounded* input

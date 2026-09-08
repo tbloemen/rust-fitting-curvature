@@ -64,7 +64,7 @@ impl GradientTestSetup {
     }
 }
 
-/// KL loss computation (mirrors embedding.rs kl_loss).
+/// KL loss computation (mirrors embedding.rs `kl_loss`).
 fn kl_loss(q: &[f64], p: &[f64], n_points: usize) -> f64 {
     let eps = 1e-12;
     let mut loss = 0.0;

@@ -343,6 +343,7 @@ name = "fitting-analysis"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "fitting-core",
  "plotters",
  "serde",
  "serde_json",
@@ -353,6 +354,8 @@ name = "fitting-core"
 version = "0.1.0"
 dependencies = [
  "plotters",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

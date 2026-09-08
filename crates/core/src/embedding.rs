@@ -2,6 +2,7 @@ use crate::affinities::{
     compute_perplexity_affinities, compute_perplexity_affinities_from_distances,
 };
 use crate::config::{InitMethod, TrainingConfig};
+use crate::context::EmbeddingContext;
 use crate::kernels::compute_q_matrix_with_distances;
 use crate::kl_divergence::{
     compute_global_similarities, depth_norm_loss_gradient, kl_gradient, kl_loss, norm_loss_gradient,
@@ -9,10 +10,11 @@ use crate::kl_divergence::{
 use crate::manifolds;
 use crate::manifolds::Manifold;
 use crate::matrices::{compute_euclidean_distance_matrix, pca, pca_from_distances};
-use crate::metrics::{self, MetricsSnapshot};
+use crate::metrics::MetricValues;
 use crate::optimizer::RiemannianSGDMomentum;
 use crate::scaling_loss;
-use crate::visualisation::{self, SphericalProjection};
+use crate::spread::SpreadDiagnostics;
+use crate::visualisation::SphericalProjection;
 
 /// Embedding state for step-by-step iteration.
 ///
@@ -38,7 +40,7 @@ pub struct EmbeddingState {
     /// re-allocating a scaled `p_base` every iteration; freed at the phase
     /// boundary. Empty when there is no early-exaggeration phase.
     p_early: Vec<f64>,
-    /// Globally-normalized input similarities p̂_ij for the Zhou & Sharpee global loss.
+    /// Globally-normalized input similarities `p̂_ij` for the Zhou & Sharpee global loss.
     /// Only populated when `config.global_loss_weight > 0`.
     p_hat: Vec<f64>,
     /// Whether to compute the (O(n²)) KL loss each `step`. The hyperparameter
@@ -66,6 +68,7 @@ pub struct EmbeddingState {
 
 impl EmbeddingState {
     /// Initialize embedding state from input data and config.
+    #[must_use]
     pub fn new(data: &[f64], n_features: usize, config: &TrainingConfig) -> Self {
         let n_points = config.n_points;
         let manifold = manifolds::create_manifold(config.curvature);
@@ -163,7 +166,7 @@ impl EmbeddingState {
     /// Initialize embedding state from a pre-computed pairwise distance matrix.
     ///
     /// Uses `compute_perplexity_affinities_from_distances` so the t-SNE affinities
-    /// are driven by the provided distances (e.g. tree distances for WordNet) rather
+    /// are driven by the provided distances (e.g. tree distances for `WordNet`) rather
     /// than Euclidean distances in some feature space.
     ///
     /// `InitMethod::Pca` is handled via classical MDS (PCoA): the distance matrix is
@@ -171,6 +174,7 @@ impl EmbeddingState {
     /// The *feature* norm loss is skipped (no input feature vectors exist); when
     /// `norm_loss_weight > 0`, the depth norm loss is applied instead, comparing each
     /// point's embedding depth to its graph distance from the root.
+    #[must_use]
     pub fn from_distances(distances: &[f64], n_points: usize, config: &TrainingConfig) -> Self {
         let manifold = manifolds::create_manifold(config.curvature);
         let ambient_dim = manifold.ambient_dim(config.embed_dim);
@@ -259,12 +263,14 @@ impl EmbeddingState {
     }
 
     /// Set class labels for label-dependent metrics (neighbourhood hit, class/cluster density, DB ratio).
+    #[must_use]
     pub fn with_labels(mut self, labels: Vec<u32>) -> Self {
         self.labels = Some(labels);
         self
     }
 
     /// Set the spherical projection used when computing "after-projection" (2D) metrics.
+    #[must_use]
     pub fn with_projection(mut self, projection: SphericalProjection) -> Self {
         self.projection = projection;
         self
@@ -275,33 +281,48 @@ impl EmbeddingState {
     /// Computing the loss is an O(n²) pass with a `ln` per pair. Callers that
     /// never read `loss` (e.g. the hyperparameter search) should disable it to
     /// avoid that work each iteration. Defaults to enabled.
+    #[must_use]
     pub fn with_loss_tracking(mut self, track: bool) -> Self {
         self.track_loss = track;
         self
     }
 
-    /// Compute a full metrics snapshot for the current embedding state.
-    pub fn compute_snapshot(&self) -> MetricsSnapshot {
+    /// Score the current embedding on every metric in
+    /// [`metrics::ALL`](crate::metrics::ALL), and measure its spread.
+    ///
+    /// The two come back separately because they are different things: the
+    /// metrics say how faithful the embedding is, the diagnostics say how far
+    /// it reaches. Only the first is ever optimised.
+    ///
+    /// `k` and the projection come from this state, not from the registry: the
+    /// interactive view scores at the configured perplexity under whichever
+    /// projection the user picked, where the optimizer uses
+    /// `k = min(30, 0.1n)` under `AzimuthalEquidistant`. Both readings are
+    /// valid; they are just not the same number, and `EmbeddingContext` takes them
+    /// as inputs so neither caller can quietly adopt the other's.
+    #[must_use]
+    pub fn compute_metrics(&self) -> (MetricValues, SpreadDiagnostics) {
         let n = self.n_points;
         let k = (self.config.perplexity as usize)
             .min(n.saturating_sub(2))
             .max(1);
         let high_dim = self.high_dim_distances();
-        let embed_dist = self.embedded_distances();
-        let proj = visualisation::project_to_2d(
+        let ctx = EmbeddingContext::new(
+            &high_dim,
             &self.points,
+            self.labels.as_deref(),
             n,
             self.ambient_dim,
             self.config.curvature,
-            self.projection,
-        );
-        metrics::compute_snapshot(
-            &high_dim,
-            &embed_dist,
-            &proj.coords,
-            self.labels.as_deref(),
-            n,
             k,
+            self.projection,
+        )
+        // Already derived by `embedded_distances`; deriving them a second time
+        // would be both wasted work and a chance for the two to disagree.
+        .with_manifold_dist(self.embedded_distances());
+        (
+            MetricValues::compute(&ctx),
+            SpreadDiagnostics::compute(&ctx),
         )
     }
 
@@ -477,11 +498,13 @@ impl EmbeddingState {
     }
 
     /// Whether all iterations have been completed.
+    #[must_use]
     pub fn is_done(&self) -> bool {
         self.iteration >= self.config.n_iterations
     }
 
     /// Current training phase: "early" during exaggeration, "main" after.
+    #[must_use]
     pub fn phase(&self) -> &str {
         if self.iteration < self.config.early_exaggeration_iterations {
             "early"
@@ -502,6 +525,7 @@ impl EmbeddingState {
     }
 
     /// Access the training config.
+    #[must_use]
     pub fn config(&self) -> &TrainingConfig {
         &self.config
     }
@@ -511,25 +535,28 @@ impl EmbeddingState {
     /// For feature-based construction (`new`): computed as Euclidean distance
     /// in input feature space. For distance-based construction (`from_distances`):
     /// returns the pre-computed distances that were supplied at construction time.
+    #[must_use]
     pub fn high_dim_distances(&self) -> Vec<f64> {
-        if !self.precomputed_distances.is_empty() {
-            self.precomputed_distances.clone()
-        } else {
+        if self.precomputed_distances.is_empty() {
             crate::matrices::compute_euclidean_distance_matrix(
                 &self.input_data,
                 self.n_points,
                 self.n_features,
             )
+        } else {
+            self.precomputed_distances.clone()
         }
     }
 
     /// Compute the embedded pairwise distance matrix using the manifold metric.
+    #[must_use]
     pub fn embedded_distances(&self) -> Vec<f64> {
         self.manifold
             .pairwise_distances(&self.points, self.n_points, self.ambient_dim)
     }
 
     /// Per-point geodesic distance from the manifold's natural origin.
+    #[must_use]
     pub fn distances_from_origin(&self) -> Vec<f64> {
         self.manifold
             .distances_from_origin(&self.points, self.n_points, self.ambient_dim)
@@ -555,8 +582,8 @@ fn make_p_early(p_base: &[f64], config: &TrainingConfig) -> Vec<f64> {
 /// - **Euclidean** (k=0): use as-is.
 /// - **Hyperboloid** (k<0): spatial components = scaled PCA coords (indices 1..);
 ///   time component (index 0) = sqrt(r² + ||spatial||²).
-/// - **Sphere** (k>0): spatial components = scaled PCA coords (indices 0..embed_dim);
-///   last component (index embed_dim) = sqrt(r² - ||spatial||²).
+/// - **Sphere** (k>0): spatial components = scaled PCA coords (indices `0..embed_dim`);
+///   last component (index `embed_dim`) = sqrt(r² - ||spatial||²).
 fn lift_pca_to_manifold(
     coords: &[f64],
     n_points: usize,

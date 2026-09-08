@@ -67,12 +67,14 @@ pub struct Reconstruction {
 
 impl Reconstruction {
     /// Geodesic distances on the manifold this configuration lives on.
+    #[must_use]
     pub fn pairwise_distances(&self, n: usize) -> Vec<f64> {
         create_manifold(self.curvature).pairwise_distances(&self.points, n, self.ambient_dim)
     }
 
     /// Geodesic distance from each point to the manifold's natural origin —
     /// the quantity `r_max` and `r_rms` are computed from.
+    #[must_use]
     pub fn distances_from_origin(&self, n: usize) -> Vec<f64> {
         create_manifold(self.curvature).distances_from_origin(&self.points, n, self.ambient_dim)
     }
@@ -84,6 +86,7 @@ impl Reconstruction {
     /// is the same quantity a t-SNE trial reports: this uses the same
     /// `Manifold::distances_from_origin` an embedding's `r_rms` comes from, and
     /// reduces it the same way.
+    #[must_use]
     pub fn r_rms(&self, n: usize) -> f64 {
         let origin = self.distances_from_origin(n);
         if origin.is_empty() {
@@ -100,6 +103,7 @@ impl Reconstruction {
     /// This is *the* κ of the repository: fits, `--mode detect`, the three-arm
     /// table and the embeddings all report it, so any two of them can be set
     /// side by side and differenced.
+    #[must_use]
     pub fn kappa(&self, n: usize) -> f64 {
         let r = self.r_rms(n);
         self.curvature.abs() * r * r
@@ -123,6 +127,7 @@ fn axis_scale(lambda: f64) -> f64 {
 /// a conforming `Z` is PSD of rank `d+1`: retain the `d+1` most-positive
 /// eigenvalues (matching `signature::spherical_residual`'s `(0, dim+1)` split)
 /// and radially project each point back onto the sphere of radius `r`.
+#[must_use]
 pub fn reconstruct_spherical(distances: &[f64], n: usize, dim: usize, r: f64) -> Reconstruction {
     let ambient = dim + 1;
     let z = build_z_spherical(distances, n, r);
@@ -175,6 +180,7 @@ pub fn reconstruct_spherical(distances: &[f64], n: usize, dim: usize, r: f64) ->
 /// signature `(1 negative, d positive)`: the most-negative eigenvalue supplies
 /// the timelike axis and the `d` most-positive the spatial ones, matching
 /// `signature::hyperbolic_residual`'s `(1, dim)` split.
+#[must_use]
 pub fn reconstruct_hyperbolic(distances: &[f64], n: usize, dim: usize, r: f64) -> Reconstruction {
     let ambient = dim + 1;
     let z = build_z_hyperbolic(distances, n, r);
@@ -232,6 +238,7 @@ pub fn reconstruct_hyperbolic(distances: &[f64], n: usize, dim: usize, r: f64) -
 /// conforming `B` is PSD of rank `dim`, matching
 /// `signature::euclidean_residual`'s `(0, dim)` split. There is no manifold to
 /// project back onto and no radius to fit.
+#[must_use]
 pub fn reconstruct_euclidean(distances: &[f64], n: usize, dim: usize) -> Reconstruction {
     let b = build_z_euclidean(distances, n);
     let eigen = eigen_symmetric(&b, n);

@@ -55,7 +55,7 @@ struct Args {
 
 /// A figure with no data behind it is skipped, not an error: the sweep grid is
 /// not rectangular (no spherical `norm_only`, hyperbolic-only `rms_anchored`)
-/// and Exp 3's scatter needs a κ_data export that is a separate run. What is
+/// and Exp 3's scatter needs a `κ_data` export that is a separate run. What is
 /// missing is visible in `out_dir` — the figure simply isn't there.
 fn main() -> Result<()> {
     let args = Args::parse();

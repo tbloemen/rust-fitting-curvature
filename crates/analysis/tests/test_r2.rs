@@ -1,15 +1,55 @@
 //! The R2 indicator: weight-simplex enumeration, the preference regions, the
 //! compliance property the ΔR2 claim rests on, and the recommendation.
 
-use fitting_analysis::objectives::{FAMILIES, METRIC_PAIRS, N_OBJECTIVES, OBJECTIVES};
+use fitting_analysis::objectives::{
+    FAMILIES, METRIC_PAIRS, N_METRIC_PAIRS, N_OBJECTIVES, OBJECTIVES,
+};
 use fitting_analysis::r2::{
     cell_summary, front_utilities, r2, recommendation, Weights, REGION_ALL,
 };
 use fitting_analysis::TrialRecord;
+use fitting_core::metrics::{Direction, MetricValue, MetricValues, CONTINUITY, TRUSTWORTHINESS};
 
 /// A front point that scores *v* on every objective.
 fn flat(v: f64) -> [f64; N_OBJECTIVES] {
     [v; N_OBJECTIVES]
+}
+
+/// A front point whose objectives all differ, so a test cannot pass by symmetry.
+///
+/// Derived from the arity rather than written out: a literal row is one more
+/// place the objective set has to be edited when it grows, and the compiler
+/// reports it as a size mismatch a long way from the reason.
+fn ramp(base: f64) -> [f64; N_OBJECTIVES] {
+    std::array::from_fn(|j| base + 0.03 * (j % 4) as f64)
+}
+
+/// `n` choose `k`, exactly, for the region combinatorics below.
+fn binom(n: usize, k: usize) -> usize {
+    if k > n {
+        return 0;
+    }
+    (0..k.min(n - k)).fold(1, |acc, i| acc * (n - i) / (i + 1))
+}
+
+/// Count vectors of `k` non-negative integers summing to `s`: `C(s + k - 1, k - 1)`.
+fn compositions(s: usize, k: usize) -> usize {
+    if k == 0 {
+        return usize::from(s == 0);
+    }
+    binom(s + k - 1, k - 1)
+}
+
+/// Size of the "at least half the mass on `m` of the `N_OBJECTIVES` axes" region.
+///
+/// Split on `t`, the mass the region's own axes carry: the members take one of
+/// `compositions(t, m)` arrangements and the rest take one of
+/// `compositions(s - t, N_OBJECTIVES - m)`.
+fn region_size(m: usize, s: usize) -> usize {
+    let half = s.div_ceil(2);
+    (half..=s)
+        .map(|t| compositions(t, m) * compositions(s - t, N_OBJECTIVES - m))
+        .sum()
 }
 
 /// R2 of a front under a named region.
@@ -23,9 +63,9 @@ fn score(front: &[[f64; N_OBJECTIVES]], w: &Weights, region: &str) -> f64 {
 #[test]
 fn simplex_has_the_expected_size_and_every_vector_sums_to_one() {
     let w = Weights::new();
-    // C(s + k - 1, k - 1) = C(10, 5) = 252 for k = 6, s = 5.
+    // C(s + k - 1, k - 1): the number of ways to split s units over k axes.
     assert_eq!(w.s, Weights::DEFAULT_S);
-    assert_eq!(w.vectors.len(), 252);
+    assert_eq!(w.vectors.len(), compositions(w.s, N_OBJECTIVES));
     assert_eq!(w.counts.len(), w.vectors.len());
 
     for (counts, lambda) in w.counts.iter().zip(&w.vectors) {
@@ -39,16 +79,17 @@ fn simplex_has_the_expected_size_and_every_vector_sums_to_one() {
 #[test]
 fn resolution_flows_through_the_enumeration_and_the_regions() {
     let w = Weights::with_resolution(2);
-    // C(2 + 5, 5) = 21, and "at least half the mass" is now a count of 1.
+    // Two units instead of five, so "at least half the mass" is now a count of 1.
     assert_eq!(w.s, 2);
-    assert_eq!(w.vectors.len(), 21);
+    assert_eq!(w.vectors.len(), compositions(2, N_OBJECTIVES));
+    assert_ne!(w.vectors.len(), Weights::new().vectors.len());
     for counts in &w.counts {
         let total: u32 = counts.iter().map(|&c| u32::from(c)).sum();
         assert_eq!(total, 2, "counts {counts:?} must sum to s");
     }
     // The families partition the objectives, so every vector puts at least one
-    // of its two units on some family and the family regions have to cover the
-    // whole simplex.
+    // of its two units on some family's objectives and the family regions have
+    // to cover the whole simplex.
     let covered: std::collections::BTreeSet<usize> = FAMILIES
         .iter()
         .flat_map(|(f, _)| w.region(f).expect("family region exists").indices.clone())
@@ -69,24 +110,33 @@ fn simplex_vectors_are_distinct() {
 
 #[test]
 fn every_pair_follows_the_manifold_naming_convention() {
-    // METRIC_PAIRS no longer generates OBJECTIVES — it is the Exp 4 diagnostic
-    // table now — but its names are still hand-written, and `_manifold` is the
-    // suffix that ties them to the JSONL columns.
-    for (projected, manifold) in METRIC_PAIRS {
-        assert_eq!(manifold, format!("{projected}_manifold"));
+    // METRIC_PAIRS is derived by matching `QualityMetric::base`, so the pairing
+    // itself can no longer be wrong. What is still worth pinning is the
+    // *naming*: `_manifold` is the suffix that ties a pair's second member to
+    // its JSONL column, and Exp 4's panel captions read the first member's.
+    for (projected, manifold) in METRIC_PAIRS.iter() {
+        assert_eq!(manifold.name(), format!("{}_manifold", projected.name()));
     }
+    assert_eq!(METRIC_PAIRS.len(), N_METRIC_PAIRS);
+}
+
+#[test]
+fn metric_pairs_has_the_declared_length() {
+    // `N_METRIC_PAIRS` is a `const` because `figures/exp4.rs` uses it as an
+    // array length, so it is the one count restated rather than derived.
+    assert_eq!(METRIC_PAIRS.len(), N_METRIC_PAIRS);
 }
 
 #[test]
 fn every_objective_resolves_on_a_record() {
-    // The way to break this is a typo in OBJECTIVES, or an objective added
-    // there but not to `TrialRecord::objective` — either one makes the
-    // objective read as permanently missing, i.e. silently worst-case.
+    // `oriented_row` still resolves objectives by *name*, so a metric whose
+    // wire name does not round-trip reads as permanently missing — silently
+    // worst-case rather than an error.
     let r = record(0.5);
-    for name in OBJECTIVES {
+    for metric in OBJECTIVES {
         assert!(
-            r.objective(name).is_some(),
-            "{name} does not resolve on a fully-populated record"
+            r.objective(metric.name()).is_some(),
+            "{metric} does not resolve on a fully-populated record"
         );
     }
 }
@@ -95,28 +145,34 @@ fn every_objective_resolves_on_a_record() {
 fn region_sizes_match_the_combinatorics() {
     let w = Weights::new();
 
-    assert_eq!(w.region(REGION_ALL).unwrap().indices.len(), 252);
+    assert_eq!(w.region(REGION_ALL).unwrap().indices.len(), w.vectors.len());
 
-    // At least 3 of 5 units on the family's two objectives, the other four
-    // objectives taking the rest:
-    //   t=3: 4·C(5,3)=40, t=4: 5·C(4,3)=20, t=5: 6·C(3,3)=6  ⇒ 66.
-    for (family, _) in FAMILIES {
+    // At least half the mass on the family's own objectives, the remaining
+    // objectives taking the rest — `region_size` is that split, summed over how
+    // much mass the family carries. A family and a single objective use the
+    // same rule, so a one-member family scores exactly the region of its lone
+    // objective; that is what `class_separation` did while `neighborhood_hit`
+    // was its only member.
+    for (family, members) in FAMILIES {
         assert_eq!(
             w.region(family).unwrap().indices.len(),
-            66,
+            region_size(members.len(), w.s),
             "region {family}"
         );
     }
 
-    // At least 3 of 5 units on one objective, the other five taking the rest:
-    //   l=3: C(6,4)=15, l=4: C(5,4)=5, l=5: 1  ⇒ 21.
     for objective in OBJECTIVES {
         assert_eq!(
-            w.region(objective).unwrap().indices.len(),
-            21,
+            w.region(objective.name()).unwrap().indices.len(),
+            region_size(1, w.s),
             "region {objective}"
         );
     }
+
+    // The rule has to actually be selective: a region that admitted everything,
+    // or nothing, would satisfy the equalities above just as well.
+    assert!(region_size(1, w.s) > 0);
+    assert!(region_size(FAMILIES[0].1.len(), w.s) < w.vectors.len());
 }
 
 #[test]
@@ -124,7 +180,10 @@ fn families_partition_the_objectives() {
     // FAMILIES indexes into OBJECTIVES by position, so a reordering of either
     // silently regroups the regions. Every objective must belong to exactly one
     // family.
-    let mut seen: Vec<usize> = FAMILIES.iter().flat_map(|(_, idx)| *idx).collect();
+    let mut seen: Vec<usize> = FAMILIES
+        .iter()
+        .flat_map(|(_, idx)| idx.iter().copied())
+        .collect();
     seen.sort_unstable();
     assert_eq!(seen, (0..N_OBJECTIVES).collect::<Vec<_>>());
 }
@@ -133,13 +192,13 @@ fn families_partition_the_objectives() {
 fn a_family_region_puts_at_least_half_its_mass_on_its_own_objectives() {
     let w = Weights::new();
     let half = w.s.div_ceil(2) as u8;
-    for (family, [a, b]) in FAMILIES {
+    for (family, members) in FAMILIES {
         for &i in &w.region(family).unwrap().indices {
             let c = &w.counts[i];
+            let mass: u8 = members.iter().map(|&j| c[j]).sum();
             assert!(
-                c[a] + c[b] >= half,
-                "region {family} admits {c:?}, which puts {} of {} units on it",
-                c[a] + c[b],
+                mass >= half,
+                "region {family} admits {c:?}, which puts {mass} of {} units on it",
                 w.s
             );
         }
@@ -153,10 +212,11 @@ fn a_family_region_penalises_its_own_objectives_hardest() {
     // cost more under that family than degrading someone else's by the same
     // amount. (R2 is a cost, so "worse" is larger.)
     let w = Weights::new();
-    let degrade = |[a, b]: [usize; 2]| {
+    let degrade = |members: &[usize]| {
         let mut p = flat(0.9);
-        p[a] = 0.1;
-        p[b] = 0.1;
+        for &j in members {
+            p[j] = 0.1;
+        }
         p
     };
     for (family, own) in FAMILIES {
@@ -194,8 +254,8 @@ fn the_ideal_point_scores_zero_and_the_nadir_scores_worst() {
 fn the_indicator_is_weakly_pareto_compliant() {
     // The property ΔR2 > 0 rests on: a dominating front can never score worse.
     let w = Weights::new();
-    let worse = [0.3, 0.4, 0.5, 0.2, 0.6, 0.7];
-    let better = [0.4, 0.5, 0.5, 0.3, 0.8, 0.9];
+    let worse = ramp(0.3);
+    let better = worse.map(|v| v + 0.1);
     for region in &w.regions {
         let (region, b, a) = (
             region.name.as_str(),
@@ -238,7 +298,7 @@ fn the_indicator_is_order_independent() {
     let mut a = flat(0.5);
     a[3] = 0.9;
     let mut b = flat(0.6);
-    b[5] = 0.2;
+    b[4] = 0.2;
     assert_eq!(
         score(&[a, b], &w, REGION_ALL),
         score(&[b, a], &w, REGION_ALL)
@@ -281,19 +341,28 @@ fn recommendation_ties_resolve_to_the_lowest_front_index() {
 
 /// A record scoring *v* on every maximised objective; stress is stored raw, so
 /// `1 - v` there gives an oriented value of *v* as well.
+/// A record scoring *v* on every objective, oriented so that a larger `v` is a
+/// better record: `normalized_stress` is minimised, so it gets `1 - v`.
+///
+/// Built through `MetricValues` rather than as a struct literal, since the
+/// metric columns are one flattened block now.
+fn metrics_at(v: f64) -> MetricValues {
+    let mut m = MetricValues::MISSING;
+    for metric in fitting_core::metrics::ALL {
+        m.set(
+            *metric,
+            MetricValue::measured(match metric.direction() {
+                Direction::Minimize => 1.0 - v,
+                Direction::Maximize => v,
+            }),
+        );
+    }
+    m
+}
+
 fn record(v: f64) -> TrialRecord {
     TrialRecord {
-        trustworthiness: Some(v),
-        trustworthiness_manifold: Some(v),
-        continuity: Some(v),
-        continuity_manifold: Some(v),
-        normalized_stress: Some(1.0 - v),
-        normalized_stress_manifold: Some(1.0 - v),
-        shepard_goodness: Some(v),
-        shepard_goodness_manifold: Some(v),
-        neighborhood_hit: Some(v),
-        neighborhood_hit_manifold: Some(v),
-        class_density_measure: Some(v),
+        metrics: metrics_at(v),
         ..Default::default()
     }
 }
@@ -323,9 +392,11 @@ fn cell_summary_indexes_the_front_back_into_the_records() {
 #[test]
 fn a_diverged_trial_scores_worst_rather_than_vanishing() {
     let w = Weights::new();
+    // The two ways a reading can carry no number. Both orient to the worst
+    // case, which is what keeps a diverged trial from scoring well.
     let mut diverged = record(0.9);
-    diverged.trustworthiness = None;
-    diverged.continuity = Some(f64::NAN);
+    diverged.metrics.set(TRUSTWORTHINESS, MetricValue::Diverged);
+    diverged.metrics.set(CONTINUITY, MetricValue::Absent);
 
     let good = cell_summary(&[record(0.9)], &w);
     let bad = cell_summary(&[diverged], &w);

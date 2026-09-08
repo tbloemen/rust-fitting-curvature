@@ -16,6 +16,9 @@ use std::path::Path;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use fitting_core::metrics::{Metric, MetricValues};
+use fitting_core::spread::SpreadDiagnostics;
+
 use crate::error::{Error, IoContext, Result};
 
 /// One line of a results JSONL file. Unknown fields (extra metrics, timings) are
@@ -48,43 +51,20 @@ pub struct TrialRecord {
     #[serde(default)]
     pub early_exaggeration_factor: Option<f64>,
 
-    #[serde(default)]
-    pub trustworthiness: Option<f64>,
-    #[serde(default)]
-    pub trustworthiness_manifold: Option<f64>,
-    #[serde(default)]
-    pub continuity: Option<f64>,
-    #[serde(default)]
-    pub continuity_manifold: Option<f64>,
-    #[serde(default)]
-    pub normalized_stress: Option<f64>,
-    #[serde(default)]
-    pub normalized_stress_manifold: Option<f64>,
-    #[serde(default)]
-    pub shepard_goodness: Option<f64>,
-    #[serde(default)]
-    pub shepard_goodness_manifold: Option<f64>,
-    #[serde(default)]
-    pub neighborhood_hit: Option<f64>,
-    #[serde(default)]
-    pub neighborhood_hit_manifold: Option<f64>,
-    /// Projection-only and label-aware; an objective since the set moved to
-    /// projected-only metrics. The other three label-aware metrics
-    /// (`dunn_index`, `davies_bouldin_ratio`, `cluster_density_measure`) are
-    /// deliberately absent: they are unbounded, so they are not objectives and
-    /// nothing here reads them.
-    #[serde(default)]
-    pub class_density_measure: Option<f64>,
+    /// Every metric on this line, read by name from the flat JSONL columns.
+    ///
+    /// Absent, `null` and non-finite all read back as absent through
+    /// [`fitting_core::metrics::MetricValues::get`], and a column belonging to
+    /// a retired metric is ignored — which is what lets the ~350 MB of
+    /// `results/` written by older builds keep loading unchanged.
+    #[serde(flatten)]
+    pub metrics: MetricValues,
 
-    #[serde(default)]
-    pub r_max: Option<f64>,
-    #[serde(default)]
-    pub r_rms: Option<f64>,
-    /// Origin-free spread (radius of gyration over the pairwise geodesics).
-    /// Written only by builds carrying the fix, so it is absent from every
-    /// pre-existing `results/` file and present throughout `results-rgyr/`.
-    #[serde(default)]
-    pub r_gyration: Option<f64>,
+    /// How far the embedding reached. Not metrics — see
+    /// [`fitting_core::spread`] — but written on the same line, so read off it
+    /// the same way.
+    #[serde(flatten)]
+    pub spread: SpreadDiagnostics,
 
     /// Present only on `--mode scan` sweeps, which are excluded from analysis.
     #[serde(default)]
@@ -92,23 +72,17 @@ pub struct TrialRecord {
 }
 
 impl TrialRecord {
+    /// One metric by wire name, or `None` if this record does not carry it.
+    ///
+    /// This was a hand-written match arm per metric — a fourth copy of the
+    /// name-to-value mapping, and one where a typo reads as permanently
+    /// missing, i.e. silently worst-case, rather than as an error.
+    #[must_use]
     pub fn objective(&self, name: &str) -> Option<f64> {
-        match name {
-            "trustworthiness" => self.trustworthiness,
-            "trustworthiness_manifold" => self.trustworthiness_manifold,
-            "continuity" => self.continuity,
-            "continuity_manifold" => self.continuity_manifold,
-            "normalized_stress" => self.normalized_stress,
-            "normalized_stress_manifold" => self.normalized_stress_manifold,
-            "shepard_goodness" => self.shepard_goodness,
-            "shepard_goodness_manifold" => self.shepard_goodness_manifold,
-            "neighborhood_hit" => self.neighborhood_hit,
-            "neighborhood_hit_manifold" => self.neighborhood_hit_manifold,
-            "class_density_measure" => self.class_density_measure,
-            _ => None,
-        }
+        self.metrics.get(Metric::by_name(name)?)
     }
 
+    #[must_use]
     pub fn param(&self, name: &str) -> Option<f64> {
         match name {
             "learning_rate" => self.learning_rate,
@@ -120,14 +94,17 @@ impl TrialRecord {
             "early_exaggeration_factor" => self.early_exaggeration_factor,
             "curvature_magnitude" => self.curvature_magnitude,
             "curvature" => self.curvature,
-            "r_max" => self.r_max,
-            "r_rms" => self.r_rms,
-            "r_gyration" => self.r_gyration,
-            _ => None,
+            // The figures ask for the spread diagnostics through `param`
+            // alongside the hyperparameters — `bin/r2.rs`'s `PARAMS` names
+            // `r_rms` — so they are resolved here, not through the registry.
+            "r_max" => self.spread.r_max(),
+            "r_rms" => self.spread.r_rms(),
+            "r_gyration" => self.spread.r_gyration(),
+            other => Metric::by_name(other).and_then(|m| self.metrics.get(m)),
         }
     }
 
-    /// Dimensionless embedding curvature κ = |K|·R_rms² for one trial
+    /// Dimensionless embedding curvature κ = |`K|·R_rms²` for one trial
     /// (thesis `@eq:kappa` at the embedding gauge, `4methods.typ` §gauge-fixing).
     ///
     /// `|K|` prefers `curvature_magnitude` and falls back to `|curvature|`.
@@ -137,11 +114,12 @@ impl TrialRecord {
     /// without it every Euclidean cell reports no κ at all. Euclidean space has
     /// `K = 0`, hence `κ = 0` exactly on any gauge — that is a value, not a
     /// missing measurement, and a table that prints `---` for it is wrong.
+    #[must_use]
     pub fn kappa(&self) -> Option<f64> {
         let k = self
             .curvature_magnitude
             .or_else(|| self.curvature.map(f64::abs))?;
-        let r = self.r_rms?;
+        let r = self.spread.r_rms()?;
         if !(k.is_finite() && r.is_finite()) {
             return None;
         }
@@ -165,11 +143,12 @@ impl TrialRecord {
     /// `results/`. Callers that need a κ for both sets must say which gauge they
     /// are using rather than silently falling back — the two are not comparable
     /// on the spherical arm.
+    #[must_use]
     pub fn kappa_gyration(&self) -> Option<f64> {
         let k = self
             .curvature_magnitude
             .or_else(|| self.curvature.map(f64::abs))?;
-        let r = self.r_gyration?;
+        let r = self.spread.r_gyration()?;
         if !(k.is_finite() && r.is_finite()) {
             return None;
         }

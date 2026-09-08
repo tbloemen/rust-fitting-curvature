@@ -529,7 +529,7 @@ fn run_recommend(args: RecommendArgs) -> Result<()> {
                 params: PARAMS.iter().map(|p| (*p, record.param(p))).collect(),
                 objectives: OBJECTIVES
                     .iter()
-                    .map(|o| (*o, objectives.get(*o).copied().unwrap_or(0.0)))
+                    .map(|o| (o.name(), objectives.get(o.name()).copied().unwrap_or(0.0)))
                     .collect(),
             });
         }
@@ -571,14 +571,13 @@ struct FrontEntry {
 
 fn front_entry(r: &TrialRecord) -> FrontEntry {
     let mut metrics = serde_json::Map::new();
-    for name in OBJECTIVES {
-        let v = match r.objective(name) {
+    for metric in OBJECTIVES {
+        let v = match r.metrics.get(*metric) {
             Some(x) => serde_json::Number::from_f64(x)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null),
+                .map_or(serde_json::Value::Null, serde_json::Value::Number),
             None => serde_json::Value::Null,
         };
-        metrics.insert(name.to_string(), v);
+        metrics.insert(metric.name().to_string(), v);
     }
     FrontEntry {
         n_samples: r.n_samples,
@@ -590,8 +589,8 @@ fn front_entry(r: &TrialRecord) -> FrontEntry {
         norm_loss_weight: r.norm_loss_weight,
         early_exaggeration_factor: r.early_exaggeration_factor,
         curvature_magnitude: r.curvature_magnitude.unwrap_or(0.0),
-        r_max: r.r_max,
-        r_rms: r.r_rms,
+        r_max: r.spread.r_max(),
+        r_rms: r.spread.r_rms(),
         metrics,
     }
 }

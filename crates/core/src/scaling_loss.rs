@@ -8,6 +8,7 @@ use crate::config::ScalingLossType;
 ///
 /// Returns `(loss_value, ambient_space_gradient)`. The gradient must be projected
 /// to the tangent space by the caller before adding to the Riemannian gradient.
+#[must_use]
 pub fn compute(
     loss_type: ScalingLossType,
     points: &[f64],

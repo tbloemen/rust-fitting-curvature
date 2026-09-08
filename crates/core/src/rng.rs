@@ -1,6 +1,6 @@
 //! Small seeded PRNG (xoshiro256**) used across the crate.
 //!
-//! Extracted from synthetic_data so other modules (e.g. detection) can
+//! Extracted from `synthetic_data` so other modules (e.g. detection) can
 //! reuse the same deterministic RNG implementation.
 
 /// Simple seeded PRNG (xoshiro256**)
@@ -9,7 +9,8 @@ pub struct Rng {
 }
 
 impl Rng {
-    /// Initialise from a single u64 seed using SplitMix64.
+    /// Initialise from a single u64 seed using `SplitMix64`.
+    #[must_use]
     pub fn new(seed: u64) -> Self {
         let mut state = seed;
         let mut s = [0u64; 4];
@@ -49,7 +50,7 @@ impl Rng {
 
     /// Raw usize output compatible with the previous local PRNG usage.
     /// Mirrors the old `(state >> 33) as usize` behaviour used by
-    /// gromov_hyperbolicity's internal next closure.
+    /// `gromov_hyperbolicity`'s internal next closure.
     pub fn next_raw(&mut self) -> usize {
         (self.next_u64() >> 33) as usize
     }

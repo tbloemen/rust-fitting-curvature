@@ -112,8 +112,7 @@ fn main() {
         ),
         other => {
             eprintln!(
-                "Unknown --mode '{}'. Use 'random', 'scan', 'bayes', 'pareto', or 'detect'.",
-                other
+                "Unknown --mode '{other}'. Use 'random', 'scan', 'bayes', 'pareto', or 'detect'."
             );
             std::process::exit(1);
         }
@@ -125,7 +124,7 @@ fn main() {
     // Build unified per-dataset work queue.
     let mut work: VecDeque<(String, Arc<Evaluator>)> = VecDeque::new();
     for dataset_name in &dataset_names {
-        println!("Loading dataset: {}...", dataset_name);
+        println!("Loading dataset: {dataset_name}...");
         let dp = &args.data_path;
         let n = args.n_samples;
         let result: Result<Dataset, String> = match dataset_name.as_str() {
@@ -152,11 +151,7 @@ fn main() {
 
     let n_threads = args
         .threads
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(1)
-        })
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, std::num::NonZero::get))
         .max(1);
 
     // The outer pool processes datasets in parallel (up to n_threads datasets at once).
@@ -166,8 +161,7 @@ fn main() {
     // single-dataset run this is always just n_threads total threads.
     let n_outer = n_threads.min(work.len().max(1));
     println!(
-        "Using {} thread(s) ({} outer dataset worker(s), batch_size={} for bayes/pareto).",
-        n_threads, n_outer, n_threads,
+        "Using {n_threads} thread(s) ({n_outer} outer dataset worker(s), batch_size={n_threads} for bayes/pareto).",
     );
 
     let queue = Arc::new(Mutex::new(work));

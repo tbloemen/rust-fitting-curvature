@@ -13,7 +13,7 @@
 //!   and the max over `j` can only shrink. Reducing to the front first is exact.
 //! * Every preference region is a *subset* of one enumeration of the simplex, so
 //!   the per-weight-vector minimisation runs once and each region is a mean over
-//!   its own slice of the result. Eight regions cost barely more than one.
+//!   its own slice of the result. Ten regions cost barely more than one.
 //!
 //! Weight vectors are held as integer counts summing to [`Weights::s`], which
 //! keeps the region membership tests exact (`l/5` is not representable in
@@ -76,6 +76,7 @@ impl Weights {
     /// region.
     ///
     /// For six objectives at `s = 5` this is `C(10, 5) = 252` vectors.
+    #[must_use]
     pub fn new() -> Self {
         Self::with_resolution(Self::DEFAULT_S)
     }
@@ -84,6 +85,7 @@ impl Weights {
     ///
     /// Panics unless `1 <= s <= 255`: counts are `u8`, so a larger `s` would
     /// wrap silently in release.
+    #[must_use]
     pub fn with_resolution(s: usize) -> Self {
         assert!(
             (1..=usize::from(u8::MAX)).contains(&s),
@@ -104,6 +106,7 @@ impl Weights {
     }
 
     /// The region named *name*, if it exists.
+    #[must_use]
     pub fn region(&self, name: &str) -> Option<&Region> {
         self.regions.iter().find(|r| r.name == name)
     }
@@ -111,7 +114,7 @@ impl Weights {
 
 /// Every vector of `N_OBJECTIVES` non-negative integers summing to `s`.
 ///
-/// Example: for s=2, N_OBJECTIVES = 3, it should return
+/// Example: for s=2, `N_OBJECTIVES` = 3, it should return
 /// (0, 0, 2)
 /// (0, 1, 1)
 /// (0, 2, 0)
@@ -146,8 +149,10 @@ fn fill(
 /// The preference regions: the whole simplex, one per family, one per objective.
 ///
 /// Both the family and the single-objective regions use the same "at least half
-/// the mass" rule, which at `s = 5` means an integer count of 3 or more. That
-/// gives 252 / 66 / 21 vectors respectively; `test_r2.rs` pins all three.
+/// the mass" rule, which at `s = 5` means an integer count of 3 or more. Over
+/// the 252 vectors of the 6-objective simplex that admits 66 for a
+/// two-objective family — which all three now are — and 21 for a single
+/// objective. `test_r2.rs` pins all of them.
 ///
 /// The families are *not* defined as "supported entirely on" their objectives,
 /// the way the old `manifold` / `projected` surface regions were. A family holds
@@ -160,16 +165,20 @@ fn build_regions(counts: &[[u8; N_OBJECTIVES]], s: usize) -> Vec<Region> {
         indices: (0..counts.len()).collect(),
     }];
 
-    for (name, [a, b]) in FAMILIES {
+    for (name, members) in FAMILIES {
         regions.push(Region {
             name: name.to_string(),
-            indices: select(counts, |c| c[a] + c[b] >= half),
+            // `u16` because a family may hold more than two objectives and
+            // `s` can be up to 255; summing `u8` counts in place would wrap.
+            indices: select(counts, |c| {
+                members.iter().map(|&j| u16::from(c[j])).sum::<u16>() >= u16::from(half)
+            }),
         });
     }
 
     for (j, objective) in OBJECTIVES.iter().enumerate() {
         regions.push(Region {
-            name: (*objective).to_string(),
+            name: objective.name().to_string(),
             indices: select(counts, |c| c[j] >= half),
         });
     }
@@ -244,6 +253,7 @@ pub fn front_utilities(
 /// The R2 indicator of a front under one preference region. Smaller is better.
 ///
 /// `NaN` for an empty region, which [`Weights::new`] never produces.
+#[must_use]
 pub fn r2(u: &[FrontUtility], region: &Region) -> f64 {
     if region.indices.is_empty() {
         return f64::NAN;
@@ -265,6 +275,7 @@ pub struct Recommendation {
 ///
 /// Ties resolve to the lowest front index, so the recommendation is a function
 /// of the front alone.
+#[must_use]
 pub fn recommendation(u: &[FrontUtility], region: &Region) -> Option<Recommendation> {
     if region.indices.is_empty() {
         return None;
@@ -309,16 +320,18 @@ pub struct CellSummary {
 ///
 /// Used by the recommendation table, which reports what a recommended
 /// configuration attains on all six objectives alongside its hyperparameters.
+#[must_use]
 pub fn oriented_objectives(record: &TrialRecord) -> BTreeMap<String, f64> {
     let row = crate::objectives::oriented_row(record);
     OBJECTIVES
         .iter()
         .zip(row)
-        .map(|(name, v)| ((*name).to_string(), v))
+        .map(|(metric, v)| (metric.name().to_string(), v))
         .collect()
 }
 
 /// Reduce a cell's trials to its front, then score it under every region.
+#[must_use]
 pub fn cell_summary(records: &[TrialRecord], weights: &Weights) -> CellSummary {
     let all = oriented_matrix(records);
     let keep = pareto_front_mask(&all);

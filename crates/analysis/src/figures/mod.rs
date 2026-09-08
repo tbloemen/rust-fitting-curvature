@@ -6,10 +6,10 @@
 //! * **Exp 2** (`ablation-results`) — stacked Pareto fronts, one panel per
 //!   (dataset, geometry), one curve per loss-weight setting.
 //! * **Exp 3** (`curvature-magnitude-results`) — median Pareto-front
-//!   dimensionless curvature κ = |K|·R_rms² against the data-intrinsic κ_data
+//!   dimensionless curvature κ = |`K|·R_rms²` against the data-intrinsic `κ_data`
 //!   (from `results/kappa_data.jsonl`), synthetic vs real markers; plus the
 //!   unanchored-vs-`rms_anchored` κ overlay (skipped with a notice if no
-//!   rms_anchored runs exist).
+//!   `rms_anchored` runs exist).
 //! * **Exp 4** (`manifold-projection-gap`) — two figures. ρ_man-proj(κ): per
 //!   cell, the Spearman correlation between each metric's manifold and
 //!   2D-projected variants over the cell's trials, against the cell's median κ.
@@ -21,7 +21,7 @@
 //!   Pareto-front grid with convex envelope, and the hyperparameter marginal
 //!   histograms of the `all_off` fronts.
 //!
-//! κ uses **R_rms** (`r_rms`), not R_max — the thesis definition.
+//! κ uses **`R_rms`** (`r_rms`), not `R_max` — the thesis definition.
 
 pub mod exp2;
 pub mod exp3;
@@ -73,6 +73,7 @@ pub const SETTING_ORDER: [&str; 5] = [
     "all_free",
 ];
 
+#[must_use]
 pub fn setting_color(setting: &str) -> RGBColor {
     match setting {
         "all_off" => OK_BLACK,
@@ -84,6 +85,7 @@ pub fn setting_color(setting: &str) -> RGBColor {
     }
 }
 
+#[must_use]
 pub fn geometry_color(geometry: &str) -> RGBColor {
     match geometry {
         "euclidean" => OK_GREY,
@@ -124,6 +126,7 @@ pub use crate::objectives::METRIC_PAIRS;
 pub use crate::objectives::{FAMILIES, OBJECTIVES};
 
 /// All datasets, real first — the order Exp 3 iterates in.
+#[must_use]
 pub fn all_datasets() -> Vec<&'static str> {
     REAL_DATASETS.into_iter().chain(SYNTH_DATASETS).collect()
 }
@@ -224,12 +227,14 @@ impl LegendEntry {
     }
 
     /// Draw this entry's line with the given `(dash, gap)` pattern.
+    #[must_use]
     pub fn with_dash(mut self, dash: i32, gap: i32) -> Self {
         self.dash = Some((dash, gap));
         self
     }
 
     /// Mark this entry as the dashed/triangle series (Exp 4's second N).
+    #[must_use]
     pub fn secondary(mut self) -> Self {
         self.dash = Some((8, 6));
         self.triangle = true;
@@ -311,7 +316,8 @@ pub struct KappaData {
 }
 
 impl KappaData {
-    /// The κ_data to compare against for an embedding of the given geometry.
+    /// The `κ_data` to compare against for an embedding of the given geometry.
+    #[must_use]
     pub fn for_geometry(&self, geometry: &str) -> Option<f64> {
         match geometry {
             "hyperbolic" => self.hyp_kappa,
@@ -321,12 +327,12 @@ impl KappaData {
     }
 }
 
-/// κ_data records keyed by dataset for sample size *n*.
+/// `κ_data` records keyed by dataset for sample size *n*.
 ///
 /// Prefers `kappa_data_n{n}.jsonl` and falls back to the unsuffixed
 /// `kappa_data.jsonl` (which the local n=1000 run writes), trusting the latter
 /// only for the N it was actually run at. An **absent** table is not an error —
-/// the κ_data export is a separate optimizer run, and Exp 3 skips its scatter
+/// the `κ_data` export is a separate optimizer run, and Exp 3 skips its scatter
 /// when it has not been done — but a table that is there and will not parse is.
 pub fn load_kappa_data(results_dir: &Path, n: usize) -> Result<BTreeMap<String, KappaData>> {
     for name in [format!("kappa_data_n{n}.jsonl"), "kappa_data.jsonl".into()] {
@@ -350,13 +356,18 @@ pub fn load_kappa_data(results_dir: &Path, n: usize) -> Result<BTreeMap<String, 
 }
 
 /// Median κ over the 10-objective Pareto front of *records*.
+#[must_use]
 pub fn median_front_kappa(records: &[TrialRecord]) -> Option<f64> {
     let front = pareto_front_records(records);
-    let ks: Vec<f64> = front.iter().filter_map(|r| r.kappa()).collect();
+    let ks: Vec<f64> = front
+        .iter()
+        .filter_map(super::records::TrialRecord::kappa)
+        .collect();
     median(&ks)
 }
 
 /// Finite (x, y) pairs of two raw metric columns over *records*.
+#[must_use]
 pub fn finite_xy(records: &[TrialRecord], xm: &str, ym: &str) -> (Vec<f64>, Vec<f64>) {
     let mut xs = Vec::new();
     let mut ys = Vec::new();
@@ -389,8 +400,8 @@ pub fn binned_median(
     if x.len() < min_per_bin {
         return (Vec::new(), Vec::new());
     }
-    let x_min = x.iter().cloned().fold(f64::INFINITY, f64::min);
-    let x_max = x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let x_min = x.iter().copied().fold(f64::INFINITY, f64::min);
+    let x_max = x.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let (lo, hi) = (x_min.log10(), x_max.log10());
     if hi <= lo {
         let mean = x.iter().sum::<f64>() / x.len() as f64;
@@ -423,6 +434,7 @@ pub fn binned_median(
 ///
 /// The envelope of the (trustworthiness ↑, stress ↓) trade-off: the lower
 /// boundary in stress as trustworthiness grows.
+#[must_use]
 pub fn convex_lower_hull(x: &[f64], y: &[f64]) -> Vec<usize> {
     let mut order: Vec<usize> = (0..x.len()).collect();
     order.sort_by(|&a, &b| x[a].partial_cmp(&x[b]).unwrap_or(std::cmp::Ordering::Equal));
@@ -450,8 +462,8 @@ pub fn padded_range(values: &[f64], frac: f64) -> Option<(f64, f64)> {
     if finite.is_empty() {
         return None;
     }
-    let lo = finite.iter().cloned().fold(f64::INFINITY, f64::min);
-    let hi = finite.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let lo = finite.iter().copied().fold(f64::INFINITY, f64::min);
+    let hi = finite.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     // A degenerate range still needs a non-zero span for the axis to build.
     //
     // "Degenerate" has to be judged *relatively*: values that agree to all but
@@ -477,6 +489,7 @@ pub fn padded_range(values: &[f64], frac: f64) -> Option<(f64, f64)> {
 /// [`padded_range`]; too few points (a 3-point front) or a degenerate IQR fall
 /// back to it outright. Callers must handle the points now outside the range —
 /// plotters clips them silently.
+#[must_use]
 pub fn robust_range(values: &[f64], frac: f64) -> Option<(f64, f64)> {
     let finite: Vec<f64> = values.iter().copied().filter(|v| v.is_finite()).collect();
     if finite.len() < 8 {
@@ -497,6 +510,7 @@ pub fn robust_range(values: &[f64], frac: f64) -> Option<(f64, f64)> {
 
 /// A padded *log* axis range: same idea, in decades, with non-positive values
 /// dropped because they cannot be placed on a log axis.
+#[must_use]
 pub fn padded_log_range(values: &[f64], frac: f64) -> Option<(f64, f64)> {
     let logs: Vec<f64> = values
         .iter()
@@ -514,6 +528,7 @@ pub fn padded_log_range(values: &[f64], frac: f64) -> Option<(f64, f64)> {
 /// the decades; snapping puts them on exact powers of ten. Data spanning less
 /// than a decade is left alone — snapping it would squash every point into a
 /// sliver of the panel.
+#[must_use]
 pub fn snap_to_decades((lo, hi): (f64, f64)) -> (f64, f64) {
     if !(lo > 0.0 && hi > 0.0) || hi / lo < 10.0 {
         return (lo, hi);
@@ -529,6 +544,7 @@ pub fn snap_to_decades((lo, hi): (f64, f64)) -> (f64, f64) {
 /// plotters accumulates float error while walking decades, handing the default
 /// formatter values like 9.999999999e-5; anything within a fraction of a percent
 /// of a power of ten is printed as that power.
+#[must_use]
 pub fn log_tick(v: &f64) -> String {
     if *v <= 0.0 || !v.is_finite() {
         return String::new();

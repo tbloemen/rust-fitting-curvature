@@ -1,4 +1,4 @@
-//! Experiment 3 — median Pareto-front κ against the data-intrinsic κ_data, and
+//! Experiment 3 — median Pareto-front κ against the data-intrinsic `κ_data`, and
 //! the unanchored-vs-`rms_anchored` κ overlay.
 
 use std::collections::BTreeMap;
@@ -7,7 +7,11 @@ use plotters::coord::Shift;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
 
-use super::*;
+use super::{
+    all_datasets, draw_legend, geometry_color, load_kappa_data, log_tick, median_front_kappa,
+    padded_log_range, padded_range, snap_to_decades, CellMap, Figure, KappaData, LegendEntry, Res,
+    CURVED, OK_BLACK, OK_BLUE, OK_ORANGE, REAL_DATASETS,
+};
 use crate::cell::Cell;
 use crate::error::Result;
 use crate::pareto::pareto_front_records;
@@ -22,7 +26,7 @@ pub struct KappaScatter<'a> {
     n: usize,
 }
 
-/// One plotted dataset: its intrinsic κ_data, its median front κ, and whether it
+/// One plotted dataset: its intrinsic `κ_data`, its median front κ, and whether it
 /// is a real (circle) or synthetic (square) dataset.
 struct Point {
     dataset: String,
@@ -40,7 +44,8 @@ impl<'a> KappaScatter<'a> {
         })
     }
 
-    /// True when a κ_data table for this N was found at all.
+    /// True when a `κ_data` table for this N was found at all.
+    #[must_use]
     pub fn has_kappa_data(&self) -> bool {
         !self.kappa_data.is_empty()
     }
@@ -179,6 +184,7 @@ pub struct RmsAnchored<'a> {
 
 impl<'a> RmsAnchored<'a> {
     /// One figure per dataset that has hyperbolic runs at this N.
+    #[must_use]
     pub fn panels(cells: &'a CellMap, n: usize) -> Vec<Self> {
         all_datasets()
             .into_iter()
@@ -197,6 +203,7 @@ impl<'a> RmsAnchored<'a> {
 
     /// Whether any `rms_anchored` run exists for this dataset; the figure is
     /// meaningless without one.
+    #[must_use]
     pub fn has_anchored(&self) -> bool {
         self.cells
             .keys()
@@ -212,7 +219,7 @@ impl<'a> RmsAnchored<'a> {
             }
             let ks = pareto_front_records(recs)
                 .iter()
-                .filter_map(|r| r.kappa())
+                .filter_map(super::super::records::TrialRecord::kappa)
                 .collect::<Vec<_>>();
             if key.setting == "rms_anchored" {
                 anchored.extend(ks);
@@ -298,6 +305,7 @@ pub struct Bin {
 }
 
 /// Equal-width bins over `[lo, hi]`.
+#[must_use]
 pub fn histogram(values: &[f64], lo: f64, hi: f64, n_bins: usize) -> Vec<Bin> {
     let edges: Vec<f64> = (0..=n_bins)
         .map(|i| lo + (hi - lo) * i as f64 / n_bins as f64)
@@ -306,6 +314,7 @@ pub fn histogram(values: &[f64], lo: f64, hi: f64, n_bins: usize) -> Vec<Bin> {
 }
 
 /// Log-spaced bins over `[lo, hi]`; both bounds must be positive.
+#[must_use]
 pub fn log_histogram(values: &[f64], lo: f64, hi: f64, n_bins: usize) -> Vec<Bin> {
     let (a, b) = (lo.log10(), hi.log10());
     let edges: Vec<f64> = (0..=n_bins)

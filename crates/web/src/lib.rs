@@ -3,6 +3,7 @@ use web_sys::HtmlCanvasElement;
 
 use fitting_core::config::{ScalingLossType, TrainingConfig};
 use fitting_core::embedding::EmbeddingState;
+use fitting_core::metrics;
 use fitting_core::synthetic_data;
 use fitting_core::visualisation::{self, SphericalProjection};
 
@@ -44,7 +45,7 @@ pub struct EmbeddingRunner {
     /// Human-readable names for each integer label, indexed by label value.
     /// When set, the legend shows these names instead of "Label N".
     label_names: Option<Vec<String>>,
-    /// Current viewport: (center_x, center_y, half_extent). None = auto-fit.
+    /// Current viewport: (`center_x`, `center_y`, `half_extent`). None = auto-fit.
     view: Option<(f64, f64, f64)>,
     /// Auto-fit half-extent from the last render, used to anchor zoom interactions.
     auto_half: f64,
@@ -155,10 +156,10 @@ impl EmbeddingRunner {
         })
     }
 
-    /// Create a runner from a pre-computed pairwise distance matrix (e.g., WordNet tree distances).
+    /// Create a runner from a pre-computed pairwise distance matrix (e.g., `WordNet` tree distances).
     ///
-    /// `distances` is a flat n × n row-major Float64Array of pairwise distances.
-    /// `labels` is a Uint32Array of integer class labels of length n.
+    /// `distances` is a flat n × n row-major `Float64Array` of pairwise distances.
+    /// `labels` is a `Uint32Array` of integer class labels of length n.
     #[allow(clippy::too_many_arguments)]
     pub fn from_distances(
         canvas_id: &str,
@@ -213,7 +214,12 @@ impl EmbeddingRunner {
     /// ascending order (e.g. `"B cells\tCD4 T\tCD14 Monocytes"`).
     /// When set, the legend uses these names instead of "Label N".
     pub fn set_label_names(&mut self, names_tsv: &str) {
-        self.label_names = Some(names_tsv.split('\t').map(|s| s.to_string()).collect());
+        self.label_names = Some(
+            names_tsv
+                .split('\t')
+                .map(std::string::ToString::to_string)
+                .collect(),
+        );
     }
 
     /// Run N iterations and render the current state.
@@ -281,8 +287,9 @@ impl EmbeddingRunner {
         )
     }
 
-    /// Return the 2D projected coordinates of all points as a flat Float64Array [x0,y0,x1,y1,...].
+    /// Return the 2D projected coordinates of all points as a flat `Float64Array` [x0,y0,x1,y1,...].
     /// Coordinates are in the same plot space used by `render()`.
+    #[must_use]
     pub fn get_projected_coords(&self) -> Vec<f64> {
         visualisation::project_to_2d(
             &self.state.points,
@@ -294,8 +301,9 @@ impl EmbeddingRunner {
         .coords
     }
 
-    /// Current viewport state as [cx, cy, half, auto_half].
-    /// When no explicit viewport is set, cx=cy=0 and half=auto_half.
+    /// Current viewport state as [cx, cy, half, `auto_half`].
+    /// When no explicit viewport is set, cx=cy=0 and `half=auto_half`.
+    #[must_use]
     pub fn get_viewport(&self) -> Vec<f64> {
         let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
         vec![cx, cy, half, self.auto_half]
@@ -305,7 +313,7 @@ impl EmbeddingRunner {
     /// `factor > 1` zooms in, `factor < 1` zooms out.
     pub fn zoom_at(&mut self, norm_x: f64, norm_y: f64, factor: f64) {
         let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
-        let aspect = self.canvas.width() as f64 / self.canvas.height().max(1) as f64;
+        let aspect = f64::from(self.canvas.width()) / f64::from(self.canvas.height().max(1));
         let half_x = half * aspect;
         // Canvas coordinate → plot coordinate
         let plot_x = cx + (norm_x - 0.5) * 2.0 * half_x;
@@ -321,7 +329,7 @@ impl EmbeddingRunner {
     /// Pan the viewport by a normalized canvas delta.
     pub fn pan_by(&mut self, norm_dx: f64, norm_dy: f64) {
         let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
-        let aspect = self.canvas.width() as f64 / self.canvas.height().max(1) as f64;
+        let aspect = f64::from(self.canvas.width()) / f64::from(self.canvas.height().max(1));
         let half_x = half * aspect;
         let dx = -norm_dx * 2.0 * half_x;
         let dy = norm_dy * 2.0 * half; // y axis is flipped
@@ -334,77 +342,142 @@ impl EmbeddingRunner {
     }
 
     /// Get current iteration number.
+    #[must_use]
     pub fn iteration(&self) -> usize {
         self.state.iteration
     }
 
     /// Get current loss value.
+    #[must_use]
     pub fn loss(&self) -> f64 {
         self.state.loss
     }
 
     /// Whether training is complete.
+    #[must_use]
     pub fn is_done(&self) -> bool {
         self.state.is_done()
     }
 
     /// Total number of iterations configured.
+    #[must_use]
     pub fn total_iterations(&self) -> usize {
         self.state.config().n_iterations
     }
 
     /// Compute all quality metrics after training.
     ///
-    /// Returns a JS object where each metric is stored in two variants:
-    /// - `{name}_manifold`: computed using manifold geodesic distances (embedding quality)
-    /// - `{name}_2d`: computed using Euclidean distances in projected 2D space (visualization quality)
-    ///
-    /// Label-dependent metrics are omitted when no labels are available.
+    /// Returns a JS object keyed by [`web_name`], so a metric with two
+    /// readings appears as `{base}_manifold` and `{base}_2d`, plus the three
+    /// spread diagnostics under their own names. A metric that is
+    /// undefined for this state — every label-aware one, on unlabelled data —
+    /// is omitted rather than sent as NaN, which is what lets the panel filter
+    /// on `undefined`.
     pub fn compute_metrics(&self) -> Result<JsValue, JsValue> {
-        let snap = self.state.compute_snapshot();
+        let (values, spread) = self.state.compute_metrics();
         let obj = js_sys::Object::new();
-        set_prop(
-            &obj,
-            "trustworthiness_manifold",
-            snap.trustworthiness_manifold,
-        )?;
-        set_prop(&obj, "trustworthiness_2d", snap.trustworthiness_2d)?;
-        set_prop(&obj, "continuity_manifold", snap.continuity_manifold)?;
-        set_prop(&obj, "continuity_2d", snap.continuity_2d)?;
-        set_prop(&obj, "knn_overlap_manifold", snap.knn_overlap_manifold)?;
-        set_prop(&obj, "knn_overlap_2d", snap.knn_overlap_2d)?;
-        set_prop(
-            &obj,
-            "normalized_stress_manifold",
-            snap.normalized_stress_manifold,
-        )?;
-        set_prop(&obj, "normalized_stress_2d", snap.normalized_stress_2d)?;
-        set_prop(
-            &obj,
-            "shepard_goodness_manifold",
-            snap.shepard_goodness_manifold,
-        )?;
-        set_prop(&obj, "shepard_goodness_2d", snap.shepard_goodness_2d)?;
-        if let Some(v) = snap.neighborhood_hit_manifold {
-            set_prop(&obj, "neighborhood_hit_manifold", v)?;
+        for m in metrics::ALL {
+            if let Some(v) = values.get(*m) {
+                set_prop(&obj, &web_name(*m), v)?;
+            }
         }
-        if let Some(v) = snap.neighborhood_hit_2d {
-            set_prop(&obj, "neighborhood_hit_2d", v)?;
-        }
-        if let Some(v) = snap.class_density_measure {
-            set_prop(&obj, "class_density_measure", v)?;
-        }
-        if let Some(v) = snap.cluster_density_measure {
-            set_prop(&obj, "cluster_density_measure", v)?;
-        }
-        if let Some(v) = snap.davies_bouldin_ratio {
-            set_prop(&obj, "davies_bouldin_ratio", v)?;
+        // The spread diagnostics are not metrics and do not come off the
+        // registry; three named quantities, listed once here and once in the
+        // panel's Spread group.
+        for (key, v) in [
+            ("r_max", spread.r_max()),
+            ("r_rms", spread.r_rms()),
+            ("r_gyration", spread.r_gyration()),
+        ] {
+            if let Some(v) = v {
+                set_prop(&obj, key, v)?;
+            }
         }
         Ok(obj.into())
     }
 }
 
-/// Return default TrainingConfig values as a JS object, so the frontend
+/// The metric registry, for the UI to build its tables from.
+///
+/// Quality metrics only — the spread diagnostics are not metrics and the panel
+/// lists those three explicitly. Returns one entry per metric in
+/// `metrics::ALL` order:
+///
+/// ```js
+/// { key, base, label, short, family, space, dir, objective, dual }
+/// ```
+///
+/// `key` is what [`EmbeddingRunner::compute_metrics`] puts on its result
+/// object, and `key`/`dir`/`label` are what the metrics panel and the Pareto
+/// selector used to hard-code. They fell out of date the moment a metric was
+/// added or removed — `www/index.js` was still listing a `knn_overlap` row long
+/// after the metric was deleted — which is the reason this exists.
+///
+/// A free function, not a method: the Pareto selector is populated from
+/// front JSON before any `EmbeddingRunner` has been constructed.
+#[wasm_bindgen]
+pub fn metric_registry() -> Result<JsValue, JsValue> {
+    let arr = js_sys::Array::new();
+    for m in metrics::ALL {
+        let o = js_sys::Object::new();
+        set_str(&o, "key", &web_name(*m))?;
+        set_str(&o, "base", m.base())?;
+        set_str(&o, "label", m.label())?;
+        set_str(&o, "short", m.short())?;
+        set_str(&o, "family", m.family().name())?;
+        set_str(
+            &o,
+            "space",
+            match m.space() {
+                metrics::Space::Projected => "projected",
+                metrics::Space::Manifold => "manifold",
+            },
+        )?;
+        // The arrow the panel prints beside the value.
+        set_str(
+            &o,
+            "dir",
+            match m.direction() {
+                metrics::Direction::Maximize => "\u{2191}",
+                metrics::Direction::Minimize => "\u{2193}",
+            },
+        )?;
+        set_bool(&o, "objective", m.is_objective())?;
+        set_bool(&o, "dual", m.has_twin())?;
+        arr.push(&o);
+    }
+    Ok(arr.into())
+}
+
+fn set_str(obj: &js_sys::Object, key: &str, value: &str) -> Result<(), JsValue> {
+    js_sys::Reflect::set(obj, &JsValue::from_str(key), &JsValue::from_str(value))?;
+    Ok(())
+}
+
+fn set_bool(obj: &js_sys::Object, key: &str, value: bool) -> Result<(), JsValue> {
+    js_sys::Reflect::set(obj, &JsValue::from_str(key), &JsValue::from_bool(value))?;
+    Ok(())
+}
+
+/// The browser's name for a metric.
+///
+/// The browser labels the projected reading `_2d` where the JSONL calls it by
+/// the bare name. Both conventions are load-bearing — one is baked into 350 MB
+/// of results files, the other into the metrics panel's column layout — so the
+/// registry carries the wire name and this is the single place the browser's
+/// differs from it.
+fn web_name(m: metrics::Metric) -> String {
+    match m.space() {
+        // Only a metric with two readings needs them told apart. The rest keep
+        // their wire name, which is what the metrics panel's single-value rows
+        // read.
+        metrics::Space::Projected if m.has_twin() => format!("{}_2d", m.base()),
+        metrics::Space::Manifold => format!("{}_manifold", m.base()),
+        metrics::Space::Projected => m.name().to_string(),
+    }
+}
+
+/// Return default `TrainingConfig` values as a JS object, so the frontend
 /// can populate its inputs from a single source of truth.
 #[wasm_bindgen]
 pub fn get_default_config() -> Result<JsValue, JsValue> {

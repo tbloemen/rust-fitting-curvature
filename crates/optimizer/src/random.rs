@@ -6,6 +6,7 @@ use crate::common::{eval_all_metrics, make_progress_bar};
 use crate::evaluate::Evaluator;
 use crate::search_space::{OptimizeDirection, ParamSpec, SearchSpace, TrialConfig};
 use crate::trial_result::{write_result, TrialResult};
+use fitting_core::metrics::{DAVIES_BOULDIN_RATIO, TRUSTWORTHINESS};
 
 // ─── Random search ────────────────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ pub(crate) fn run_random(
         args.n_trials as u64,
         "{spinner:.green} {msg} [{bar:35.cyan/blue}] {pos}/{len} | {wide_msg}",
     );
-    pb.set_message(format!("dataset={}", dataset_name));
+    pb.set_message(format!("dataset={dataset_name}"));
     let pb_iters = ProgressBar::hidden();
 
     for trial_idx in 1..=args.n_trials {
@@ -44,7 +45,7 @@ pub(crate) fn run_random(
         };
         let mut config = sample_space.sample(&mut rng);
         config.curvature_magnitude = ParamSpec::Fixed(curvature.abs());
-        let agg = eval_all_metrics(
+        let (agg, spread) = eval_all_metrics(
             &evaluator,
             &config,
             curvature_sign,
@@ -62,15 +63,22 @@ pub(crate) fn run_random(
             curvature,
             elapsed,
         )
-        .with_all_metrics(&agg);
+        .with_all_metrics(&agg, &spread);
         write_result(&result, out_path);
 
+        // `-` where a reading is absent, rather than a number that was never
+        // measured. On a diverged trial these are the only honest characters.
+        let show = |v: Option<f64>| v.map_or("-".to_string(), |x| format!("{x:.4}"));
         pb.set_message(format!(
-            "trial {:4} k={:+.2} | db={:.4} trust={:.4} | {}ms",
-            trial_idx, curvature, agg.davies_bouldin_ratio, agg.trustworthiness, elapsed
+            "trial {:4} k={:+.2} | db={} trust={} | {}ms",
+            trial_idx,
+            curvature,
+            show(agg.get(DAVIES_BOULDIN_RATIO)),
+            show(agg.get(TRUSTWORTHINESS)),
+            elapsed
         ));
         pb.inc(1);
     }
 
-    pb.finish_with_message(format!("dataset={} done", dataset_name));
+    pb.finish_with_message(format!("dataset={dataset_name} done"));
 }

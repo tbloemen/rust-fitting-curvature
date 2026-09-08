@@ -3,8 +3,8 @@ use crate::cli::Args;
 use crate::common::{make_progress_bar, parse_experiment};
 use crate::evaluate::Evaluator;
 use crate::gp::{MultiTrial, ParEgoOptimizer};
-use crate::metrics::{AllMetrics, Metric};
-use crate::resume::{eval_or_reuse_batch, load_prior_evals, BatchOutcome};
+use crate::metrics::{Direction, Metric, MetricValues, OBJECTIVES};
+use crate::resume::{eval_or_reuse_batch, load_prior_evals, BatchOutcome, FreshEval};
 use crate::trial_result::{write_result, TrialResult};
 use indicatif::MultiProgress;
 use serde::Serialize;
@@ -48,7 +48,7 @@ pub fn run_pareto(
     let stem = out_path
         .trim_end_matches(".jsonl")
         .trim_end_matches(".json");
-    let front_path = format!("{}_pareto_{}_{}.json", stem, dataset_name, geometry);
+    let front_path = format!("{stem}_pareto_{dataset_name}_{geometry}.json");
 
     // ── Resume: replay already-recorded trials instead of re-evaluating them ──
     // `prior` is the ordered list of completed evaluations from a previous,
@@ -86,10 +86,9 @@ pub fn run_pareto(
         lhs_total as u64,
         "{spinner:.cyan} [LHS] {msg} [{bar:35.cyan/blue}] {pos}/{len} ({eta})",
     );
-    pb.set_message(format!("{} (sign={:+.0})", geometry, curvature_sign));
+    pb.set_message(format!("{geometry} (sign={curvature_sign:+.0})"));
     pb.println(format!(
-        "pareto '{}' ({}) — LHS init phase: {} points, {} objectives",
-        dataset_name, geometry, lhs_total, n_objectives
+        "pareto '{dataset_name}' ({geometry}) — LHS init phase: {lhs_total} points, {n_objectives} objectives"
     ));
 
     let mut lhs_completed = 0usize;
@@ -116,13 +115,20 @@ pub fn run_pareto(
                 } => {
                     optimizer.observe(config.clone(), metric_vec, r_max, r_rms);
                 }
-                BatchOutcome::Fresh {
-                    all,
-                    actual_curvature,
-                    elapsed_ms,
-                } => {
+                BatchOutcome::Fresh(fresh) => {
+                    let FreshEval {
+                        all,
+                        spread,
+                        actual_curvature,
+                        elapsed_ms,
+                    } = *fresh;
                     let metric_vec = metrics_to_vec(&all, optimizer.metrics.as_slice());
-                    optimizer.observe(config.clone(), metric_vec, all.r_max, all.r_rms);
+                    optimizer.observe(
+                        config.clone(),
+                        metric_vec,
+                        spread.r_max().unwrap_or(f64::NAN),
+                        spread.r_rms().unwrap_or(f64::NAN),
+                    );
 
                     let mut result = TrialResult::new(
                         config,
@@ -132,7 +138,7 @@ pub fn run_pareto(
                         actual_curvature,
                         elapsed_ms,
                     )
-                    .with_all_metrics(&all);
+                    .with_all_metrics(&all, &spread);
                     result.geometry = Some(geometry.to_string());
                     if optimize_curvature {
                         result.curvature_magnitude = Some(config.curvature_magnitude.value());
@@ -144,7 +150,7 @@ pub fn run_pareto(
             pb.inc(1);
         }
     }
-    pb.finish_with_message(format!("{} LHS done ({} points)", geometry, lhs_completed));
+    pb.finish_with_message(format!("{geometry} LHS done ({lhs_completed} points)"));
 
     // ── Phase 2: GP optimisation ─────────────────────────────────────────────
     let pb = make_progress_bar(
@@ -152,7 +158,7 @@ pub fn run_pareto(
         args.n_trials as u64,
         "{spinner:.green} [GP]  {msg} [{bar:35.cyan/blue}] {pos}/{len} | front: {prefix} ({eta})",
     );
-    pb.set_message(format!("{} (sign={:+.0})", geometry, curvature_sign));
+    pb.set_message(format!("{geometry} (sign={curvature_sign:+.0})"));
     pb.set_prefix("0");
     pb.println(format!(
         "pareto '{}' ({}) — GP phase: {} trials, batch_size={}",
@@ -187,13 +193,20 @@ pub fn run_pareto(
                     // don't rewrite it; just rebuild the optimizer's state.
                     optimizer.observe(config.clone(), metric_vec, r_max, r_rms);
                 }
-                BatchOutcome::Fresh {
-                    all,
-                    actual_curvature,
-                    elapsed_ms,
-                } => {
+                BatchOutcome::Fresh(fresh) => {
+                    let FreshEval {
+                        all,
+                        spread,
+                        actual_curvature,
+                        elapsed_ms,
+                    } = *fresh;
                     let metric_vec = metrics_to_vec(&all, optimizer.metrics.as_slice());
-                    optimizer.observe(config.clone(), metric_vec, all.r_max, all.r_rms);
+                    optimizer.observe(
+                        config.clone(),
+                        metric_vec,
+                        spread.r_max().unwrap_or(f64::NAN),
+                        spread.r_rms().unwrap_or(f64::NAN),
+                    );
 
                     let mut result = TrialResult::new(
                         config,
@@ -203,7 +216,7 @@ pub fn run_pareto(
                         actual_curvature,
                         elapsed_ms,
                     )
-                    .with_all_metrics(&all);
+                    .with_all_metrics(&all, &spread);
                     result.geometry = Some(geometry.to_string());
                     if optimize_curvature {
                         result.curvature_magnitude = Some(config.curvature_magnitude.value());
@@ -211,7 +224,7 @@ pub fn run_pareto(
                     write_result(&result, out_path);
 
                     let front_size = optimizer.pareto_front_indices().len();
-                    pb.set_prefix(format!("{}", front_size));
+                    pb.set_prefix(format!("{front_size}"));
                     pb.println(format!(
                         "pareto '{}' GP {:3}/{} | front={} | {}ms | k={:.3} lr={:.4} perp={:.4}",
                         dataset_name,
@@ -232,31 +245,40 @@ pub fn run_pareto(
         remaining -= this_batch;
     }
 
-    pb.finish_with_message(format!("{} ({}) done", dataset_name, geometry));
+    pb.finish_with_message(format!("{dataset_name} ({geometry}) done"));
 
     let front = optimizer.pareto_trials();
     write_pareto_front(&front, &optimizer.metrics, args.n_samples, &front_path);
-    pb.println(format!("Pareto front written to {}", front_path));
+    pb.println(format!("Pareto front written to {front_path}"));
 }
 
-/// Default set of objectives for --mode pareto: six metrics, all measured on
-/// the 2D projection, giving 6 objectives total.
+/// The objectives for --mode pareto: six metrics, all measured on the 2D
+/// projection.
 ///
-/// Two rules fix this list.
+/// The list itself is `fitting_core::metrics::OBJECTIVES`, which is also what
+/// `fitting_analysis::objectives::OBJECTIVES` reads — an alignment that used to
+/// be maintained by hand across the two crates. Two rules fix its membership,
+/// and `test_registry.rs` checks both rather than leaving them to this comment.
 ///
 /// **Projected only.** The manifold (pre-projection, geodesic) variants used to
 /// take half the objective budget. What the thesis judges is the 2D
 /// visualisation, so the manifold half optimised a surface no reader looks at.
 /// Those metrics are still measured and written to the JSONL — nothing about
-/// `AllMetrics` changed — they just no longer steer the search. `figures/exp4.rs`
+/// `MetricValues` changed — they just no longer steer the search. `figures/exp4.rs`
 /// reads those columns and is what shows whether dropping them was justified.
 ///
-/// **Bounded in `[0, 1]` only.** `class_density_measure` is the one of the four
-/// label-aware, projection-only metrics that qualifies. `dunn_index`,
-/// `davies_bouldin_ratio` and `cluster_density_measure` are ratios, unbounded
-/// above, and measured over `results/` their upper tails reach 3.0e10, 2.9e11
-/// and 2e24 respectively — the last mostly from collapsed clusters hitting the
-/// `1e-12` radius floor in the formula. Admitting one would break both consumers:
+/// **Bounded in `[0, 1]` only.** Of the label-aware, projection-only metrics
+/// `neighborhood_hit` and `distance_consistency` qualify — the first is a
+/// fraction of neighbours, the second a fraction of points — and they are kept
+/// as a pair because one is local and one is global: neighbourhood hit asks
+/// only about a point's immediate neighbours, so it cannot separate cleanly
+/// separated classes from classes that merely fail to interleave, which is
+/// exactly what a comparison against every class centroid does see.
+/// `dunn_index`, `davies_bouldin_ratio` and
+/// `cluster_density_measure` are ratios, unbounded above, and measured over
+/// `results/` their upper tails reach 3.0e10, 2.9e11 and 2e24 respectively —
+/// the last mostly from collapsed clusters hitting the `1e-12` radius floor in
+/// the formula. Admitting one would break both consumers:
 /// `scalarize_subset` min-max normalises per batch, so a single outlier flattens
 /// that axis to ~0 for every real trial, and `fitting_analysis::oriented_value`
 /// clamps to `[0, 1]`, which would peg 74% of trials at 1.0 on that axis.
@@ -269,17 +291,7 @@ pub fn run_pareto(
 /// metrics that all range in `[0, 1]`, and reach for bounded class-separation
 /// measures rather than repairing unbounded ones.
 pub(crate) fn default_pareto_metrics() -> Vec<Metric> {
-    vec![
-        // structure
-        Metric::Trustworthiness,
-        Metric::Continuity,
-        // distance preservation
-        Metric::NormalizedStress,
-        Metric::ShepardGoodness,
-        // class separation
-        Metric::NeighborhoodHit,
-        Metric::ClassDensityMeasure,
-    ]
+    OBJECTIVES.to_vec()
 }
 
 /// Build the objective vector fed to the optimizer. A diverged embedding (e.g. an
@@ -288,22 +300,16 @@ pub(crate) fn default_pareto_metrics() -> Vec<Metric> {
 /// bad rather than poisoning the GP normalisation or panicking the Pareto sorts.
 /// The raw (possibly non-finite) values are still recorded in the JSONL via
 /// `with_all_metrics`, so diverged trials remain visible in the results.
-pub(crate) fn metrics_to_vec(m: &AllMetrics, metrics: &[Metric]) -> Vec<f64> {
-    use crate::search_space::OptimizeDirection;
+pub(crate) fn metrics_to_vec(m: &MetricValues, metrics: &[Metric]) -> Vec<f64> {
     metrics
         .iter()
         .map(|metric| {
-            let v = metric.value(m);
-            if v.is_finite() {
-                v
-            } else {
-                match metric.direction() {
-                    // The maximised metrics here are bounded below by 0 (0 = degenerate);
-                    // normalized_stress is minimised and bounded above by 1 (1 = worst).
-                    OptimizeDirection::Maximize => 0.0,
-                    OptimizeDirection::Minimize => 1.0,
-                }
-            }
+            m.get(*metric).unwrap_or(match metric.direction() {
+                // The maximised metrics here are bounded below by 0 (0 = degenerate);
+                // normalized_stress is minimised and bounded above by 1 (1 = worst).
+                Direction::Maximize => 0.0,
+                Direction::Minimize => 1.0,
+            })
         })
         .collect()
 }

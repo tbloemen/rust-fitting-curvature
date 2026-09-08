@@ -8,7 +8,7 @@
 //!   - `pbmc` — single-cell RNA-seq PCA features (Euclidean distances).
 //!   - `wordnet_mammals` — the mammal subtree; distances are the graph shortest-path (BFS) matrix, already supplied by the loader.
 //!
-//! WordNet (a tree) should saturate at a small δ (hyperbolic); the
+//! `WordNet` (a tree) should saturate at a small δ (hyperbolic); the
 //! feature-space datasets are expected to keep growing (not δ-hyperbolic).
 //!
 //! Run with (data path defaults to `www/public/data`):
@@ -53,13 +53,13 @@ struct Case {
 }
 
 /// Ensure a loaded dataset has a pairwise distance matrix: graph datasets
-/// (WordNet) arrive with one precomputed; feature datasets get Euclidean
+/// (`WordNet`) arrive with one precomputed; feature datasets get Euclidean
 /// distances in feature space.
 fn distances_for(data: &DataPoints) -> Vec<f64> {
-    if !data.distances.is_empty() {
-        data.distances.clone()
-    } else {
+    if data.distances.is_empty() {
         compute_euclidean_distance_matrix(&data.x, data.n_points, data.ambient_dim)
+    } else {
+        data.distances.clone()
     }
 }
 
