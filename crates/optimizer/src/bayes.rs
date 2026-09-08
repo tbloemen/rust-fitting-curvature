@@ -6,7 +6,7 @@ use crate::cli::Args;
 use crate::common::{eval_all_metrics, make_progress_bar, parse_experiment, parse_metric};
 use crate::evaluate::Evaluator;
 use crate::gp::{GpOptimizer, GpState};
-use crate::metrics::MetricValues;
+use crate::metrics::{Direction, MetricValues};
 use crate::search_space::{param_bounds, ParamSpec, SearchSpace, TrialConfig};
 use crate::trial_result::{write_result, TrialResult};
 use fitting_core::spread::SpreadDiagnostics;
@@ -198,7 +198,13 @@ pub(crate) fn run_bayes(
         // Observe all results and update the GP before the next round.
         for (config, (actual_curvature, all, spread, elapsed)) in configs.iter().zip(results.iter())
         {
-            let mean = all[metric];
+            // An unmeasured reading — a diverged embedding, chiefly — scores as
+            // the worst value in the metric's direction, matching what
+            // `metrics_to_vec` does for the pareto path.
+            let mean = all.get(metric).unwrap_or(match metric.direction() {
+                Direction::Maximize => 0.0,
+                Direction::Minimize => 1.0,
+            });
             optimizer.observe(config.clone(), mean);
             completed += 1;
 

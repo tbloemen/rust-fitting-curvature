@@ -66,9 +66,16 @@ pub(crate) fn run_random(
         .with_all_metrics(&agg, &spread);
         write_result(&result, out_path);
 
+        // `-` where a reading is absent, rather than a number that was never
+        // measured. On a diverged trial these are the only honest characters.
+        let show = |v: Option<f64>| v.map_or("-".to_string(), |x| format!("{x:.4}"));
         pb.set_message(format!(
-            "trial {:4} k={:+.2} | db={:.4} trust={:.4} | {}ms",
-            trial_idx, curvature, agg[DAVIES_BOULDIN_RATIO], agg[TRUSTWORTHINESS], elapsed
+            "trial {:4} k={:+.2} | db={} trust={} | {}ms",
+            trial_idx,
+            curvature,
+            show(agg.get(DAVIES_BOULDIN_RATIO)),
+            show(agg.get(TRUSTWORTHINESS)),
+            elapsed
         ));
         pb.inc(1);
     }

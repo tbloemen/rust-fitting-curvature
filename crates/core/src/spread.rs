@@ -12,19 +12,19 @@
 //! families.
 
 use crate::context::EmbeddingContext;
-use crate::metrics::gyration_radius;
+use crate::metrics::{gyration_radius, values_mean_of, MetricValue};
 
 /// The three radii, for one embedding.
 ///
-/// `f64::NAN` means absent, matching
-/// [`crate::metrics::MetricValues`]; the accessors collapse absent and
-/// non-finite to `None`, which is what every consumer wants and why the fields
-/// are private.
+/// Each is a [`MetricValue`], the same element type
+/// [`crate::metrics::MetricValues`] holds — so "no reading" carries its reason
+/// here too, and `MISSING == MISSING` is true rather than false. The fields are
+/// private because the accessors are what callers want.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpreadDiagnostics {
-    r_max: f64,
-    r_rms: f64,
-    r_gyration: f64,
+    r_max: MetricValue,
+    r_rms: MetricValue,
+    r_gyration: MetricValue,
 }
 
 impl Default for SpreadDiagnostics {
@@ -37,12 +37,26 @@ impl SpreadDiagnostics {
     /// Nothing measured — what `--mode scan` writes, and what a results line
     /// predating a column reads back as.
     pub const MISSING: Self = Self {
-        r_max: f64::NAN,
-        r_rms: f64::NAN,
-        r_gyration: f64::NAN,
+        r_max: MetricValue::Absent,
+        r_rms: MetricValue::Absent,
+        r_gyration: MetricValue::Absent,
     };
 
+    /// Measure the configuration's extent.
+    ///
+    /// Gated the same way the metrics are: on a diverged embedding these are
+    /// [`MetricValue::Diverged`] rather than numbers. `r_max` is the reason the
+    /// gate matters here — it is a `fold(0.0, f64::max)`, and `f64::max`
+    /// *ignores* NaN, so a blown-up embedding used to report `r_max: 0.0`
+    /// beside `r_rms: null`: a measured-looking zero from garbage.
     pub fn compute(c: &EmbeddingContext<'_>) -> Self {
+        if !c.spread_is_finite() {
+            return Self {
+                r_max: MetricValue::Diverged,
+                r_rms: MetricValue::Diverged,
+                r_gyration: MetricValue::Diverged,
+            };
+        }
         let origin = c.origin_dist();
         let (r_max, r_rms) = if origin.is_empty() {
             (0.0, 0.0)
@@ -53,20 +67,21 @@ impl SpreadDiagnostics {
             )
         };
         Self {
-            r_max,
-            r_rms,
-            r_gyration: gyration_radius(c.manifold_dist(), c.n),
+            r_max: MetricValue::measured(r_max),
+            r_rms: MetricValue::measured(r_rms),
+            r_gyration: MetricValue::measured(gyration_radius(c.manifold_dist(), c.n)),
         }
     }
 
-    /// Component-wise mean over a non-empty slice of samples.
-    ///
-    /// Arithmetic on the raw values, so a seed that failed to measure
-    /// propagates its NaN rather than being averaged out of existence.
+    /// Component-wise mean over a non-empty slice of samples, with the same
+    /// precedence [`crate::metrics::MetricValues::mean`] uses: a seed that
+    /// diverged shows in the aggregate rather than being averaged away.
     #[must_use]
     pub fn mean(samples: &[SpreadDiagnostics]) -> SpreadDiagnostics {
         let n = samples.len() as f64;
-        let avg = |f: fn(&SpreadDiagnostics) -> f64| samples.iter().map(f).sum::<f64>() / n;
+        let avg = |f: fn(&SpreadDiagnostics) -> MetricValue| {
+            values_mean_of(samples.iter().map(f), n)
+        };
         Self {
             r_max: avg(|s| s.r_max),
             r_rms: avg(|s| s.r_rms),
@@ -77,7 +92,7 @@ impl SpreadDiagnostics {
     /// Largest geodesic distance from the manifold origin.
     #[must_use]
     pub fn r_max(&self) -> Option<f64> {
-        self.r_max.is_finite().then_some(self.r_max)
+        self.r_max.value()
     }
 
     /// RMS geodesic distance from the manifold origin — the `R_rms` of
@@ -91,7 +106,7 @@ impl SpreadDiagnostics {
     /// [`Self::r_gyration`] there.
     #[must_use]
     pub fn r_rms(&self) -> Option<f64> {
-        self.r_rms.is_finite().then_some(self.r_rms)
+        self.r_rms.value()
     }
 
     /// Origin-free spread: the radius of gyration over the pairwise geodesics.
@@ -100,7 +115,7 @@ impl SpreadDiagnostics {
     /// [`crate::metrics::gyration_radius`].
     #[must_use]
     pub fn r_gyration(&self) -> Option<f64> {
-        self.r_gyration.is_finite().then_some(self.r_gyration)
+        self.r_gyration.value()
     }
 }
 
@@ -114,7 +129,7 @@ impl SpreadDiagnostics {
 
 #[cfg(feature = "serde")]
 mod wire {
-    use super::SpreadDiagnostics;
+    use super::{MetricValue, SpreadDiagnostics};
     use serde::de::{IgnoredAny, MapAccess, Visitor};
     use serde::ser::SerializeMap;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -124,7 +139,7 @@ mod wire {
     const COLUMNS: [&str; 3] = ["r_max", "r_rms", "r_gyration"];
 
     impl SpreadDiagnostics {
-        fn raw(&self, column: &str) -> f64 {
+        fn column(&self, column: &str) -> MetricValue {
             match column {
                 "r_max" => self.r_max,
                 "r_rms" => self.r_rms,
@@ -132,7 +147,7 @@ mod wire {
             }
         }
 
-        fn set(&mut self, column: &str, v: f64) {
+        fn set(&mut self, column: &str, v: MetricValue) {
             match column {
                 "r_max" => self.r_max = v,
                 "r_rms" => self.r_rms = v,
@@ -145,8 +160,9 @@ mod wire {
         fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
             let mut map = s.serialize_map(Some(COLUMNS.len()))?;
             for column in COLUMNS {
-                let v = self.raw(column);
-                map.serialize_entry(column, &v.is_finite().then_some(v))?;
+                // Every reason for not having a number writes `null`, as with
+                // the metric block: the format carries one absent, not three.
+                map.serialize_entry(column, &self.column(column).value())?;
             }
             map.end()
         }
@@ -169,11 +185,11 @@ mod wire {
                     let mut out = SpreadDiagnostics::MISSING;
                     while let Some(key) = map.next_key::<Cow<'de, str>>()? {
                         if COLUMNS.contains(&key.as_ref()) {
-                            // `Option<f64>`, not `f64`: a diverged trial writes
-                            // `"r_rms": null` and that must not error.
-                            if let Some(v) = map.next_value::<Option<f64>>()? {
-                                out.set(&key, v);
-                            }
+                            // `Option<f64>`, not `f64`: a trial that did not
+                            // measure writes `"r_rms": null`, and that must not
+                            // error. It reads back as `Absent`.
+                            let v = map.next_value::<Option<f64>>()?;
+                            out.set(&key, v.map_or(MetricValue::Absent, MetricValue::measured));
                         } else {
                             map.next_value::<IgnoredAny>()?;
                         }

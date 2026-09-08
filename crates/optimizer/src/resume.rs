@@ -88,12 +88,19 @@ pub(crate) enum BatchOutcome {
         r_rms: f64,
     },
     /// Freshly evaluated — carries everything needed to log a JSONL line.
-    Fresh {
-        all: MetricValues,
-        spread: SpreadDiagnostics,
-        actual_curvature: f64,
-        elapsed_ms: u64,
-    },
+    ///
+    /// Boxed because the readings are 256 bytes against `Reused`'s 40, and this
+    /// enum is built one per config per batch: unboxed, every replayed trial
+    /// would carry the fresh variant's footprint for nothing.
+    Fresh(Box<FreshEval>),
+}
+
+/// The outcome of actually running an embedding.
+pub(crate) struct FreshEval {
+    pub(crate) all: MetricValues,
+    pub(crate) spread: SpreadDiagnostics,
+    pub(crate) actual_curvature: f64,
+    pub(crate) elapsed_ms: u64,
 }
 
 /// Evaluate a batch of configs in parallel, reusing recorded results for any
@@ -151,12 +158,12 @@ pub(crate) fn eval_or_reuse_batch(
         });
     }
     for (actual_curvature, all, spread, elapsed_ms) in fresh_results {
-        outcomes.push(BatchOutcome::Fresh {
+        outcomes.push(BatchOutcome::Fresh(Box::new(FreshEval {
             all,
             spread,
             actual_curvature,
             elapsed_ms,
-        });
+        })));
     }
     outcomes
 }

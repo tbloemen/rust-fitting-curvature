@@ -8,14 +8,14 @@
 
 #![cfg(feature = "serde")]
 
-use fitting_core::metrics::{Metric, MetricValues, ALL};
+use fitting_core::metrics::{Metric, MetricValue, MetricValues, ALL};
 use fitting_core::spread::SpreadDiagnostics;
 use serde::{Deserialize, Serialize};
 
 fn values(f: impl Fn(Metric) -> f64) -> MetricValues {
     let mut v = MetricValues::MISSING;
     for m in ALL {
-        v.set(*m, f(*m));
+        v.set(*m, MetricValue::measured(f(*m)));
     }
     v
 }

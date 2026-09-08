@@ -440,6 +440,16 @@ fn test_pca_init_deterministic() {
 // compute_metrics: on-demand end-of-training metrics
 // ---------------------------------------------------------------------------
 
+/// A metric that must have been measured.
+///
+/// Stronger than the `!is_nan()` these assertions used to make: a reading can
+/// now be absent for a stated reason, and "the pipeline produced a number here"
+/// is what these tests are actually about.
+fn measured(m: &fitting_core::metrics::MetricValues, metric: fitting_core::metrics::Metric) -> f64 {
+    m.get(metric)
+        .unwrap_or_else(|| panic!("{metric} was not measured: {:?}", m.reading(metric)))
+}
+
 fn small_config(n: usize, n_iterations: usize) -> TrainingConfig {
     TrainingConfig {
         n_points: n,
@@ -461,8 +471,8 @@ fn test_compute_metrics_manual_call() {
     let mut state = EmbeddingState::new(&data, 5, &small_config(50, 30));
     state.run(|_| true);
     let (m, _spread) = state.compute_metrics();
-    assert!((0.0..=1.0).contains(&m[TRUSTWORTHINESS_MANIFOLD]));
-    assert!((0.0..=1.0).contains(&m[TRUSTWORTHINESS]));
+    assert!((0.0..=1.0).contains(&measured(&m, TRUSTWORTHINESS_MANIFOLD)));
+    assert!((0.0..=1.0).contains(&measured(&m, TRUSTWORTHINESS)));
     assert!(m.get(NEIGHBORHOOD_HIT_MANIFOLD).is_none());
 }
 
@@ -486,16 +496,16 @@ fn test_compute_metrics_values_in_range() {
     let mut state = EmbeddingState::new(&data, 5, &small_config(50, 20)).with_labels(labels);
     state.run(|_| true);
     let (m, _spread) = state.compute_metrics();
-    assert!((0.0..=1.0).contains(&m[TRUSTWORTHINESS_MANIFOLD]));
-    assert!((0.0..=1.0).contains(&m[TRUSTWORTHINESS]));
-    assert!((0.0..=1.0).contains(&m[CONTINUITY_MANIFOLD]));
-    assert!((0.0..=1.0).contains(&m[CONTINUITY]));
-    assert!(m[NORMALIZED_STRESS_MANIFOLD] >= 0.0);
-    assert!(m[NORMALIZED_STRESS] >= 0.0);
-    assert!((0.0..=1.0).contains(&m[SHEPARD_GOODNESS_MANIFOLD]));
-    assert!((0.0..=1.0).contains(&m[SHEPARD_GOODNESS]));
-    assert!(!m[TRUSTWORTHINESS_MANIFOLD].is_nan());
-    assert!(!m[TRUSTWORTHINESS].is_nan());
+    assert!((0.0..=1.0).contains(&measured(&m, TRUSTWORTHINESS_MANIFOLD)));
+    assert!((0.0..=1.0).contains(&measured(&m, TRUSTWORTHINESS)));
+    assert!((0.0..=1.0).contains(&measured(&m, CONTINUITY_MANIFOLD)));
+    assert!((0.0..=1.0).contains(&measured(&m, CONTINUITY)));
+    assert!(measured(&m, NORMALIZED_STRESS_MANIFOLD) >= 0.0);
+    assert!(measured(&m, NORMALIZED_STRESS) >= 0.0);
+    assert!((0.0..=1.0).contains(&measured(&m, SHEPARD_GOODNESS_MANIFOLD)));
+    assert!((0.0..=1.0).contains(&measured(&m, SHEPARD_GOODNESS)));
+    assert!(!m.get(TRUSTWORTHINESS_MANIFOLD).is_none());
+    assert!(!m.get(TRUSTWORTHINESS).is_none());
 }
 
 #[test]
@@ -507,12 +517,12 @@ fn test_with_projection_spherical_no_nan() {
         EmbeddingState::new(&data, 5, &cfg).with_projection(SphericalProjection::Stereographic);
     state.run(|_| true);
     let (m, _spread) = state.compute_metrics();
-    assert!(!m[TRUSTWORTHINESS].is_nan(), "NaN in trustworthiness_2d");
+    assert!(!m.get(TRUSTWORTHINESS).is_none(), "NaN in trustworthiness_2d");
     assert!(
-        !m[NORMALIZED_STRESS].is_nan(),
+        !m.get(NORMALIZED_STRESS).is_none(),
         "NaN in normalized_stress_2d"
     );
-    assert!(!m[SHEPARD_GOODNESS].is_nan(), "NaN in shepard_goodness_2d");
+    assert!(!m.get(SHEPARD_GOODNESS).is_none(), "NaN in shepard_goodness_2d");
 }
 
 #[test]
@@ -524,9 +534,9 @@ fn test_with_projection_hyperbolic_no_nan() {
         .with_projection(SphericalProjection::AzimuthalEquidistant);
     state.run(|_| true);
     let (m, _spread) = state.compute_metrics();
-    assert!(!m[TRUSTWORTHINESS].is_nan(), "NaN in trustworthiness_2d");
+    assert!(!m.get(TRUSTWORTHINESS).is_none(), "NaN in trustworthiness_2d");
     assert!(
-        !m[NORMALIZED_STRESS].is_nan(),
+        !m.get(NORMALIZED_STRESS).is_none(),
         "NaN in normalized_stress_2d"
     );
 }
@@ -550,11 +560,11 @@ fn test_manifold_and_projected_readings_differ_under_curvature() {
     let (m, _spread) = state.compute_metrics();
 
     assert!(
-        (m[NORMALIZED_STRESS] - m[NORMALIZED_STRESS_MANIFOLD]).abs() > 1e-9,
+        (measured(&m, NORMALIZED_STRESS) - measured(&m, NORMALIZED_STRESS_MANIFOLD)).abs() > 1e-9,
         "projected stress {} and manifold stress {} are indistinguishable on a \
          curved manifold",
-        m[NORMALIZED_STRESS],
-        m[NORMALIZED_STRESS_MANIFOLD]
+        measured(&m, NORMALIZED_STRESS),
+        measured(&m, NORMALIZED_STRESS_MANIFOLD)
     );
 }
 
@@ -570,10 +580,10 @@ fn test_the_two_readings_coincide_in_flat_space() {
     let (m, _spread) = state.compute_metrics();
 
     assert!(
-        (m[NORMALIZED_STRESS] - m[NORMALIZED_STRESS_MANIFOLD]).abs() < 1e-9,
+        (measured(&m, NORMALIZED_STRESS) - measured(&m, NORMALIZED_STRESS_MANIFOLD)).abs() < 1e-9,
         "flat stress readings diverged: {} vs {}",
-        m[NORMALIZED_STRESS],
-        m[NORMALIZED_STRESS_MANIFOLD]
+        measured(&m, NORMALIZED_STRESS),
+        measured(&m, NORMALIZED_STRESS_MANIFOLD)
     );
 }
 
@@ -604,8 +614,8 @@ fn test_compute_metrics_from_distances() {
     let mut state = EmbeddingState::from_distances(&dist, n, &cfg);
     state.run(|_| true);
     let (m, _spread) = state.compute_metrics();
-    assert!(!m[TRUSTWORTHINESS_MANIFOLD].is_nan());
-    assert!(!m[TRUSTWORTHINESS].is_nan());
+    assert!(!m.get(TRUSTWORTHINESS_MANIFOLD).is_none());
+    assert!(!m.get(TRUSTWORTHINESS).is_none());
 }
 
 /// Regression: the hyperbolic feature norm loss must target the *bounded* input

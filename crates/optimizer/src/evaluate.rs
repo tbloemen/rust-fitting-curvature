@@ -2,7 +2,7 @@ use fitting_core::context::EmbeddingContext;
 use fitting_core::curvature_detection::{detect_geometry, GeometryVerdict};
 use fitting_core::embedding::EmbeddingState;
 use fitting_core::matrices::compute_euclidean_distance_matrix;
-use fitting_core::metrics::{Metric, MetricValues};
+use fitting_core::metrics::{Metric, MetricValue, MetricValues};
 use fitting_core::spread::SpreadDiagnostics;
 use fitting_core::visualisation::SphericalProjection;
 use indicatif::ProgressBar;
@@ -81,7 +81,7 @@ impl Evaluator {
         metric: &str,
         seed: u64,
         pb_iters: &ProgressBar,
-    ) -> f64 {
+    ) -> MetricValue {
         let metric = Metric::by_name(metric).unwrap_or_else(|| {
             panic!(
                 "Unknown metric: {metric}. Options: {}",

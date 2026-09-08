@@ -8,7 +8,9 @@ use fitting_analysis::r2::{
     cell_summary, front_utilities, r2, recommendation, Weights, REGION_ALL,
 };
 use fitting_analysis::TrialRecord;
-use fitting_core::metrics::{Direction, MetricValues, CONTINUITY, TRUSTWORTHINESS};
+use fitting_core::metrics::{
+    Direction, MetricValue, MetricValues, CONTINUITY, TRUSTWORTHINESS,
+};
 
 /// A front point that scores *v* on every objective.
 fn flat(v: f64) -> [f64; N_OBJECTIVES] {
@@ -311,10 +313,10 @@ fn metrics_at(v: f64) -> MetricValues {
     for metric in fitting_core::metrics::ALL {
         m.set(
             *metric,
-            match metric.direction() {
+            MetricValue::measured(match metric.direction() {
                 Direction::Minimize => 1.0 - v,
                 Direction::Maximize => v,
-            },
+            }),
         );
     }
     m
@@ -352,12 +354,11 @@ fn cell_summary_indexes_the_front_back_into_the_records() {
 #[test]
 fn a_diverged_trial_scores_worst_rather_than_vanishing() {
     let w = Weights::new();
-    // The two shapes divergence takes on disk: a missing column and a
-    // non-finite one. `MetricValues` collapses both to absent, and
-    // `oriented_value` maps absent to the worst case.
+    // The two ways a reading can carry no number. Both orient to the worst
+    // case, which is what keeps a diverged trial from scoring well.
     let mut diverged = record(0.9);
-    diverged.metrics.set(TRUSTWORTHINESS, f64::NAN);
-    diverged.metrics.set(CONTINUITY, f64::INFINITY);
+    diverged.metrics.set(TRUSTWORTHINESS, MetricValue::Diverged);
+    diverged.metrics.set(CONTINUITY, MetricValue::Absent);
 
     let good = cell_summary(&[record(0.9)], &w);
     let bad = cell_summary(&[diverged], &w);

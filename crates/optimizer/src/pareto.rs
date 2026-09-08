@@ -4,7 +4,7 @@ use crate::common::{make_progress_bar, parse_experiment};
 use crate::evaluate::Evaluator;
 use crate::gp::{MultiTrial, ParEgoOptimizer};
 use crate::metrics::{Direction, Metric, MetricValues, OBJECTIVES};
-use crate::resume::{eval_or_reuse_batch, load_prior_evals, BatchOutcome};
+use crate::resume::{eval_or_reuse_batch, load_prior_evals, BatchOutcome, FreshEval};
 use crate::trial_result::{write_result, TrialResult};
 use indicatif::MultiProgress;
 use serde::Serialize;
@@ -115,12 +115,13 @@ pub fn run_pareto(
                 } => {
                     optimizer.observe(config.clone(), metric_vec, r_max, r_rms);
                 }
-                BatchOutcome::Fresh {
-                    all,
-                    spread,
-                    actual_curvature,
-                    elapsed_ms,
-                } => {
+                BatchOutcome::Fresh(fresh) => {
+                    let FreshEval {
+                        all,
+                        spread,
+                        actual_curvature,
+                        elapsed_ms,
+                    } = *fresh;
                     let metric_vec = metrics_to_vec(&all, optimizer.metrics.as_slice());
                     optimizer.observe(
                         config.clone(),
@@ -192,12 +193,13 @@ pub fn run_pareto(
                     // don't rewrite it; just rebuild the optimizer's state.
                     optimizer.observe(config.clone(), metric_vec, r_max, r_rms);
                 }
-                BatchOutcome::Fresh {
-                    all,
-                    spread,
-                    actual_curvature,
-                    elapsed_ms,
-                } => {
+                BatchOutcome::Fresh(fresh) => {
+                    let FreshEval {
+                        all,
+                        spread,
+                        actual_curvature,
+                        elapsed_ms,
+                    } = *fresh;
                     let metric_vec = metrics_to_vec(&all, optimizer.metrics.as_slice());
                     optimizer.observe(
                         config.clone(),

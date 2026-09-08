@@ -14,6 +14,7 @@
 //! objective eligibility rules.
 
 use super::functions;
+use super::values::MetricValue;
 use crate::context::EmbeddingContext;
 
 /// Which distance matrix a metric reads — the before/after-projection
@@ -98,10 +99,17 @@ pub trait QualityMetric: Sync {
     /// Human-readable label for the web UI.
     fn label(&self) -> &'static str;
 
-    /// `f64::NAN` when undefined for this input — in practice, a label-aware
-    /// metric on unlabelled data. NaN is the single "absent" representation
-    /// across the workspace and serialises as `null`.
-    fn compute(&self, c: &EmbeddingContext<'_>) -> f64;
+    /// This metric's reading.
+    ///
+    /// Return [`MetricValue::NotApplicable`] where the metric is undefined for
+    /// the input — in practice, a label-aware metric on unlabelled data — and
+    /// [`MetricValue::measured`] otherwise, which downgrades a non-finite
+    /// result to [`MetricValue::Diverged`].
+    ///
+    /// A metric is not called at all when the distances it reads are not
+    /// finite; `MetricValues::compute` records `Diverged` for it instead. So an
+    /// implementation never has to defend against a broken distance matrix.
+    fn compute(&self, c: &EmbeddingContext<'_>) -> MetricValue;
 }
 
 // ─── A. Local structure preservation ─────────────────────────────────────────
@@ -133,8 +141,8 @@ impl QualityMetric for Trustworthiness {
     fn label(&self) -> &'static str {
         "Trustworthiness"
     }
-    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
-        functions::trustworthiness(c.high_dim_dist, c.dist_2d(), c.n, c.k)
+    fn compute(&self, c: &EmbeddingContext<'_>) -> MetricValue {
+        MetricValue::measured(functions::trustworthiness(c.high_dim_dist, c.dist_2d(), c.n, c.k))
     }
 }
 
@@ -170,8 +178,8 @@ impl QualityMetric for TrustworthinessManifold {
     fn label(&self) -> &'static str {
         "Trustworthiness"
     }
-    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
-        functions::trustworthiness(c.high_dim_dist, c.manifold_dist(), c.n, c.k)
+    fn compute(&self, c: &EmbeddingContext<'_>) -> MetricValue {
+        MetricValue::measured(functions::trustworthiness(c.high_dim_dist, c.manifold_dist(), c.n, c.k))
     }
 }
 
@@ -202,8 +210,8 @@ impl QualityMetric for Continuity {
     fn label(&self) -> &'static str {
         "Continuity"
     }
-    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
-        functions::continuity(c.high_dim_dist, c.dist_2d(), c.n, c.k)
+    fn compute(&self, c: &EmbeddingContext<'_>) -> MetricValue {
+        MetricValue::measured(functions::continuity(c.high_dim_dist, c.dist_2d(), c.n, c.k))
     }
 }
 
@@ -234,8 +242,8 @@ impl QualityMetric for ContinuityManifold {
     fn label(&self) -> &'static str {
         "Continuity"
     }
-    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
-        functions::continuity(c.high_dim_dist, c.manifold_dist(), c.n, c.k)
+    fn compute(&self, c: &EmbeddingContext<'_>) -> MetricValue {
+        MetricValue::measured(functions::continuity(c.high_dim_dist, c.manifold_dist(), c.n, c.k))
     }
 }
 
@@ -274,10 +282,10 @@ impl QualityMetric for NeighborhoodHit {
     fn label(&self) -> &'static str {
         "Neighborhood Hit"
     }
-    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> MetricValue {
         match c.labels {
-            Some(l) => functions::neighborhood_hit(c.dist_2d(), l, c.n, c.k),
-            None => f64::NAN,
+            Some(l) => MetricValue::measured(functions::neighborhood_hit(c.dist_2d(), l, c.n, c.k)),
+            None => MetricValue::NotApplicable,
         }
     }
 }
@@ -309,10 +317,10 @@ impl QualityMetric for NeighborhoodHitManifold {
     fn label(&self) -> &'static str {
         "Neighborhood Hit"
     }
-    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> MetricValue {
         match c.labels {
-            Some(l) => functions::neighborhood_hit(c.manifold_dist(), l, c.n, c.k),
-            None => f64::NAN,
+            Some(l) => MetricValue::measured(functions::neighborhood_hit(c.manifold_dist(), l, c.n, c.k)),
+            None => MetricValue::NotApplicable,
         }
     }
 }
@@ -350,8 +358,8 @@ impl QualityMetric for NormalizedStress {
     fn label(&self) -> &'static str {
         "Norm. Stress"
     }
-    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
-        functions::normalized_stress(c.high_dim_dist, c.dist_2d(), c.n)
+    fn compute(&self, c: &EmbeddingContext<'_>) -> MetricValue {
+        MetricValue::measured(functions::normalized_stress(c.high_dim_dist, c.dist_2d(), c.n))
     }
 }
 
@@ -386,8 +394,8 @@ impl QualityMetric for NormalizedStressManifold {
     fn label(&self) -> &'static str {
         "Norm. Stress"
     }
-    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
-        functions::normalized_stress(c.high_dim_dist, c.manifold_dist(), c.n)
+    fn compute(&self, c: &EmbeddingContext<'_>) -> MetricValue {
+        MetricValue::measured(functions::normalized_stress(c.high_dim_dist, c.manifold_dist(), c.n))
     }
 }
 
@@ -418,8 +426,8 @@ impl QualityMetric for ShepardGoodness {
     fn label(&self) -> &'static str {
         "Shepard Goodness"
     }
-    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
-        functions::shepard_goodness(c.high_dim_dist, c.dist_2d(), c.n)
+    fn compute(&self, c: &EmbeddingContext<'_>) -> MetricValue {
+        MetricValue::measured(functions::shepard_goodness(c.high_dim_dist, c.dist_2d(), c.n))
     }
 }
 
@@ -450,8 +458,8 @@ impl QualityMetric for ShepardGoodnessManifold {
     fn label(&self) -> &'static str {
         "Shepard Goodness"
     }
-    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
-        functions::shepard_goodness(c.high_dim_dist, c.manifold_dist(), c.n)
+    fn compute(&self, c: &EmbeddingContext<'_>) -> MetricValue {
+        MetricValue::measured(functions::shepard_goodness(c.high_dim_dist, c.manifold_dist(), c.n))
     }
 }
 
@@ -486,10 +494,10 @@ impl QualityMetric for DaviesBouldinRatio {
     fn label(&self) -> &'static str {
         "DB Ratio"
     }
-    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> MetricValue {
         match c.labels {
-            Some(l) => functions::davies_bouldin_ratio_from(c.high_dim_dist, c.dist_2d(), l, c.n),
-            None => f64::NAN,
+            Some(l) => MetricValue::measured(functions::davies_bouldin_ratio_from(c.high_dim_dist, c.dist_2d(), l, c.n)),
+            None => MetricValue::NotApplicable,
         }
     }
 }
@@ -523,10 +531,10 @@ impl QualityMetric for DunnIndex {
     fn label(&self) -> &'static str {
         "Dunn Index"
     }
-    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> MetricValue {
         match c.labels {
-            Some(l) => functions::dunn_index(c.dist_2d(), l, c.n),
-            None => f64::NAN,
+            Some(l) => MetricValue::measured(functions::dunn_index(c.dist_2d(), l, c.n)),
+            None => MetricValue::NotApplicable,
         }
     }
 }
@@ -562,10 +570,10 @@ impl QualityMetric for ClusterDensityMeasure {
     fn label(&self) -> &'static str {
         "Cluster Density"
     }
-    fn compute(&self, c: &EmbeddingContext<'_>) -> f64 {
+    fn compute(&self, c: &EmbeddingContext<'_>) -> MetricValue {
         match c.labels {
-            Some(l) => functions::cluster_density_measure(c.coords_2d(), l, c.n),
-            None => f64::NAN,
+            Some(l) => MetricValue::measured(functions::cluster_density_measure(c.coords_2d(), l, c.n)),
+            None => MetricValue::NotApplicable,
         }
     }
 }
@@ -707,7 +715,7 @@ impl Metric {
     pub fn label(self) -> &'static str {
         self.0.label()
     }
-    pub fn compute(self, c: &EmbeddingContext<'_>) -> f64 {
+    pub fn compute(self, c: &EmbeddingContext<'_>) -> MetricValue {
         self.0.compute(c)
     }
 

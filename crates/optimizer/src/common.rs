@@ -47,15 +47,15 @@ pub(crate) fn eval_single_metric(
     trial_idx: usize,
     pb_iters: &ProgressBar,
 ) -> (f64, f64) {
+    // A seed whose reading is absent is dropped rather than substituted: this
+    // feeds `--mode scan`'s mean/std, which describe the seeds that produced a
+    // number. `mean_std` over an empty slice yields NaN, which is the honest
+    // answer when no seed measured anything.
     let values: Vec<f64> = (0..n_seeds)
-        .map(|si| {
-            evaluator.evaluate_with_metric(
-                config,
-                curvature,
-                metric,
-                trial_seed(trial_idx, si),
-                pb_iters,
-            )
+        .filter_map(|si| {
+            evaluator
+                .evaluate_with_metric(config, curvature, metric, trial_seed(trial_idx, si), pb_iters)
+                .value()
         })
         .collect();
     mean_std(&values)

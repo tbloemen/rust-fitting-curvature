@@ -108,38 +108,61 @@ pub static METRIC_PAIRS: LazyLock<Vec<(Metric, Metric)>> =
 /// `metric_pairs_has_the_declared_length` pins it.
 pub const N_METRIC_PAIRS: usize = 5;
 
-/// True when *name* is an objective that is minimised.
+/// True when *metric* is minimised, so [`oriented`] flips it.
 ///
 /// Was a `MINIMIZE: [&str; 1]` constant listing `normalized_stress`; the
 /// registry states each metric's own orientation, and
 /// `only_normalized_stress_is_minimized` pins that this is still the only one.
-#[must_use]
-pub fn is_minimized(name: &str) -> bool {
-    Metric::by_name(name).is_some_and(|m| m.direction() == Direction::Minimize)
+pub fn is_minimized_metric(metric: Metric) -> bool {
+    metric.direction() == Direction::Minimize
 }
 
-/// Map one raw metric value into `[0, 1]` with higher = better.
+/// True when *name* is an objective that is minimised.
 ///
-/// A missing / null / non-finite value is the worst case (0.0), matching the
-/// optimizer's `metrics_to_vec` substitution so diverged trials score as bad
-/// rather than being dropped silently.
-#[must_use]
-pub fn oriented_value(name: &str, v: Option<f64>) -> f64 {
+/// The string form, for callers that genuinely start from one. Everything that
+/// already holds a [`Metric`] should use [`is_minimized_metric`] — resolving a
+/// name is a linear scan of the registry, and `oriented_row` used to do three
+/// of them per objective per record.
+pub fn is_minimized(name: &str) -> bool {
+    Metric::by_name(name).is_some_and(is_minimized_metric)
+}
+
+/// Map one metric's reading into `[0, 1]` with higher = better.
+///
+/// A reading with no number — a diverged trial, an unwritten column — is the
+/// worst case (0.0), matching the optimizer's `metrics_to_vec` substitution so
+/// such a trial scores badly rather than being dropped silently.
+pub fn oriented(metric: Metric, v: Option<f64>) -> f64 {
     let Some(x) = v else { return 0.0 };
     if !x.is_finite() {
         return 0.0;
     }
-    let x = if is_minimized(name) { 1.0 - x } else { x };
+    let x = if is_minimized_metric(metric) { 1.0 - x } else { x };
     // Every objective is bounded in [0, 1] by construction; clamp defensively.
     x.clamp(0.0, 1.0)
+}
+
+/// [`oriented`] by name, for callers that start from a string.
+pub fn oriented_value(name: &str, v: Option<f64>) -> f64 {
+    match Metric::by_name(name) {
+        Some(metric) => oriented(metric, v),
+        // Not a metric at all: nothing to orient against, so pass the value
+        // through with the same absent-is-worst rule.
+        None => v.filter(|x| x.is_finite()).unwrap_or(0.0).clamp(0.0, 1.0),
+    }
 }
 
 /// One record's oriented objective vector.
 #[must_use]
 pub fn oriented_row(r: &TrialRecord) -> [f64; N_OBJECTIVES] {
     let mut row = [0.0; N_OBJECTIVES];
+    // Straight off the handle: no name is resolved here. This used to be
+    // `oriented_value(metric.name(), r.objective(metric.name()))`, which cost
+    // three linear registry scans per objective per record — `by_name` inside
+    // `objective`, `index` inside `get`, and `by_name` again inside
+    // `is_minimized` — for ~4.3M scans over the sweep set.
     for (slot, metric) in row.iter_mut().zip(OBJECTIVES) {
-        *slot = oriented_value(metric.name(), r.objective(metric.name()));
+        *slot = oriented(*metric, r.metrics.get(*metric));
     }
     row
 }

@@ -3,6 +3,7 @@
 
 use fitting_core::context::EmbeddingContext;
 use fitting_core::metrics::*;
+use fitting_core::metrics::{Metric, MetricValue, MetricValues};
 use fitting_core::spread::SpreadDiagnostics;
 use fitting_core::synthetic_data::Rng;
 use fitting_core::visualisation::SphericalProjection;
@@ -483,6 +484,12 @@ fn test_davies_bouldin_separated() {
 // MetricValues::compute
 // ---------------------------------------------------------------------------
 
+/// A metric that must have been measured.
+fn measured(m: &MetricValues, metric: Metric) -> f64 {
+    m.get(metric)
+        .unwrap_or_else(|| panic!("{metric} was not measured: {:?}", m.reading(metric)))
+}
+
 /// A flat context over 2-D points, which is what these tests need: at
 /// curvature 0 the "manifold" is the plane itself, so the manifold and
 /// projected readings are the same geometry and any difference between them is
@@ -554,24 +561,24 @@ fn test_compute_perfect_embedding_scores() {
     let m = MetricValues::compute(&flat_context(&d, &pts_2d, None, 5));
 
     assert!(
-        (m[TRUSTWORTHINESS_MANIFOLD] - 1.0).abs() < 1e-10,
+        (measured(&m, TRUSTWORTHINESS_MANIFOLD) - 1.0).abs() < 1e-10,
         "trustworthiness_manifold {}",
-        m[TRUSTWORTHINESS_MANIFOLD]
+        measured(&m, TRUSTWORTHINESS_MANIFOLD)
     );
     assert!(
-        (m[CONTINUITY_MANIFOLD] - 1.0).abs() < 1e-10,
+        (measured(&m, CONTINUITY_MANIFOLD) - 1.0).abs() < 1e-10,
         "continuity_manifold {}",
-        m[CONTINUITY_MANIFOLD]
+        measured(&m, CONTINUITY_MANIFOLD)
     );
     assert!(
-        m[NORMALIZED_STRESS_MANIFOLD].abs() < 1e-10,
+        measured(&m, NORMALIZED_STRESS_MANIFOLD).abs() < 1e-10,
         "normalized_stress_manifold {}",
-        m[NORMALIZED_STRESS_MANIFOLD]
+        measured(&m, NORMALIZED_STRESS_MANIFOLD)
     );
     assert!(
-        (m[SHEPARD_GOODNESS_MANIFOLD] - 1.0).abs() < 1e-10,
+        (measured(&m, SHEPARD_GOODNESS_MANIFOLD) - 1.0).abs() < 1e-10,
         "shepard_goodness_manifold {}",
-        m[SHEPARD_GOODNESS_MANIFOLD]
+        measured(&m, SHEPARD_GOODNESS_MANIFOLD)
     );
 }
 
@@ -600,8 +607,8 @@ fn test_compute_all_values_in_range() {
             metric.name()
         );
     }
-    assert!(m[NORMALIZED_STRESS] >= 0.0);
-    assert!(m[NORMALIZED_STRESS_MANIFOLD] >= 0.0);
+    assert!(measured(&m, NORMALIZED_STRESS) >= 0.0);
+    assert!(measured(&m, NORMALIZED_STRESS_MANIFOLD) >= 0.0);
 }
 
 /// The spread diagnostics are measured from the same context as the metrics,
@@ -663,4 +670,105 @@ fn test_normalized_stress_scale_invariant() {
         (s1 - s2).abs() < 1e-10,
         "normalized_stress must be scale-invariant: {s1} != {s2}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The divergence gate
+// ---------------------------------------------------------------------------
+
+/// A context whose embedding blew up: one coordinate is non-finite, so every
+/// distance involving that point is `inf` or `NaN`.
+fn diverged_context(pts_2d: &mut [f64], high_dim: &[f64]) -> Vec<f64> {
+    pts_2d[0] = f64::INFINITY;
+    high_dim.to_vec()
+}
+
+/// **This is the assertion the gate exists for.**
+///
+/// On a diverged embedding, only the four metrics that *sum* distances notice.
+/// The ones that *compare* fall into their degenerate branches (`f64::max`
+/// ignores NaN; `if d > max_intra` is false for NaN) and report `0.0`, and the
+/// ones that *rank* sort NaN to a defined position via `total_cmp` and return a
+/// confident, plausible score — `trustworthiness` reads ~0.93 on a blown-up
+/// embedding in `results/`, and `metrics_to_vec` then hands the GP a 0.93.
+///
+/// Every one of them must now report `Diverged` instead.
+#[test]
+fn a_diverged_embedding_measures_nothing() {
+    let (mut pts_2d, labels) = make_clustered_2d(3, 10, 1.0, 42);
+    let n = pts_2d.len() / 2;
+    let high_dim = make_distance_matrix(n, 42);
+    let high_dim = diverged_context(&mut pts_2d, &high_dim);
+
+    let m = MetricValues::compute(&flat_context(&high_dim, &pts_2d, Some(&labels), 5));
+
+    for metric in fitting_core::metrics::ALL {
+        assert_eq!(
+            m.reading(*metric),
+            MetricValue::Diverged,
+            "{metric} reported {:?} from a diverged embedding",
+            m.reading(*metric)
+        );
+        assert_eq!(m.get(*metric), None);
+    }
+
+    // ...and the gate is load-bearing, not belt-and-braces: called directly on
+    // the same distances, trustworthiness still returns a finite, respectable
+    // number. That is what every pre-gate sweep recorded, and what
+    // `metrics_to_vec` passed to the GP as a real score.
+    let dist_2d = euclidean_dist_2d(&pts_2d, n);
+    let ungated = trustworthiness(&high_dim, &dist_2d, n, 5);
+    assert!(
+        ungated.is_finite() && (0.0..=1.0).contains(&ungated),
+        "the gate would be pointless if the raw function already failed here, \
+         but it returned {ungated}"
+    );
+}
+
+/// The same for the spread diagnostics, where `r_max` is the one that lied
+/// loudest: `fold(0.0, f64::max)` ignores NaN, so a blown-up embedding used to
+/// report a measured-looking `r_max: 0.0` beside `r_rms: null`.
+#[test]
+fn a_diverged_embedding_has_no_measurable_spread() {
+    let (mut pts_2d, _) = make_clustered_2d(3, 10, 1.0, 42);
+    let n = pts_2d.len() / 2;
+    let high_dim = make_distance_matrix(n, 42);
+    let high_dim = diverged_context(&mut pts_2d, &high_dim);
+
+    let spread = SpreadDiagnostics::compute(&flat_context(&high_dim, &pts_2d, None, 5));
+    assert_eq!(spread.r_max(), None, "r_max reported a number from garbage");
+    assert_eq!(spread.r_rms(), None);
+    assert_eq!(spread.r_gyration(), None);
+}
+
+/// The gate must not fire on a sound embedding, or every trial becomes
+/// `Diverged` and the sweep measures nothing at all.
+#[test]
+fn a_sound_embedding_is_not_gated() {
+    let (pts_2d, labels) = make_clustered_2d(3, 10, 1.0, 42);
+    let n = pts_2d.len() / 2;
+    let high_dim = make_distance_matrix(n, 42);
+    let m = MetricValues::compute(&flat_context(&high_dim, &pts_2d, Some(&labels), 5));
+
+    for metric in fitting_core::metrics::ALL {
+        assert!(
+            m.reading(*metric).is_measured(),
+            "{metric} was gated on a sound embedding: {:?}",
+            m.reading(*metric)
+        );
+    }
+}
+
+/// Absence keeps its reason: no labels is `NotApplicable`, which is a different
+/// fact from a diverged reading even though both serialise as `null`.
+#[test]
+fn no_labels_is_not_applicable_rather_than_diverged() {
+    let (pts_2d, _) = make_clustered_2d(3, 10, 1.0, 42);
+    let n = pts_2d.len() / 2;
+    let high_dim = make_distance_matrix(n, 42);
+    let m = MetricValues::compute(&flat_context(&high_dim, &pts_2d, None, 5));
+
+    assert_eq!(m.reading(NEIGHBORHOOD_HIT), MetricValue::NotApplicable);
+    assert_eq!(m.reading(DUNN_INDEX), MetricValue::NotApplicable);
+    assert!(m.reading(TRUSTWORTHINESS).is_measured());
 }

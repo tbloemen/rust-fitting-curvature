@@ -6,7 +6,7 @@ use fitting_analysis::{
     pareto_front_mask, pareto_front_records, parse_cell_stem, parse_cell_stem_variant, TrialRecord,
     Variant,
 };
-use fitting_core::metrics::{Direction, MetricValues};
+use fitting_core::metrics::{Direction, MetricValue, MetricValues};
 
 /// The manifold columns are populated too. They are no longer objectives, so
 /// `oriented_row` ignores them — which is part of what the row test checks.
@@ -20,10 +20,10 @@ fn metrics_at(v: f64) -> MetricValues {
     for metric in fitting_core::metrics::ALL {
         m.set(
             *metric,
-            match metric.direction() {
+            MetricValue::measured(match metric.direction() {
                 Direction::Minimize => 1.0 - v,
                 Direction::Maximize => v,
-            },
+            }),
         );
     }
     m

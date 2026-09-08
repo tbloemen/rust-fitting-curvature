@@ -15,6 +15,7 @@
 use std::cell::OnceCell;
 
 use crate::manifolds::create_manifold;
+use crate::metrics::Space;
 use crate::matrices::compute_euclidean_distance_matrix;
 use crate::visualisation::{project_to_2d, SphericalProjection};
 
@@ -44,6 +45,14 @@ pub struct EmbeddingContext<'a> {
     coords_2d: OnceCell<Vec<f64>>,
     dist_2d: OnceCell<Vec<f64>>,
     origin_dist: OnceCell<Vec<f64>>,
+}
+
+/// Whether every entry of a derived matrix is finite.
+///
+/// One `O(n²)` pass against metrics that are already `O(n² log n)` for their
+/// rank sorts, and it only runs for a matrix something actually reads.
+fn all_finite(xs: &[f64]) -> bool {
+    xs.iter().all(|x| x.is_finite())
 }
 
 impl<'a> EmbeddingContext<'a> {
@@ -120,6 +129,34 @@ impl<'a> EmbeddingContext<'a> {
     pub fn dist_2d(&self) -> &[f64] {
         self.dist_2d
             .get_or_init(|| compute_euclidean_distance_matrix(self.coords_2d(), self.n, 2))
+    }
+
+    /// Whether the distances a metric of this `space` reads are all finite.
+    ///
+    /// A diverged embedding produces `inf`/`NaN` distances, and only the
+    /// metrics that *sum* them notice: the ones that compare fall into their
+    /// degenerate branches, and the ones that rank sort NaN to a defined
+    /// position and return a confident, meaningless score. `MetricValues::compute`
+    /// asks this first so such a reading is recorded as
+    /// [`crate::metrics::MetricValue::Diverged`] rather than as a number.
+    ///
+    /// Per space, because an embedding can be sound on the manifold and blow up
+    /// only through the projection; failing both would discard a real
+    /// measurement. `high_dim_dist` is deliberately not covered — non-finite
+    /// *input* distances are a data problem, and reporting every metric as
+    /// diverged would hide it.
+    pub fn distances_are_finite(&self, space: Space) -> bool {
+        match space {
+            Space::Projected => all_finite(self.dist_2d()),
+            Space::Manifold => all_finite(self.manifold_dist()),
+        }
+    }
+
+    /// Whether the configuration's own extent is measurable — the gate
+    /// [`crate::spread::SpreadDiagnostics`] uses, over the two matrices it
+    /// reads.
+    pub fn spread_is_finite(&self) -> bool {
+        all_finite(self.origin_dist()) && all_finite(self.manifold_dist())
     }
 
     /// Geodesic distance from the manifold origin, per point. Only
