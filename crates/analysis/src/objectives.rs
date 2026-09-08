@@ -28,7 +28,7 @@ use crate::records::TrialRecord;
 /// [`oriented_row`] resolves values by name and every output table is
 /// name-keyed. What it *does* have to match is the optimizer's
 /// `default_pareto_metrics`; that alignment is by hand across crates.
-pub const OBJECTIVES: [&str; 6] = [
+pub const OBJECTIVES: [&str; 5] = [
     // structure
     "trustworthiness",
     "continuity",
@@ -37,7 +37,6 @@ pub const OBJECTIVES: [&str; 6] = [
     "shepard_goodness",
     // class separation
     "neighborhood_hit",
-    "class_density_measure",
 ];
 
 /// Number of objectives; the dimension of the oriented objective space.

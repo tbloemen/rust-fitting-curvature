@@ -194,8 +194,8 @@ fn the_ideal_point_scores_zero_and_the_nadir_scores_worst() {
 fn the_indicator_is_weakly_pareto_compliant() {
     // The property ΔR2 > 0 rests on: a dominating front can never score worse.
     let w = Weights::new();
-    let worse = [0.3, 0.4, 0.5, 0.2, 0.6, 0.7];
-    let better = [0.4, 0.5, 0.5, 0.3, 0.8, 0.9];
+    let worse = [0.3, 0.4, 0.5, 0.2, 0.6];
+    let better = [0.4, 0.5, 0.5, 0.3, 0.8];
     for region in &w.regions {
         let (region, b, a) = (
             region.name.as_str(),
@@ -238,7 +238,7 @@ fn the_indicator_is_order_independent() {
     let mut a = flat(0.5);
     a[3] = 0.9;
     let mut b = flat(0.6);
-    b[5] = 0.2;
+    b[4] = 0.2;
     assert_eq!(
         score(&[a, b], &w, REGION_ALL),
         score(&[b, a], &w, REGION_ALL)

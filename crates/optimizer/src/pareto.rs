@@ -278,7 +278,6 @@ pub(crate) fn default_pareto_metrics() -> Vec<Metric> {
         Metric::ShepardGoodness,
         // class separation
         Metric::NeighborhoodHit,
-        Metric::ClassDensityMeasure,
     ]
 }
 

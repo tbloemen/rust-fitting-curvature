@@ -103,8 +103,6 @@ impl TrialResult {
         self.trustworthiness_manifold = Some(m.trustworthiness_manifold);
         self.continuity = Some(m.continuity);
         self.continuity_manifold = Some(m.continuity_manifold);
-        self.knn_overlap = Some(m.knn_overlap);
-        self.knn_overlap_manifold = Some(m.knn_overlap_manifold);
         self.neighborhood_hit = Some(m.neighborhood_hit);
         self.neighborhood_hit_manifold = Some(m.neighborhood_hit_manifold);
         self.normalized_stress = Some(m.normalized_stress);
@@ -113,7 +111,6 @@ impl TrialResult {
         self.shepard_goodness_manifold = Some(m.shepard_goodness_manifold);
         self.davies_bouldin_ratio = Some(m.davies_bouldin_ratio);
         self.dunn_index = Some(m.dunn_index);
-        self.class_density_measure = Some(m.class_density_measure);
         self.cluster_density_measure = Some(m.cluster_density_measure);
         self.r_max = Some(m.r_max);
         self.r_rms = Some(m.r_rms);

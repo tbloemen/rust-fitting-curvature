@@ -8,8 +8,6 @@ pub struct AllMetrics {
     pub trustworthiness_manifold: f64,
     pub continuity: f64,
     pub continuity_manifold: f64,
-    pub knn_overlap: f64,
-    pub knn_overlap_manifold: f64,
     pub neighborhood_hit: f64,
     pub neighborhood_hit_manifold: f64,
     // Distance preservation — 2D and manifold
@@ -20,7 +18,6 @@ pub struct AllMetrics {
     // Class separation (2D only)
     pub davies_bouldin_ratio: f64,
     pub dunn_index: f64,
-    pub class_density_measure: f64,
     pub cluster_density_measure: f64,
     // Diagnostic — embedding radial spread (geodesic dist from origin).
     // Not optimised; logged to verify the (K, R_max) gauge problem.
@@ -47,8 +44,6 @@ impl AllMetrics {
             trustworthiness_manifold: avg(|m| m.trustworthiness_manifold),
             continuity: avg(|m| m.continuity),
             continuity_manifold: avg(|m| m.continuity_manifold),
-            knn_overlap: avg(|m| m.knn_overlap),
-            knn_overlap_manifold: avg(|m| m.knn_overlap_manifold),
             neighborhood_hit: avg(|m| m.neighborhood_hit),
             neighborhood_hit_manifold: avg(|m| m.neighborhood_hit_manifold),
             normalized_stress: avg(|m| m.normalized_stress),
@@ -57,7 +52,6 @@ impl AllMetrics {
             shepard_goodness_manifold: avg(|m| m.shepard_goodness_manifold),
             davies_bouldin_ratio: avg(|m| m.davies_bouldin_ratio),
             dunn_index: avg(|m| m.dunn_index),
-            class_density_measure: avg(|m| m.class_density_measure),
             cluster_density_measure: avg(|m| m.cluster_density_measure),
             r_max: avg(|m| m.r_max),
             r_rms: avg(|m| m.r_rms),
@@ -73,8 +67,6 @@ pub enum Metric {
     TrustworthinessManifold,
     Continuity,
     ContinuityManifold,
-    KnnOverlap,
-    KnnOverlapManifold,
     NeighborhoodHit,
     NeighborhoodHitManifold,
     NormalizedStress,
@@ -83,7 +75,6 @@ pub enum Metric {
     ShepardGoodnessManifold,
     DaviesBouldinRatio,
     DunnIndex,
-    ClassDensityMeasure,
     ClusterDensityMeasure,
 }
 
@@ -93,8 +84,6 @@ impl Metric {
         Metric::TrustworthinessManifold,
         Metric::Continuity,
         Metric::ContinuityManifold,
-        Metric::KnnOverlap,
-        Metric::KnnOverlapManifold,
         Metric::NeighborhoodHit,
         Metric::NeighborhoodHitManifold,
         Metric::NormalizedStress,
@@ -103,7 +92,6 @@ impl Metric {
         Metric::ShepardGoodnessManifold,
         Metric::DaviesBouldinRatio,
         Metric::DunnIndex,
-        Metric::ClassDensityMeasure,
         Metric::ClusterDensityMeasure,
     ];
 
@@ -113,8 +101,6 @@ impl Metric {
             Metric::TrustworthinessManifold => "trustworthiness_manifold",
             Metric::Continuity => "continuity",
             Metric::ContinuityManifold => "continuity_manifold",
-            Metric::KnnOverlap => "knn_overlap",
-            Metric::KnnOverlapManifold => "knn_overlap_manifold",
             Metric::NeighborhoodHit => "neighborhood_hit",
             Metric::NeighborhoodHitManifold => "neighborhood_hit_manifold",
             Metric::NormalizedStress => "normalized_stress",
@@ -123,7 +109,6 @@ impl Metric {
             Metric::ShepardGoodnessManifold => "shepard_goodness_manifold",
             Metric::DaviesBouldinRatio => "davies_bouldin_ratio",
             Metric::DunnIndex => "dunn_index",
-            Metric::ClassDensityMeasure => "class_density_measure",
             Metric::ClusterDensityMeasure => "cluster_density_measure",
         }
     }
@@ -143,8 +128,6 @@ impl Metric {
             Metric::TrustworthinessManifold => m.trustworthiness_manifold,
             Metric::Continuity => m.continuity,
             Metric::ContinuityManifold => m.continuity_manifold,
-            Metric::KnnOverlap => m.knn_overlap,
-            Metric::KnnOverlapManifold => m.knn_overlap_manifold,
             Metric::NeighborhoodHit => m.neighborhood_hit,
             Metric::NeighborhoodHitManifold => m.neighborhood_hit_manifold,
             Metric::NormalizedStress => m.normalized_stress,
@@ -153,7 +136,6 @@ impl Metric {
             Metric::ShepardGoodnessManifold => m.shepard_goodness_manifold,
             Metric::DaviesBouldinRatio => m.davies_bouldin_ratio,
             Metric::DunnIndex => m.dunn_index,
-            Metric::ClassDensityMeasure => m.class_density_measure,
             Metric::ClusterDensityMeasure => m.cluster_density_measure,
         }
     }
@@ -165,8 +147,6 @@ impl Metric {
             "trustworthiness_manifold" => Some(Metric::TrustworthinessManifold),
             "continuity" => Some(Metric::Continuity),
             "continuity_manifold" => Some(Metric::ContinuityManifold),
-            "knn_overlap" => Some(Metric::KnnOverlap),
-            "knn_overlap_manifold" => Some(Metric::KnnOverlapManifold),
             "neighborhood_hit" => Some(Metric::NeighborhoodHit),
             "neighborhood_hit_manifold" => Some(Metric::NeighborhoodHitManifold),
             "normalized_stress" => Some(Metric::NormalizedStress),
@@ -175,7 +155,6 @@ impl Metric {
             "shepard_goodness_manifold" => Some(Metric::ShepardGoodnessManifold),
             "davies_bouldin_ratio" => Some(Metric::DaviesBouldinRatio),
             "dunn_index" => Some(Metric::DunnIndex),
-            "class_density_measure" => Some(Metric::ClassDensityMeasure),
             "cluster_density_measure" => Some(Metric::ClusterDensityMeasure),
             _ => None,
         }

@@ -138,250 +138,17 @@ pub fn continuity(
     1.0 - (2.0 / denom) * penalty
 }
 
-/// Fraction of k-nearest neighbors preserved between high-dim and embedded spaces.
-///
-/// Returns a value in [0, 1], higher is better.
-pub fn knn_overlap(
-    high_dim_distances: &[f64],
-    embedded_distances: &[f64],
-    n: usize,
-    k: usize,
-) -> f64 {
-    let k = k.min(n - 1);
-
-    let high_knn = knn_index_sets(high_dim_distances, n, k);
-    let embed_knn = knn_index_sets(embedded_distances, n, k);
-
-    let mut total_overlap = 0.0;
-    for i in 0..n {
-        let count = high_knn[i]
-            .iter()
-            .filter(|idx| embed_knn[i].contains(idx))
-            .count();
-        total_overlap += count as f64 / k as f64;
-    }
-    total_overlap / n as f64
-}
-
 // ---------------------------------------------------------------------------
 // B. Global geometry preservation
 // ---------------------------------------------------------------------------
-
-/// Geodesic distortion (Gu et al. 2019): mean ||(d_embed/d_high)^2 - 1||.
-pub fn geodesic_distortion_gu2019(
-    high_dim_distances: &[f64],
-    embedded_distances: &[f64],
-    n: usize,
-) -> f64 {
-    let mut sum = 0.0;
-    let mut count = 0usize;
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let h = high_dim_distances[i * n + j];
-            let e = embedded_distances[i * n + j];
-            if h > 1e-12 {
-                sum += ((e / h).powi(2) - 1.0).abs();
-                count += 1;
-            }
-        }
-    }
-    if count == 0 {
-        0.0
-    } else {
-        sum / count as f64
-    }
-}
-
-/// Geodesic distortion (MSE): mean (d_embed - d_high)^2.
-pub fn geodesic_distortion_mse(
-    high_dim_distances: &[f64],
-    embedded_distances: &[f64],
-    n: usize,
-) -> f64 {
-    let mut sum = 0.0;
-    let mut count = 0usize;
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let diff = embedded_distances[i * n + j] - high_dim_distances[i * n + j];
-            sum += diff * diff;
-            count += 1;
-        }
-    }
-    if count == 0 {
-        0.0
-    } else {
-        sum / count as f64
-    }
-}
 
 // ---------------------------------------------------------------------------
 // C. Space efficiency
 // ---------------------------------------------------------------------------
 
-/// Normalized std of radial distances from centroid (coefficient of variation).
-/// Lower = more uniform spread.
-pub fn radial_distribution(pts_2d: &[f64], n: usize) -> f64 {
-    if n < 2 {
-        return 0.0;
-    }
-
-    // Compute centroid
-    let mut cx = 0.0;
-    let mut cy = 0.0;
-    for i in 0..n {
-        cx += pts_2d[i * 2];
-        cy += pts_2d[i * 2 + 1];
-    }
-    cx /= n as f64;
-    cy /= n as f64;
-
-    // Compute radii
-    let mut radii = Vec::with_capacity(n);
-    for i in 0..n {
-        let dx = pts_2d[i * 2] - cx;
-        let dy = pts_2d[i * 2 + 1] - cy;
-        radii.push((dx * dx + dy * dy).sqrt());
-    }
-
-    let mean_r: f64 = radii.iter().sum::<f64>() / n as f64;
-    if mean_r < 1e-12 {
-        return 0.0;
-    }
-
-    let var: f64 = radii.iter().map(|&r| (r - mean_r).powi(2)).sum::<f64>() / n as f64;
-    var.sqrt() / mean_r
-}
-
 // ---------------------------------------------------------------------------
 // D. Perceptual evaluation
 // ---------------------------------------------------------------------------
-
-/// Class Density Measure (CDM) from Tatu et al. (2009).
-///
-/// Evaluates class separation by computing per-class density fields on a grid
-/// and measuring the sum of absolute differences between all class pairs.
-/// Uses Gaussian KDE to estimate smooth density per class.
-/// Operates on 2D projected coordinates.
-/// Returns a normalized value in [0, 1], higher = better separated classes.
-pub fn class_density_measure(pts_2d: &[f64], labels: &[u32], n: usize) -> f64 {
-    const GRID_SIZE: usize = 80;
-
-    let mut unique_labels: Vec<u32> = labels.to_vec();
-    unique_labels.sort();
-    unique_labels.dedup();
-    let num_classes = unique_labels.len();
-    if num_classes < 2 {
-        return 0.0;
-    }
-
-    // Bounding box with margin
-    let mut x_min = f64::INFINITY;
-    let mut x_max = f64::NEG_INFINITY;
-    let mut y_min = f64::INFINITY;
-    let mut y_max = f64::NEG_INFINITY;
-    for i in 0..n {
-        let x = pts_2d[i * 2];
-        let y = pts_2d[i * 2 + 1];
-        x_min = x_min.min(x);
-        x_max = x_max.max(x);
-        y_min = y_min.min(y);
-        y_max = y_max.max(y);
-    }
-    let extent = (x_max - x_min).max(y_max - y_min);
-    if extent < 1e-12 {
-        return 0.0;
-    }
-    let margin = extent * 0.05;
-    x_min -= margin;
-    x_max += margin;
-    y_min -= margin;
-    y_max += margin;
-    let x_range = x_max - x_min;
-    let y_range = y_max - y_min;
-    let cell_x = x_range / GRID_SIZE as f64;
-    let cell_y = y_range / GRID_SIZE as f64;
-
-    // Bandwidth for Gaussian KDE (Silverman-like, adapted to data extent)
-    let bandwidth = extent / (n as f64).powf(0.2) * 0.5;
-    let bw_sq = bandwidth * bandwidth;
-    let kernel_radius_x = (3.0 * bandwidth / cell_x).ceil() as isize;
-    let kernel_radius_y = (3.0 * bandwidth / cell_y).ceil() as isize;
-
-    // Group points by class
-    let class_points: Vec<Vec<(f64, f64)>> = unique_labels
-        .iter()
-        .map(|&lbl| {
-            (0..n)
-                .filter(|&i| labels[i] == lbl)
-                .map(|i| (pts_2d[i * 2], pts_2d[i * 2 + 1]))
-                .collect()
-        })
-        .collect();
-
-    // Compute density images using Gaussian KDE splatting
-    let num_pixels = GRID_SIZE * GRID_SIZE;
-    let mut density_images: Vec<Vec<f64>> = Vec::with_capacity(num_classes);
-
-    for class_pts in &class_points {
-        let mut density = vec![0.0f64; num_pixels];
-
-        for &(px, py) in class_pts {
-            let gcx = ((px - x_min) / cell_x) as isize;
-            let gcy = ((py - y_min) / cell_y) as isize;
-
-            for dy in -kernel_radius_y..=kernel_radius_y {
-                let ny = gcy + dy;
-                if ny < 0 || ny >= GRID_SIZE as isize {
-                    continue;
-                }
-                let grid_y = y_min + (ny as f64 + 0.5) * cell_y;
-                let dist_y = py - grid_y;
-
-                for dx in -kernel_radius_x..=kernel_radius_x {
-                    let nx = gcx + dx;
-                    if nx < 0 || nx >= GRID_SIZE as isize {
-                        continue;
-                    }
-                    let grid_x = x_min + (nx as f64 + 0.5) * cell_x;
-                    let dist_x = px - grid_x;
-                    let dist_sq = dist_x * dist_x + dist_y * dist_y;
-                    density[(ny as usize) * GRID_SIZE + nx as usize] +=
-                        (-dist_sq / (2.0 * bw_sq)).exp();
-                }
-            }
-        }
-        density_images.push(density);
-    }
-
-    // Normalize each density image to [0, 1]
-    for density in &mut density_images {
-        let max_val = density.iter().cloned().fold(0.0f64, f64::max);
-        if max_val > 1e-12 {
-            for v in density.iter_mut() {
-                *v /= max_val;
-            }
-        }
-    }
-
-    // CDM = sum over class pairs of sum of |density_k - density_l|
-    let mut cdm = 0.0;
-    let mut num_pairs = 0usize;
-    for ci in 0..num_classes {
-        for cj in (ci + 1)..num_classes {
-            for (a, b) in density_images[ci].iter().zip(&density_images[cj]) {
-                cdm += (a - b).abs();
-            }
-            num_pairs += 1;
-        }
-    }
-
-    if num_pairs == 0 {
-        return 0.0;
-    }
-
-    // Normalize to [0, 1]
-    cdm / (num_pairs as f64 * num_pixels as f64)
-}
 
 /// Cluster Density Measure (ClDM) from Albuquerque et al. (2010).
 ///
@@ -732,8 +499,6 @@ pub struct MetricsSnapshot {
     pub trustworthiness_2d: f64,
     pub continuity_manifold: f64,
     pub continuity_2d: f64,
-    pub knn_overlap_manifold: f64,
-    pub knn_overlap_2d: f64,
     // B. Distance preservation
     pub normalized_stress_manifold: f64,
     pub normalized_stress_2d: f64,
@@ -743,7 +508,6 @@ pub struct MetricsSnapshot {
     pub neighborhood_hit_manifold: Option<f64>,
     pub neighborhood_hit_2d: Option<f64>,
     // D. Class separation — 2D only, label-dependent
-    pub class_density_measure: Option<f64>,
     pub cluster_density_measure: Option<f64>,
     pub davies_bouldin_ratio: Option<f64>,
 }
@@ -765,17 +529,16 @@ pub fn compute_snapshot(
 ) -> MetricsSnapshot {
     let dist_2d = euclidean_dist_2d(pts_2d, n);
 
-    let (neighborhood_hit_manifold, neighborhood_hit_2d, class_density, cluster_density, db_ratio) =
+    let (neighborhood_hit_manifold, neighborhood_hit_2d, cluster_density, db_ratio) =
         if let Some(lbl) = labels {
             (
                 Some(neighborhood_hit(embed_dist, lbl, n, k)),
                 Some(neighborhood_hit(&dist_2d, lbl, n, k)),
-                Some(class_density_measure(pts_2d, lbl, n)),
                 Some(cluster_density_measure(pts_2d, lbl, n)),
                 Some(davies_bouldin_ratio(high_dim_dist, pts_2d, lbl, n)),
             )
         } else {
-            (None, None, None, None, None)
+            (None, None, None, None)
         };
 
     MetricsSnapshot {
@@ -783,15 +546,12 @@ pub fn compute_snapshot(
         trustworthiness_2d: trustworthiness(high_dim_dist, &dist_2d, n, k),
         continuity_manifold: continuity(high_dim_dist, embed_dist, n, k),
         continuity_2d: continuity(high_dim_dist, &dist_2d, n, k),
-        knn_overlap_manifold: knn_overlap(high_dim_dist, embed_dist, n, k),
-        knn_overlap_2d: knn_overlap(high_dim_dist, &dist_2d, n, k),
         normalized_stress_manifold: normalized_stress(high_dim_dist, embed_dist, n),
         normalized_stress_2d: normalized_stress(high_dim_dist, &dist_2d, n),
         shepard_goodness_manifold: shepard_goodness(high_dim_dist, embed_dist, n),
         shepard_goodness_2d: shepard_goodness(high_dim_dist, &dist_2d, n),
         neighborhood_hit_manifold,
         neighborhood_hit_2d,
-        class_density_measure: class_density,
         cluster_density_measure: cluster_density,
         davies_bouldin_ratio: db_ratio,
     }

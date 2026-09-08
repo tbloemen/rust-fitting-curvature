@@ -28,7 +28,6 @@ const PARETO_METRICS_LIST = [
   { key: "normalized_stress", label: "Normalized Stress" },
   { key: "shepard_goodness", label: "Shepard Goodness" },
   { key: "neighborhood_hit", label: "Neighborhood Hit" },
-  { key: "class_density_measure", label: "Class Density Measure" },
 ];
 
 // Tab10 palette — matches visualisation.rs tab10_color
@@ -751,7 +750,6 @@ const METRIC_GROUPS = [
     title: "Class Separation (2D)",
     dual: false,
     metrics: [
-      { key: "class_density_measure", label: "Class Density", dir: "↑" },
       { key: "cluster_density_measure", label: "Cluster Density", dir: "↑" },
       { key: "davies_bouldin_ratio", label: "DB Ratio", dir: "↑" },
     ],

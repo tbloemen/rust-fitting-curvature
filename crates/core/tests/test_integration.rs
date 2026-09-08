@@ -470,7 +470,6 @@ fn test_compute_snapshot_with_labels_gives_some() {
     let snap = state.compute_snapshot();
     assert!(snap.neighborhood_hit_manifold.is_some());
     assert!(snap.neighborhood_hit_2d.is_some());
-    assert!(snap.class_density_measure.is_some());
     assert!(snap.cluster_density_measure.is_some());
     assert!(snap.davies_bouldin_ratio.is_some());
 }
@@ -486,8 +485,6 @@ fn test_compute_snapshot_values_in_range() {
     assert!((0.0..=1.0).contains(&snap.trustworthiness_2d));
     assert!((0.0..=1.0).contains(&snap.continuity_manifold));
     assert!((0.0..=1.0).contains(&snap.continuity_2d));
-    assert!((0.0..=1.0).contains(&snap.knn_overlap_manifold));
-    assert!((0.0..=1.0).contains(&snap.knn_overlap_2d));
     assert!(snap.normalized_stress_manifold >= 0.0);
     assert!(snap.normalized_stress_2d >= 0.0);
     assert!((0.0..=1.0).contains(&snap.shepard_goodness_manifold));

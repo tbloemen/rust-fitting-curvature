@@ -371,8 +371,6 @@ impl EmbeddingRunner {
         set_prop(&obj, "trustworthiness_2d", snap.trustworthiness_2d)?;
         set_prop(&obj, "continuity_manifold", snap.continuity_manifold)?;
         set_prop(&obj, "continuity_2d", snap.continuity_2d)?;
-        set_prop(&obj, "knn_overlap_manifold", snap.knn_overlap_manifold)?;
-        set_prop(&obj, "knn_overlap_2d", snap.knn_overlap_2d)?;
         set_prop(
             &obj,
             "normalized_stress_manifold",
@@ -390,9 +388,6 @@ impl EmbeddingRunner {
         }
         if let Some(v) = snap.neighborhood_hit_2d {
             set_prop(&obj, "neighborhood_hit_2d", v)?;
-        }
-        if let Some(v) = snap.class_density_measure {
-            set_prop(&obj, "class_density_measure", v)?;
         }
         if let Some(v) = snap.cluster_density_measure {
             set_prop(&obj, "cluster_density_measure", v)?;

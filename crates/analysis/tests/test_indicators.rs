@@ -99,8 +99,8 @@ fn the_indicator_is_pareto_compliant() {
     // The property that makes Δε > 0 mean something: improving a front on every
     // objective can only improve the indicator in both directions. Unlike R2
     // this holds strictly, which is the reason for reporting it alongside.
-    let worse = [0.3, 0.4, 0.5, 0.2, 0.6, 0.7];
-    let better = [0.4, 0.5, 0.6, 0.3, 0.8, 0.7];
+    let worse = [0.3, 0.4, 0.5, 0.2, 0.6];
+    let better = [0.4, 0.5, 0.6, 0.3, 0.8];
     let reference = [flat(0.55), flat(0.45)];
 
     // Against a fixed reference, the dominating front needs no more of a shift…
@@ -127,7 +127,7 @@ fn the_indicator_is_order_independent() {
     let mut a = flat(0.5);
     a[3] = 0.9;
     let mut b = flat(0.6);
-    b[5] = 0.2;
+    b[4] = 0.2;
     let reference = [flat(0.45)];
     assert_eq!(eps(&[a, b], &reference), eps(&[b, a], &reference));
     assert_eq!(eps(&reference, &[a, b]), eps(&reference, &[b, a]));

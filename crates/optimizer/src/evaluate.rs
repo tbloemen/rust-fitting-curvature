@@ -3,8 +3,8 @@ use fitting_core::embedding::EmbeddingState;
 use fitting_core::manifolds::create_manifold;
 use fitting_core::matrices::compute_euclidean_distance_matrix;
 use fitting_core::metrics::{
-    class_density_measure, cluster_density_measure, continuity, davies_bouldin_ratio, dunn_index,
-    knn_overlap, neighborhood_hit, normalized_stress, shepard_goodness, trustworthiness,
+    cluster_density_measure, continuity, davies_bouldin_ratio, dunn_index, neighborhood_hit,
+    normalized_stress, shepard_goodness, trustworthiness,
 };
 use fitting_core::visualisation::{project_to_2d, SphericalProjection};
 use indicatif::ProgressBar;
@@ -133,8 +133,6 @@ impl Evaluator {
             }
             "continuity" => continuity(&self.high_dim_dist, &dist_2d(), n, k),
             "continuity_manifold" => continuity(&self.high_dim_dist, &manifold_dist(), n, k),
-            "knn_overlap" => knn_overlap(&self.high_dim_dist, &dist_2d(), n, k),
-            "knn_overlap_manifold" => knn_overlap(&self.high_dim_dist, &manifold_dist(), n, k),
             "neighborhood_hit" => neighborhood_hit(&dist_2d(), &self.dataset.labels, n, k),
             "neighborhood_hit_manifold" => {
                 neighborhood_hit(&manifold_dist(), &self.dataset.labels, n, k)
@@ -154,17 +152,14 @@ impl Evaluator {
                 &self.dataset.labels,
                 n,
             ),
-            "class_density_measure" => {
-                class_density_measure(&projected.coords, &self.dataset.labels, n)
-            }
             "cluster_density_measure" => {
                 cluster_density_measure(&projected.coords, &self.dataset.labels, n)
             }
             _ => panic!(
                 "Unknown metric: {metric}. Options: trustworthiness[_manifold], \
-                 continuity[_manifold], knn_overlap[_manifold], neighborhood_hit[_manifold], \
+                 continuity[_manifold], neighborhood_hit[_manifold], \
                  normalized_stress[_manifold], shepard_goodness[_manifold], \
-                 davies_bouldin_ratio, dunn_index, class_density_measure, cluster_density_measure"
+                 davies_bouldin_ratio, dunn_index, cluster_density_measure"
             ),
         }
     }
@@ -227,8 +222,6 @@ pub fn metrics_from_embedding(
         trustworthiness_manifold: trustworthiness(high_dim_dist, &manifold_dist, n, k),
         continuity: continuity(high_dim_dist, &dist_2d, n, k),
         continuity_manifold: continuity(high_dim_dist, &manifold_dist, n, k),
-        knn_overlap: knn_overlap(high_dim_dist, &dist_2d, n, k),
-        knn_overlap_manifold: knn_overlap(high_dim_dist, &manifold_dist, n, k),
         neighborhood_hit: neighborhood_hit(&dist_2d, labels, n, k),
         neighborhood_hit_manifold: neighborhood_hit(&manifold_dist, labels, n, k),
         normalized_stress: normalized_stress(high_dim_dist, &dist_2d, n),
@@ -237,7 +230,6 @@ pub fn metrics_from_embedding(
         shepard_goodness_manifold: shepard_goodness(high_dim_dist, &manifold_dist, n),
         davies_bouldin_ratio: davies_bouldin_ratio(high_dim_dist, &projected.coords, labels, n),
         dunn_index: dunn_index(&dist_2d, labels, n),
-        class_density_measure: class_density_measure(&projected.coords, labels, n),
         cluster_density_measure: cluster_density_measure(&projected.coords, labels, n),
         r_max,
         r_rms,

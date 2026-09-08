@@ -46,86 +46,6 @@ fn make_distance_matrix(n: usize, seed: u64) -> Vec<f64> {
 }
 
 #[test]
-fn test_knn_overlap_perfect() {
-    // If both distance matrices are identical, knn_overlap should be 1.0
-    let d = make_distance_matrix(30, 42);
-    let overlap = knn_overlap(&d, &d, 30, 5);
-    assert!(
-        (overlap - 1.0).abs() < 1e-10,
-        "Perfect overlap should be 1.0, got {overlap}"
-    );
-}
-
-#[test]
-fn test_knn_overlap_range() {
-    let d1 = make_distance_matrix(30, 42);
-    let d2 = make_distance_matrix(30, 99);
-    let overlap = knn_overlap(&d1, &d2, 30, 5);
-    assert!(
-        (0.0..=1.0).contains(&overlap),
-        "Overlap out of range: {overlap}"
-    );
-}
-
-#[test]
-fn test_geodesic_distortion_zero_for_identical() {
-    let d = make_distance_matrix(20, 42);
-    let distortion = geodesic_distortion_gu2019(&d, &d, 20);
-    assert!(
-        distortion.abs() < 1e-10,
-        "Distortion should be 0 for identical matrices, got {distortion}"
-    );
-}
-
-#[test]
-fn test_geodesic_distortion_mse_zero_for_identical() {
-    let d = make_distance_matrix(20, 42);
-    let distortion = geodesic_distortion_mse(&d, &d, 20);
-    assert!(
-        distortion.abs() < 1e-10,
-        "MSE distortion should be 0 for identical, got {distortion}"
-    );
-}
-
-#[test]
-fn test_geodesic_distortion_positive_for_different() {
-    let d1 = make_distance_matrix(20, 42);
-    let d2 = make_distance_matrix(20, 99);
-    let distortion = geodesic_distortion_gu2019(&d1, &d2, 20);
-    assert!(
-        distortion > 0.0,
-        "Distortion should be positive for different matrices"
-    );
-}
-
-#[test]
-fn test_radial_distribution() {
-    // Points at unit circle should have low CV (uniform radii)
-    let n = 100;
-    let mut pts = vec![0.0; n * 2];
-    for i in 0..n {
-        let angle = 2.0 * std::f64::consts::PI * i as f64 / n as f64;
-        pts[i * 2] = angle.cos();
-        pts[i * 2 + 1] = angle.sin();
-    }
-    let cv = radial_distribution(&pts, n);
-    assert!(
-        cv < 0.01,
-        "Points on circle should have near-zero CV, got {cv}"
-    );
-}
-
-#[test]
-fn test_radial_distribution_spread() {
-    let mut rng = Rng::new(42);
-    let n = 200;
-    let pts: Vec<f64> = (0..n * 2).map(|_| rng.normal()).collect();
-    let cv = radial_distribution(&pts, n);
-    // Gaussian points should have moderate CV
-    assert!(cv > 0.0 && cv < 2.0, "Unexpected CV: {cv}");
-}
-
-#[test]
 fn test_cluster_density_measure_separated() {
     // Two well-separated clusters should have high ClDM
     let n = 100;
@@ -568,7 +488,6 @@ fn test_compute_snapshot_without_labels_gives_none() {
     let snap = compute_snapshot(&d, &d, &pts_2d, None, n, 5);
     assert!(snap.neighborhood_hit_manifold.is_none());
     assert!(snap.neighborhood_hit_2d.is_none());
-    assert!(snap.class_density_measure.is_none());
     assert!(snap.cluster_density_measure.is_none());
     assert!(snap.davies_bouldin_ratio.is_none());
 }
@@ -581,14 +500,13 @@ fn test_compute_snapshot_with_labels_gives_some() {
     let snap = compute_snapshot(&d, &d, &pts_2d, Some(&labels), n, 7);
     assert!(snap.neighborhood_hit_manifold.is_some());
     assert!(snap.neighborhood_hit_2d.is_some());
-    assert!(snap.class_density_measure.is_some());
     assert!(snap.cluster_density_measure.is_some());
     assert!(snap.davies_bouldin_ratio.is_some());
 }
 
 #[test]
 fn test_compute_snapshot_perfect_embedding_scores() {
-    // When embed_dist == high_dim_dist: trustworthiness/continuity/knn_overlap
+    // When embed_dist == high_dim_dist: trustworthiness/continuity
     // should all be 1.0 and normalized_stress/shepard_goodness should be 0/1.
     let n = 20;
     let d = make_distance_matrix(n, 42);
@@ -603,11 +521,6 @@ fn test_compute_snapshot_perfect_embedding_scores() {
         (snap.continuity_manifold - 1.0).abs() < 1e-10,
         "continuity_manifold should be 1.0, got {}",
         snap.continuity_manifold
-    );
-    assert!(
-        (snap.knn_overlap_manifold - 1.0).abs() < 1e-10,
-        "knn_overlap_manifold should be 1.0, got {}",
-        snap.knn_overlap_manifold
     );
     assert!(
         snap.normalized_stress_manifold.abs() < 1e-10,
@@ -632,8 +545,6 @@ fn test_compute_snapshot_all_values_in_range() {
     assert!((0.0..=1.0).contains(&snap.trustworthiness_2d));
     assert!((0.0..=1.0).contains(&snap.continuity_manifold));
     assert!((0.0..=1.0).contains(&snap.continuity_2d));
-    assert!((0.0..=1.0).contains(&snap.knn_overlap_manifold));
-    assert!((0.0..=1.0).contains(&snap.knn_overlap_2d));
     assert!(snap.normalized_stress_manifold >= 0.0);
     assert!(snap.normalized_stress_2d >= 0.0);
     assert!((0.0..=1.0).contains(&snap.shepard_goodness_manifold));
