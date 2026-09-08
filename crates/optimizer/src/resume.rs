@@ -1,10 +1,10 @@
 use indicatif::ProgressBar;
-use serde::Deserialize;
 use std::thread;
 
 use crate::common::eval_all_metrics;
 use crate::evaluate::Evaluator;
-use crate::metrics::{AllMetrics, Metric};
+use crate::metrics::{Metric, MetricValues};
+use fitting_core::metrics::{R_MAX, R_RMS};
 use crate::pareto::metrics_to_vec;
 use crate::search_space::TrialConfig;
 
@@ -20,28 +20,6 @@ pub(crate) struct PriorEval {
     pub(crate) metric_vec: Vec<f64>,
     pub(crate) r_max: f64,
     pub(crate) r_rms: f64,
-}
-
-/// Subset of a `TrialResult` JSONL line needed to reconstruct the objective
-/// vector. Each field is `Option` because a diverged trial serialises its
-/// non-finite metrics as JSON `null`; those are mapped back to the same
-/// worst-case substitute `metrics_to_vec` applies, so the replayed observation
-/// is identical to the original.
-///
-/// **This list must match `pareto::default_pareto_metrics` exactly.** A field
-/// missing here deserialises as `None` and is replayed as the worst-case
-/// substitute, which silently makes the resumed observation differ from the
-/// original — no error, just a different GP. The test module below pins the two
-/// lists against each other.
-#[derive(Deserialize)]
-struct PriorTrialRecord {
-    trustworthiness: Option<f64>,
-    continuity: Option<f64>,
-    normalized_stress: Option<f64>,
-    shepard_goodness: Option<f64>,
-    neighborhood_hit: Option<f64>,
-    r_max: Option<f64>,
-    r_rms: Option<f64>,
 }
 
 /// Load prior pareto trials from `path`, in file order (which is exactly the
@@ -63,37 +41,18 @@ pub(crate) fn load_prior_evals(path: &str, metrics: &[Metric]) -> Vec<PriorEval>
     let n = lines.len();
     let mut out = Vec::with_capacity(n);
     for (i, line) in lines.iter().enumerate() {
-        match serde_json::from_str::<PriorTrialRecord>(line) {
-            Ok(rec) => {
-                let nan = f64::NAN;
-                // Only the 6 pareto objectives + r_max/r_rms matter to the
-                // optimizer; the other AllMetrics fields are unused here.
-                let all = AllMetrics {
-                    trustworthiness: rec.trustworthiness.unwrap_or(nan),
-                    trustworthiness_manifold: 0.0,
-                    continuity: rec.continuity.unwrap_or(nan),
-                    continuity_manifold: 0.0,
-                    neighborhood_hit: rec.neighborhood_hit.unwrap_or(nan),
-                    neighborhood_hit_manifold: 0.0,
-                    normalized_stress: rec.normalized_stress.unwrap_or(nan),
-                    normalized_stress_manifold: 0.0,
-                    shepard_goodness: rec.shepard_goodness.unwrap_or(nan),
-                    shepard_goodness_manifold: 0.0,
-                    davies_bouldin_ratio: 0.0,
-                    dunn_index: 0.0,
-                    cluster_density_measure: 0.0,
-                    r_max: rec.r_max.unwrap_or(nan),
-                    r_rms: rec.r_rms.unwrap_or(nan),
-                    // Never read on the replay path: a reused trial only
-                    // re-`observe`s (which ignores it) and never rewrites its
-                    // JSONL line, so the value on disk — written by the chunk
-                    // that evaluated it fresh — is the one that survives.
-                    r_gyration: nan,
-                };
+        // The whole metric block, read by name. This replaced a
+        // `PriorTrialRecord` that listed the pareto objectives by hand and
+        // warned in its doc comment that a field missing from it would
+        // deserialise as `None`, replay as the worst-case substitute, and
+        // silently give a resumed run a different GP — no error. There is no
+        // longer a second list to fall out of step with the first.
+        match serde_json::from_str::<MetricValues>(line) {
+            Ok(all) => {
                 out.push(PriorEval {
                     metric_vec: metrics_to_vec(&all, metrics),
-                    r_max: all.r_max,
-                    r_rms: all.r_rms,
+                    r_max: all.get(R_MAX).unwrap_or(f64::NAN),
+                    r_rms: all.get(R_RMS).unwrap_or(f64::NAN),
                 });
             }
             Err(e) => {
@@ -119,7 +78,7 @@ pub(crate) enum BatchOutcome {
     },
     /// Freshly evaluated — carries everything needed to log a JSONL line.
     Fresh {
-        all: AllMetrics,
+        all: MetricValues,
         actual_curvature: f64,
         elapsed_ms: u64,
     },
@@ -142,7 +101,7 @@ pub(crate) fn eval_or_reuse_batch(
 ) -> Vec<BatchOutcome> {
     let reused = prior.len().saturating_sub(base_global).min(configs.len());
 
-    let fresh_results: Vec<(f64, AllMetrics, u64)> = thread::scope(|s| {
+    let fresh_results: Vec<(f64, MetricValues, u64)> = thread::scope(|s| {
         configs[reused..]
             .iter()
             .enumerate()
@@ -194,14 +153,16 @@ mod tests {
     use super::*;
     use crate::pareto::default_pareto_metrics;
 
-    /// Every objective the optimizer actually searches must have a field on
-    /// `PriorTrialRecord`, or `--resume` replays it as the worst-case
+    /// Every objective the optimizer searches must survive a round trip
+    /// through the JSONL, or `--resume` replays it as the worst-case
     /// substitute instead of its recorded value — silently, with no error.
     ///
-    /// The check is behavioural rather than structural: write one JSONL line
-    /// carrying a distinct value per objective, load it back, and require the
-    /// replayed vector to be those values. A field dropped from the struct
-    /// turns its slot into the substitute and fails here.
+    /// This used to guard a hand-written `PriorTrialRecord` that listed the
+    /// objectives a second time; it now passes because there is only one list,
+    /// which is the point. It is kept because it is behavioural rather than
+    /// structural — it writes a line, loads it back, and requires the replayed
+    /// vector to be the values written — so it still catches a wire name that
+    /// stops round-tripping for any other reason.
     #[test]
     fn prior_record_covers_every_pareto_objective() {
         let metrics = default_pareto_metrics();
@@ -229,12 +190,54 @@ mod tests {
         for ((got, want), metric) in prior[0].metric_vec.iter().zip(&values).zip(&metrics) {
             assert!(
                 (got - want).abs() < 1e-12,
-                "objective `{}` replayed as {got} instead of {want} — it is \
-                 missing from PriorTrialRecord",
+                "objective `{}` replayed as {got} instead of {want}",
                 metric.name()
             );
         }
         assert_eq!(prior[0].r_max, 1.0);
         assert_eq!(prior[0].r_rms, 2.0);
+    }
+
+    /// A line from `results/` as it is actually shaped: retired metric columns
+    /// that no longer parse, no `r_gyration`, a `null` from a diverged trial,
+    /// and non-numeric columns alongside. All of it has to load, because
+    /// `--resume` reads files written by builds that predate the registry.
+    #[test]
+    fn a_pre_registry_results_line_still_replays() {
+        let metrics = default_pareto_metrics();
+        let line = r#"{"dataset_name":"antipodal_clusters","geometry":"euclidean","n_samples":1000,
+            "knn_overlap":0.4,"class_density_measure":12.5,
+            "trustworthiness":0.9,"continuity":0.8,"normalized_stress":0.3,
+            "shepard_goodness":null,"neighborhood_hit":0.7,
+            "r_max":1.0,"r_rms":2.0,"time_ms":42}"#
+            .replace('\n', "");
+
+        let dir = std::env::temp_dir().join(format!("resume_legacy_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("prior.jsonl");
+        std::fs::write(&path, format!("{line}\n")).unwrap();
+
+        let prior = load_prior_evals(path.to_str().unwrap(), &metrics);
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(prior.len(), 1, "a pre-registry line must still load");
+        // shepard_goodness is maximised, so its `null` replays as the 0.0
+        // worst-case substitute — the same thing the old code did.
+        let by_name: Vec<(&str, f64)> = metrics
+            .iter()
+            .map(|m| m.name())
+            .zip(prior[0].metric_vec.iter().copied())
+            .collect();
+        assert_eq!(
+            by_name,
+            vec![
+                ("trustworthiness", 0.9),
+                ("continuity", 0.8),
+                ("normalized_stress", 0.3),
+                ("shepard_goodness", 0.0),
+                ("neighborhood_hit", 0.7),
+            ]
+        );
+        assert_eq!(prior[0].r_max, 1.0);
     }
 }

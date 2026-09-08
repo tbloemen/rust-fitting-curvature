@@ -11,6 +11,19 @@ pub enum OptimizeDirection {
     Minimize,
 }
 
+/// The registry states a metric's own orientation; `SearchSpace` states which
+/// way *this run* optimises. They coincide for every current metric, but they
+/// are different questions — a run could legitimately minimise a maximised
+/// metric — so the conversion is explicit rather than the two being one type.
+impl From<fitting_core::metrics::Direction> for OptimizeDirection {
+    fn from(d: fitting_core::metrics::Direction) -> Self {
+        match d {
+            fitting_core::metrics::Direction::Maximize => OptimizeDirection::Maximize,
+            fitting_core::metrics::Direction::Minimize => OptimizeDirection::Minimize,
+        }
+    }
+}
+
 impl fmt::Display for OptimizeDirection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

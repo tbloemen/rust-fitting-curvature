@@ -6,7 +6,7 @@ use crate::cli::Args;
 use crate::common::{eval_all_metrics, make_progress_bar, parse_experiment, parse_metric};
 use crate::evaluate::Evaluator;
 use crate::gp::{GpOptimizer, GpState};
-use crate::metrics::AllMetrics;
+use crate::metrics::MetricValues;
 use crate::search_space::{param_bounds, ParamSpec, SearchSpace, TrialConfig};
 use crate::trial_result::{write_result, TrialResult};
 
@@ -121,7 +121,7 @@ pub(crate) fn run_bayes(
         };
     }
     let mut optimizer = GpOptimizer::new(SearchSpace {
-        direction,
+        direction: direction.into(),
         hyper_params: hp,
     });
     let mut rng = fitting_core::synthetic_data::Rng::new(0xdead_beef_cafe_0000);
@@ -167,7 +167,7 @@ pub(crate) fn run_bayes(
         let configs = optimizer.suggest_batch(this_batch, &mut rng);
 
         // Evaluate all configs in this batch in parallel, then collect results.
-        let results: Vec<(f64, AllMetrics, u64)> = thread::scope(|s| {
+        let results: Vec<(f64, MetricValues, u64)> = thread::scope(|s| {
             configs
                 .iter()
                 .enumerate()
@@ -198,7 +198,7 @@ pub(crate) fn run_bayes(
 
         // Observe all results and update the GP before the next round.
         for (config, (actual_curvature, all, elapsed)) in configs.iter().zip(results.iter()) {
-            let mean = metric.value(all);
+            let mean = all[metric];
             optimizer.observe(config.clone(), mean);
             completed += 1;
 

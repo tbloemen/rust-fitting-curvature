@@ -1,16 +1,11 @@
 use fitting_core::curvature_detection::{detect_geometry, GeometryVerdict};
 use fitting_core::embedding::EmbeddingState;
-use fitting_core::manifolds::create_manifold;
 use fitting_core::matrices::compute_euclidean_distance_matrix;
-use fitting_core::metrics::{
-    cluster_density_measure, continuity, davies_bouldin_ratio, dunn_index, gyration_radius,
-    neighborhood_hit, normalized_stress, shepard_goodness, trustworthiness,
-};
-use fitting_core::visualisation::{project_to_2d, SphericalProjection};
+use fitting_core::metrics::{Metric, MetricContext, MetricValues};
+use fitting_core::visualisation::SphericalProjection;
 use indicatif::ProgressBar;
 
 use crate::data::Dataset;
-use crate::metrics::AllMetrics;
 use crate::search_space::TrialConfig;
 
 pub struct Evaluator {
@@ -59,34 +54,20 @@ impl Evaluator {
         curvature_sign: f64,
         seed: u64,
         pb_iters: &ProgressBar,
-    ) -> AllMetrics {
-        let n = self.n_samples;
-        let training_config = config.to_training_config(n, curvature_sign, seed);
-
-        pb_iters.reset();
-        pb_iters.set_length(training_config.n_iterations as u64);
-
-        let mut state = if self.dataset.precomputed_distances.is_empty() {
-            EmbeddingState::new(&self.dataset.x, self.dataset.n_features, &training_config)
-        } else {
-            EmbeddingState::from_distances(&self.dataset.precomputed_distances, n, &training_config)
-        }
-        .with_loss_tracking(false);
-        while !state.is_done() {
-            state.step();
-            pb_iters.inc(1);
-        }
-
-        metrics_from_embedding(
-            &self.high_dim_dist,
-            &self.dataset.labels,
-            &state.points,
-            n,
-            state.ambient_dim,
-            training_config.curvature,
-        )
+    ) -> MetricValues {
+        let (state, curvature) = self.run_embedding(config, curvature_sign, seed, pb_iters);
+        MetricValues::compute(&self.context(&state, curvature))
     }
 
+    /// Score one configuration on a single named metric, for `--mode bayes`
+    /// and `--mode scan`.
+    ///
+    /// This used to be a thirteen-arm `match` on the metric name, computing the
+    /// same things `metrics_from_embedding` did a few lines below, behind its
+    /// own pair of lazy closures and closing on a `panic!` whose message listed
+    /// the valid names a fourth time. All of that is the registry's job now,
+    /// and `MetricContext` keeps the compute-only-what-is-asked-for property
+    /// the closures were there for.
     pub fn evaluate_with_metric(
         &self,
         config: &TrialConfig,
@@ -95,6 +76,21 @@ impl Evaluator {
         seed: u64,
         pb_iters: &ProgressBar,
     ) -> f64 {
+        let metric = Metric::by_name(metric)
+            .unwrap_or_else(|| panic!("Unknown metric: {metric}. Options: {}", Metric::valid_names()));
+        let (state, curvature) = self.run_embedding(config, curvature_sign, seed, pb_iters);
+        metric.compute(&self.context(&state, curvature))
+    }
+
+    /// Fit one embedding under `config`, driving the iteration progress bar.
+    /// Returns the fitted state and the curvature it was fitted at.
+    fn run_embedding(
+        &self,
+        config: &TrialConfig,
+        curvature_sign: f64,
+        seed: u64,
+        pb_iters: &ProgressBar,
+    ) -> (EmbeddingState, f64) {
         let n = self.n_samples;
         let training_config = config.to_training_config(n, curvature_sign, seed);
 
@@ -111,128 +107,32 @@ impl Evaluator {
             state.step();
             pb_iters.inc(1);
         }
+        (state, training_config.curvature)
+    }
 
-        let projected = project_to_2d(
+    /// The scoring context for a fitted state.
+    ///
+    /// `k = min(30, 0.1n)` and `AzimuthalEquidistant` are this crate's scoring
+    /// convention, and differ from the interactive viewer's. Both callers here
+    /// go through this one function so they cannot drift apart, which is what
+    /// the seam `metrics_from_embedding` documents was always for.
+    fn context<'a>(&'a self, state: &'a EmbeddingState, curvature: f64) -> MetricContext<'a> {
+        MetricContext::new(
+            &self.high_dim_dist,
             &state.points,
-            n,
+            Some(&self.dataset.labels),
+            self.n_samples,
             state.ambient_dim,
-            training_config.curvature,
+            curvature,
+            scoring_k(self.n_samples),
             SphericalProjection::AzimuthalEquidistant,
-        );
-
-        let k = (30_f64.min(n as f64 * 0.1)).round() as usize;
-
-        // Lazily compute distance matrices only when needed.
-        let dist_2d = || compute_euclidean_distance_matrix(&projected.coords, n, 2);
-        let manifold_dist = || state.embedded_distances();
-
-        match metric {
-            "trustworthiness" => trustworthiness(&self.high_dim_dist, &dist_2d(), n, k),
-            "trustworthiness_manifold" => {
-                trustworthiness(&self.high_dim_dist, &manifold_dist(), n, k)
-            }
-            "continuity" => continuity(&self.high_dim_dist, &dist_2d(), n, k),
-            "continuity_manifold" => continuity(&self.high_dim_dist, &manifold_dist(), n, k),
-            "neighborhood_hit" => neighborhood_hit(&dist_2d(), &self.dataset.labels, n, k),
-            "neighborhood_hit_manifold" => {
-                neighborhood_hit(&manifold_dist(), &self.dataset.labels, n, k)
-            }
-            "normalized_stress" => normalized_stress(&self.high_dim_dist, &dist_2d(), n),
-            "normalized_stress_manifold" => {
-                normalized_stress(&self.high_dim_dist, &manifold_dist(), n)
-            }
-            "shepard_goodness" => shepard_goodness(&self.high_dim_dist, &dist_2d(), n),
-            "shepard_goodness_manifold" => {
-                shepard_goodness(&self.high_dim_dist, &manifold_dist(), n)
-            }
-            "dunn_index" => dunn_index(&dist_2d(), &self.dataset.labels, n),
-            "davies_bouldin_ratio" => davies_bouldin_ratio(
-                &self.high_dim_dist,
-                &projected.coords,
-                &self.dataset.labels,
-                n,
-            ),
-            "cluster_density_measure" => {
-                cluster_density_measure(&projected.coords, &self.dataset.labels, n)
-            }
-            _ => panic!(
-                "Unknown metric: {metric}. Options: trustworthiness[_manifold], \
-                 continuity[_manifold], neighborhood_hit[_manifold], \
-                 normalized_stress[_manifold], shepard_goodness[_manifold], \
-                 davies_bouldin_ratio, dunn_index, cluster_density_measure"
-            ),
-        }
+        )
+        .with_manifold_dist(state.embedded_distances())
     }
 }
 
-/// Score a configuration on every metric, given only its coordinates.
-///
-/// Split out of [`Evaluator::compute_all_metrics`], which is now this function
-/// plus the t-SNE run that produces `points`. The split was introduced so a
-/// configuration that did *not* come from t-SNE — the Wilson reconstruction of
-/// the former `--mode wilson-mds` — went through exactly this code rather than
-/// a parallel copy. That mode is gone and `compute_all_metrics` is now the only
-/// caller; the split is kept because it is the seam any future
-/// score-these-coordinates path should re-use, for the same reason: two
-/// embeddings scored by two pieces of code produce numbers that only look
-/// comparable.
-///
-/// `points` is row-major `n × ambient_dim` on the manifold of the given
-/// `curvature`, matching `EmbeddingState::points` / `Reconstruction::points`.
-/// Both distance matrices are derived here rather than passed in, because
-/// `EmbeddingState` derives them the same way — from
-/// `create_manifold(curvature)` — so deriving them once here keeps the two
-/// callers from drifting.
-pub fn metrics_from_embedding(
-    high_dim_dist: &[f64],
-    labels: &[u32],
-    points: &[f64],
-    n: usize,
-    ambient_dim: usize,
-    curvature: f64,
-) -> AllMetrics {
-    let manifold = create_manifold(curvature);
-
-    let projected = project_to_2d(
-        points,
-        n,
-        ambient_dim,
-        curvature,
-        SphericalProjection::AzimuthalEquidistant,
-    );
-
-    let k = (30_f64.min(n as f64 * 0.1)).round() as usize;
-
-    // Before-projection distances: manifold geodesic.
-    let manifold_dist = manifold.pairwise_distances(points, n, ambient_dim);
-    // After-projection distances: Euclidean in 2D projected space.
-    let dist_2d = compute_euclidean_distance_matrix(&projected.coords, n, 2);
-
-    let origin_dist = manifold.distances_from_origin(points, n, ambient_dim);
-    let r_max = origin_dist.iter().cloned().fold(0.0_f64, f64::max);
-    let r_rms = {
-        let sum_sq: f64 = origin_dist.iter().map(|d| d * d).sum();
-        (sum_sq / origin_dist.len() as f64).sqrt()
-    };
-
-    let r_gyration = gyration_radius(&manifold_dist, n);
-
-    AllMetrics {
-        trustworthiness: trustworthiness(high_dim_dist, &dist_2d, n, k),
-        trustworthiness_manifold: trustworthiness(high_dim_dist, &manifold_dist, n, k),
-        continuity: continuity(high_dim_dist, &dist_2d, n, k),
-        continuity_manifold: continuity(high_dim_dist, &manifold_dist, n, k),
-        neighborhood_hit: neighborhood_hit(&dist_2d, labels, n, k),
-        neighborhood_hit_manifold: neighborhood_hit(&manifold_dist, labels, n, k),
-        normalized_stress: normalized_stress(high_dim_dist, &dist_2d, n),
-        normalized_stress_manifold: normalized_stress(high_dim_dist, &manifold_dist, n),
-        shepard_goodness: shepard_goodness(high_dim_dist, &dist_2d, n),
-        shepard_goodness_manifold: shepard_goodness(high_dim_dist, &manifold_dist, n),
-        davies_bouldin_ratio: davies_bouldin_ratio(high_dim_dist, &projected.coords, labels, n),
-        dunn_index: dunn_index(&dist_2d, labels, n),
-        cluster_density_measure: cluster_density_measure(&projected.coords, labels, n),
-        r_max,
-        r_rms,
-        r_gyration,
-    }
+/// The neighbourhood size every metric in this crate is scored at.
+pub fn scoring_k(n: usize) -> usize {
+    (30_f64.min(n as f64 * 0.1)).round() as usize
 }
+

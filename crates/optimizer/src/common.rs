@@ -1,7 +1,7 @@
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use crate::evaluate::Evaluator;
-use crate::metrics::{AllMetrics, Metric};
+use crate::metrics::{Metric, MetricValues};
 use crate::search_space::TrialConfig;
 
 // ─── Experiment variants ──────────────────────────────────────────────────────
@@ -68,13 +68,13 @@ pub(crate) fn eval_all_metrics(
     n_seeds: usize,
     trial_idx: usize,
     pb_iters: &ProgressBar,
-) -> AllMetrics {
-    let samples: Vec<AllMetrics> = (0..n_seeds)
+) -> MetricValues {
+    let samples: Vec<MetricValues> = (0..n_seeds)
         .map(|si| {
             evaluator.compute_all_metrics(config, curvature, trial_seed(trial_idx, si), pb_iters)
         })
         .collect();
-    AllMetrics::mean(&samples)
+    MetricValues::mean(&samples)
 }
 
 pub(crate) fn make_progress_bar(mp: &MultiProgress, total: u64, template: &str) -> ProgressBar {
@@ -88,7 +88,9 @@ pub(crate) fn make_progress_bar(mp: &MultiProgress, total: u64, template: &str) 
 }
 
 pub(crate) fn parse_metric(name: &str) -> Metric {
-    Metric::from_str(name).unwrap_or_else(|| {
+    Metric::by_name(name)
+        .filter(|m| Metric::optimizable().any(|o| o == *m))
+        .unwrap_or_else(|| {
         eprintln!(
             "Unknown metric '{}'. Valid options: {}",
             name,

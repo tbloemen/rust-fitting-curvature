@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::cli::Args;
 use crate::common::{eval_all_metrics, make_progress_bar};
+use fitting_core::metrics::{DAVIES_BOULDIN_RATIO, TRUSTWORTHINESS};
 use crate::evaluate::Evaluator;
 use crate::search_space::{OptimizeDirection, ParamSpec, SearchSpace, TrialConfig};
 use crate::trial_result::{write_result, TrialResult};
@@ -67,7 +68,11 @@ pub(crate) fn run_random(
 
         pb.set_message(format!(
             "trial {:4} k={:+.2} | db={:.4} trust={:.4} | {}ms",
-            trial_idx, curvature, agg.davies_bouldin_ratio, agg.trustworthiness, elapsed
+            trial_idx,
+            curvature,
+            agg[DAVIES_BOULDIN_RATIO],
+            agg[TRUSTWORTHINESS],
+            elapsed
         ));
         pb.inc(1);
     }

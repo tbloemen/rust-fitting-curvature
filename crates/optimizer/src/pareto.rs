@@ -3,7 +3,8 @@ use crate::cli::Args;
 use crate::common::{make_progress_bar, parse_experiment};
 use crate::evaluate::Evaluator;
 use crate::gp::{MultiTrial, ParEgoOptimizer};
-use crate::metrics::{AllMetrics, Metric};
+use crate::metrics::{Direction, Metric, MetricValues, OBJECTIVES};
+use fitting_core::metrics::{R_MAX, R_RMS};
 use crate::resume::{eval_or_reuse_batch, load_prior_evals, BatchOutcome};
 use crate::trial_result::{write_result, TrialResult};
 use indicatif::MultiProgress;
@@ -122,7 +123,7 @@ pub fn run_pareto(
                     elapsed_ms,
                 } => {
                     let metric_vec = metrics_to_vec(&all, optimizer.metrics.as_slice());
-                    optimizer.observe(config.clone(), metric_vec, all.r_max, all.r_rms);
+                    optimizer.observe(config.clone(), metric_vec, all[R_MAX], all[R_RMS]);
 
                     let mut result = TrialResult::new(
                         config,
@@ -193,7 +194,7 @@ pub fn run_pareto(
                     elapsed_ms,
                 } => {
                     let metric_vec = metrics_to_vec(&all, optimizer.metrics.as_slice());
-                    optimizer.observe(config.clone(), metric_vec, all.r_max, all.r_rms);
+                    optimizer.observe(config.clone(), metric_vec, all[R_MAX], all[R_RMS]);
 
                     let mut result = TrialResult::new(
                         config,
@@ -239,16 +240,19 @@ pub fn run_pareto(
     pb.println(format!("Pareto front written to {}", front_path));
 }
 
-/// Default set of objectives for --mode pareto: five metrics, all measured on
-/// the 2D projection, giving 5 objectives total.
+/// The objectives for --mode pareto: five metrics, all measured on the 2D
+/// projection.
 ///
-/// Two rules fix this list.
+/// The list itself is `fitting_core::metrics::OBJECTIVES`, which is also what
+/// `fitting_analysis::objectives::OBJECTIVES` reads — an alignment that used to
+/// be maintained by hand across the two crates. Two rules fix its membership,
+/// and `test_registry.rs` checks both rather than leaving them to this comment.
 ///
 /// **Projected only.** The manifold (pre-projection, geodesic) variants used to
 /// take half the objective budget. What the thesis judges is the 2D
 /// visualisation, so the manifold half optimised a surface no reader looks at.
 /// Those metrics are still measured and written to the JSONL — nothing about
-/// `AllMetrics` changed — they just no longer steer the search. `figures/exp4.rs`
+/// `MetricValues` changed — they just no longer steer the search. `figures/exp4.rs`
 /// reads those columns and is what shows whether dropping them was justified.
 ///
 /// **Bounded in `[0, 1]` only.** Of the label-aware, projection-only metrics
@@ -269,16 +273,7 @@ pub fn run_pareto(
 /// metrics that all range in `[0, 1]`, and reach for bounded class-separation
 /// measures rather than repairing unbounded ones.
 pub(crate) fn default_pareto_metrics() -> Vec<Metric> {
-    vec![
-        // structure
-        Metric::Trustworthiness,
-        Metric::Continuity,
-        // distance preservation
-        Metric::NormalizedStress,
-        Metric::ShepardGoodness,
-        // class separation
-        Metric::NeighborhoodHit,
-    ]
+    OBJECTIVES.to_vec()
 }
 
 /// Build the objective vector fed to the optimizer. A diverged embedding (e.g. an
@@ -287,22 +282,16 @@ pub(crate) fn default_pareto_metrics() -> Vec<Metric> {
 /// bad rather than poisoning the GP normalisation or panicking the Pareto sorts.
 /// The raw (possibly non-finite) values are still recorded in the JSONL via
 /// `with_all_metrics`, so diverged trials remain visible in the results.
-pub(crate) fn metrics_to_vec(m: &AllMetrics, metrics: &[Metric]) -> Vec<f64> {
-    use crate::search_space::OptimizeDirection;
+pub(crate) fn metrics_to_vec(m: &MetricValues, metrics: &[Metric]) -> Vec<f64> {
     metrics
         .iter()
         .map(|metric| {
-            let v = metric.value(m);
-            if v.is_finite() {
-                v
-            } else {
-                match metric.direction() {
-                    // The maximised metrics here are bounded below by 0 (0 = degenerate);
-                    // normalized_stress is minimised and bounded above by 1 (1 = worst).
-                    OptimizeDirection::Maximize => 0.0,
-                    OptimizeDirection::Minimize => 1.0,
-                }
-            }
+            m.get(*metric).unwrap_or(match metric.direction() {
+                // The maximised metrics here are bounded below by 0 (0 = degenerate);
+                // normalized_stress is minimised and bounded above by 1 (1 = worst).
+                Direction::Maximize => 0.0,
+                Direction::Minimize => 1.0,
+            })
         })
         .collect()
 }

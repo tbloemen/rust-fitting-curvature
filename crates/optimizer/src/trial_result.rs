@@ -2,7 +2,13 @@ use serde::Serialize;
 use std::fs::OpenOptions;
 use std::io::Write;
 
-use crate::metrics::AllMetrics;
+use crate::metrics::MetricValues;
+use fitting_core::metrics::{
+    CLUSTER_DENSITY_MEASURE, CONTINUITY, CONTINUITY_MANIFOLD, DAVIES_BOULDIN_RATIO, DUNN_INDEX,
+    NEIGHBORHOOD_HIT, NEIGHBORHOOD_HIT_MANIFOLD, NORMALIZED_STRESS, NORMALIZED_STRESS_MANIFOLD,
+    R_GYRATION, R_MAX, R_RMS, SHEPARD_GOODNESS, SHEPARD_GOODNESS_MANIFOLD, TRUSTWORTHINESS,
+    TRUSTWORTHINESS_MANIFOLD,
+};
 use crate::search_space::TrialConfig;
 
 #[derive(Debug, Serialize)]
@@ -92,23 +98,23 @@ impl TrialResult {
         }
     }
 
-    pub(crate) fn with_all_metrics(mut self, m: &AllMetrics) -> Self {
-        self.trustworthiness = Some(m.trustworthiness);
-        self.trustworthiness_manifold = Some(m.trustworthiness_manifold);
-        self.continuity = Some(m.continuity);
-        self.continuity_manifold = Some(m.continuity_manifold);
-        self.neighborhood_hit = Some(m.neighborhood_hit);
-        self.neighborhood_hit_manifold = Some(m.neighborhood_hit_manifold);
-        self.normalized_stress = Some(m.normalized_stress);
-        self.normalized_stress_manifold = Some(m.normalized_stress_manifold);
-        self.shepard_goodness = Some(m.shepard_goodness);
-        self.shepard_goodness_manifold = Some(m.shepard_goodness_manifold);
-        self.davies_bouldin_ratio = Some(m.davies_bouldin_ratio);
-        self.dunn_index = Some(m.dunn_index);
-        self.cluster_density_measure = Some(m.cluster_density_measure);
-        self.r_max = Some(m.r_max);
-        self.r_rms = Some(m.r_rms);
-        self.r_gyration = Some(m.r_gyration);
+    pub(crate) fn with_all_metrics(mut self, m: &MetricValues) -> Self {
+        self.trustworthiness = m.get(TRUSTWORTHINESS);
+        self.trustworthiness_manifold = m.get(TRUSTWORTHINESS_MANIFOLD);
+        self.continuity = m.get(CONTINUITY);
+        self.continuity_manifold = m.get(CONTINUITY_MANIFOLD);
+        self.neighborhood_hit = m.get(NEIGHBORHOOD_HIT);
+        self.neighborhood_hit_manifold = m.get(NEIGHBORHOOD_HIT_MANIFOLD);
+        self.normalized_stress = m.get(NORMALIZED_STRESS);
+        self.normalized_stress_manifold = m.get(NORMALIZED_STRESS_MANIFOLD);
+        self.shepard_goodness = m.get(SHEPARD_GOODNESS);
+        self.shepard_goodness_manifold = m.get(SHEPARD_GOODNESS_MANIFOLD);
+        self.davies_bouldin_ratio = m.get(DAVIES_BOULDIN_RATIO);
+        self.dunn_index = m.get(DUNN_INDEX);
+        self.cluster_density_measure = m.get(CLUSTER_DENSITY_MEASURE);
+        self.r_max = m.get(R_MAX);
+        self.r_rms = m.get(R_RMS);
+        self.r_gyration = m.get(R_GYRATION);
         self
     }
 }

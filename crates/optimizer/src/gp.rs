@@ -890,7 +890,7 @@ impl ParEgoOptimizer {
         metrics
             .iter()
             .enumerate()
-            .map(|(i, &v)| match self.metrics[i].direction() {
+            .map(|(i, &v)| match self.metrics[i].direction().into() {
                 OptimizeDirection::Maximize => v,
                 OptimizeDirection::Minimize => -v,
             })
@@ -2232,8 +2232,8 @@ mod tests {
     // ─── evolalg ─────────────────────────────────────────────────────────────
 
     fn make_pareto_optimizer_with_trials(n: usize) -> (ParEgoOptimizer, Vec<Metric>) {
-        use crate::metrics::Metric;
-        let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
+        use fitting_core::metrics::{CONTINUITY, TRUSTWORTHINESS};
+        let metrics = vec![TRUSTWORTHINESS, CONTINUITY];
         let mut opt = ParEgoOptimizer::new(metrics.clone(), TrialConfig::all_free());
         let mut rng = Rng::new(99);
         let space = maximize_space();
@@ -2286,8 +2286,8 @@ mod tests {
 
     #[test]
     fn pareto_lhs_exactly_11d_minus_1() {
-        use crate::metrics::Metric;
-        let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
+        use fitting_core::metrics::{CONTINUITY, TRUSTWORTHINESS};
+        let metrics = vec![TRUSTWORTHINESS, CONTINUITY];
         let mut opt = ParEgoOptimizer::new(metrics, TrialConfig::all_free());
         let mut rng = Rng::new(50);
         // First suggest_batch populates the queue with 11*6-1=65 points.
@@ -2309,8 +2309,8 @@ mod tests {
 
     #[test]
     fn pareto_suggest_returns_lhs_first() {
-        use crate::metrics::Metric;
-        let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
+        use fitting_core::metrics::{CONTINUITY, TRUSTWORTHINESS};
+        let metrics = vec![TRUSTWORTHINESS, CONTINUITY];
         let mut opt = ParEgoOptimizer::new(metrics, TrialConfig::all_free());
         let mut rng = Rng::new(51);
         // Drain the LHS in small batches.
@@ -2334,8 +2334,8 @@ mod tests {
 
     #[test]
     fn pareto_suggest_gp_phase_after_lhs() {
-        use crate::metrics::Metric;
-        let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
+        use fitting_core::metrics::{CONTINUITY, TRUSTWORTHINESS};
+        let metrics = vec![TRUSTWORTHINESS, CONTINUITY];
         let mut opt = ParEgoOptimizer::new(metrics, TrialConfig::all_free());
         let mut rng = Rng::new(52);
 
@@ -2360,8 +2360,8 @@ mod tests {
 
     #[test]
     fn scalarize_subset_uses_all_when_few() {
-        use crate::metrics::Metric;
-        let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
+        use fitting_core::metrics::{CONTINUITY, TRUSTWORTHINESS};
+        let metrics = vec![TRUSTWORTHINESS, CONTINUITY];
         let mut opt = ParEgoOptimizer::new(metrics, TrialConfig::all_free());
         let mut rng = Rng::new(60);
         for _ in 0..20 {
@@ -2383,8 +2383,8 @@ mod tests {
 
     #[test]
     fn scalarize_subset_caps_at_n_when_many() {
-        use crate::metrics::Metric;
-        let metrics = vec![Metric::Trustworthiness, Metric::Continuity];
+        use fitting_core::metrics::{CONTINUITY, TRUSTWORTHINESS};
+        let metrics = vec![TRUSTWORTHINESS, CONTINUITY];
         let mut opt = ParEgoOptimizer::new(metrics, TrialConfig::all_free());
         let mut rng = Rng::new(61);
         let n = 40usize;
