@@ -100,7 +100,7 @@ fn main() {
             args.n_seeds
         ),
         "pareto" => println!(
-            "Starting qParEGO multi-objective optimisation: {} datasets × {} trials, 10 objectives, geometry={}, seeds={}",
+            "Starting qParEGO multi-objective optimisation: {} datasets × {} trials, 6 objectives, geometry={}, seeds={}",
             dataset_names.len(),
             args.n_trials,
             args.geometry.as_deref().unwrap_or("auto-detect"),

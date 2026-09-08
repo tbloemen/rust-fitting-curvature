@@ -1,10 +1,9 @@
 //! The R2 indicator: weight-simplex enumeration, the preference regions, the
 //! compliance property the ΔR2 claim rests on, and the recommendation.
 
-use fitting_analysis::objectives::{METRIC_PAIRS, N_OBJECTIVES, OBJECTIVES};
+use fitting_analysis::objectives::{FAMILIES, METRIC_PAIRS, N_OBJECTIVES, OBJECTIVES};
 use fitting_analysis::r2::{
-    cell_summary, front_utilities, r2, recommendation, Weights, METRICS, REGION_ALL,
-    REGION_MANIFOLD, REGION_PROJECTED,
+    cell_summary, front_utilities, r2, recommendation, Weights, REGION_ALL,
 };
 use fitting_analysis::TrialRecord;
 
@@ -24,9 +23,9 @@ fn score(front: &[[f64; N_OBJECTIVES]], w: &Weights, region: &str) -> f64 {
 #[test]
 fn simplex_has_the_expected_size_and_every_vector_sums_to_one() {
     let w = Weights::new();
-    // C(s + k - 1, k - 1) = C(14, 9) = 2002 for k = 10, s = 5.
+    // C(s + k - 1, k - 1) = C(10, 5) = 252 for k = 6, s = 5.
     assert_eq!(w.s, Weights::DEFAULT_S);
-    assert_eq!(w.vectors.len(), 2002);
+    assert_eq!(w.vectors.len(), 252);
     assert_eq!(w.counts.len(), w.vectors.len());
 
     for (counts, lambda) in w.counts.iter().zip(&w.vectors) {
@@ -40,18 +39,19 @@ fn simplex_has_the_expected_size_and_every_vector_sums_to_one() {
 #[test]
 fn resolution_flows_through_the_enumeration_and_the_regions() {
     let w = Weights::with_resolution(2);
-    // C(2 + 9, 9) = 55, and "at least half the mass" is now a count of 1.
+    // C(2 + 5, 5) = 21, and "at least half the mass" is now a count of 1.
     assert_eq!(w.s, 2);
-    assert_eq!(w.vectors.len(), 55);
+    assert_eq!(w.vectors.len(), 21);
     for counts in &w.counts {
         let total: u32 = counts.iter().map(|&c| u32::from(c)).sum();
         assert_eq!(total, 2, "counts {counts:?} must sum to s");
     }
-    // Every vector puts at least one of its two units on some metric pair, so
-    // the five metric regions have to cover the whole simplex.
-    let covered: std::collections::BTreeSet<usize> = METRICS
+    // The families partition the objectives, so every vector puts at least one
+    // of its two units on some family and the family regions have to cover the
+    // whole simplex.
+    let covered: std::collections::BTreeSet<usize> = FAMILIES
         .iter()
-        .flat_map(|m| w.region(m).expect("metric region exists").indices.clone())
+        .flat_map(|(f, _)| w.region(f).expect("family region exists").indices.clone())
         .collect();
     assert_eq!(covered.len(), w.vectors.len());
 }
@@ -69,9 +69,9 @@ fn simplex_vectors_are_distinct() {
 
 #[test]
 fn every_pair_follows_the_manifold_naming_convention() {
-    // OBJECTIVES and METRICS are derived from METRIC_PAIRS, so the interleaving
-    // cannot desync. What is still hand-written is the names themselves, and
-    // `_manifold` is the suffix that ties them to the JSONL columns.
+    // METRIC_PAIRS no longer generates OBJECTIVES — it is the Exp 4 diagnostic
+    // table now — but its names are still hand-written, and `_manifold` is the
+    // suffix that ties them to the JSONL columns.
     for (projected, manifold) in METRIC_PAIRS {
         assert_eq!(manifold, format!("{projected}_manifold"));
     }
@@ -79,9 +79,9 @@ fn every_pair_follows_the_manifold_naming_convention() {
 
 #[test]
 fn every_objective_resolves_on_a_record() {
-    // The remaining way to break the layout is a typo in METRIC_PAIRS, or a
-    // metric added there but not to `TrialRecord::objective` — either one makes
-    // an objective read as permanently missing, i.e. silently worst-case.
+    // The way to break this is a typo in OBJECTIVES, or an objective added
+    // there but not to `TrialRecord::objective` — either one makes the
+    // objective read as permanently missing, i.e. silently worst-case.
     let r = record(0.5);
     for name in OBJECTIVES {
         assert!(
@@ -95,60 +95,84 @@ fn every_objective_resolves_on_a_record() {
 fn region_sizes_match_the_combinatorics() {
     let w = Weights::new();
 
-    assert_eq!(w.region(REGION_ALL).unwrap().indices.len(), 2002);
+    assert_eq!(w.region(REGION_ALL).unwrap().indices.len(), 252);
 
-    // Supported on 5 of the 10 objectives: compositions of 5 into 5 parts,
-    // C(9, 4) = 126.
-    assert_eq!(w.region(REGION_MANIFOLD).unwrap().indices.len(), 126);
-    assert_eq!(w.region(REGION_PROJECTED).unwrap().indices.len(), 126);
-
-    // At least 3 of 5 units on the metric's two objectives:
-    //   t=3: 4·C(9,7)=144, t=4: 5·C(8,7)=40, t=5: 6·C(7,7)=6  ⇒ 190.
-    for metric in METRICS {
+    // At least 3 of 5 units on the family's two objectives, the other four
+    // objectives taking the rest:
+    //   t=3: 4·C(5,3)=40, t=4: 5·C(4,3)=20, t=5: 6·C(3,3)=6  ⇒ 66.
+    for (family, _) in FAMILIES {
         assert_eq!(
-            w.region(metric).unwrap().indices.len(),
-            190,
-            "region {metric}"
+            w.region(family).unwrap().indices.len(),
+            66,
+            "region {family}"
+        );
+    }
+
+    // At least 3 of 5 units on one objective, the other five taking the rest:
+    //   l=3: C(6,4)=15, l=4: C(5,4)=5, l=5: 1  ⇒ 21.
+    for objective in OBJECTIVES {
+        assert_eq!(
+            w.region(objective).unwrap().indices.len(),
+            21,
+            "region {objective}"
         );
     }
 }
 
 #[test]
-fn surface_regions_are_supported_on_their_own_objectives() {
+fn families_partition_the_objectives() {
+    // FAMILIES indexes into OBJECTIVES by position, so a reordering of either
+    // silently regroups the regions. Every objective must belong to exactly one
+    // family.
+    let mut seen: Vec<usize> = FAMILIES.iter().flat_map(|(_, idx)| *idx).collect();
+    seen.sort_unstable();
+    assert_eq!(seen, (0..N_OBJECTIVES).collect::<Vec<_>>());
+}
+
+#[test]
+fn a_family_region_puts_at_least_half_its_mass_on_its_own_objectives() {
     let w = Weights::new();
-    for &i in &w.region(REGION_MANIFOLD).unwrap().indices {
-        for j in (0..N_OBJECTIVES).step_by(2) {
-            assert_eq!(w.counts[i][j], 0, "projected objective {j} carries weight");
-        }
-    }
-    for &i in &w.region(REGION_PROJECTED).unwrap().indices {
-        for j in (1..N_OBJECTIVES).step_by(2) {
-            assert_eq!(w.counts[i][j], 0, "manifold objective {j} carries weight");
+    let half = w.s.div_ceil(2) as u8;
+    for (family, [a, b]) in FAMILIES {
+        for &i in &w.region(family).unwrap().indices {
+            let c = &w.counts[i];
+            assert!(
+                c[a] + c[b] >= half,
+                "region {family} admits {c:?}, which puts {} of {} units on it",
+                c[a] + c[b],
+                w.s
+            );
         }
     }
 }
 
 #[test]
-fn a_metric_region_ignores_the_other_surfaces_objectives() {
-    // Two fronts identical on the manifold objectives and different on the
-    // projected ones must score the same under W_manifold.
+fn a_family_region_penalises_its_own_objectives_hardest() {
+    // The regions have to actually express different preferences, or reporting
+    // them separately says nothing. Degrading a family's own objectives must
+    // cost more under that family than degrading someone else's by the same
+    // amount. (R2 is a cost, so "worse" is larger.)
     let w = Weights::new();
-    let mut a = flat(0.6);
-    let mut b = flat(0.6);
-    for j in (0..N_OBJECTIVES).step_by(2) {
-        a[j] = 0.1;
-        b[j] = 0.9;
+    let degrade = |[a, b]: [usize; 2]| {
+        let mut p = flat(0.9);
+        p[a] = 0.1;
+        p[b] = 0.1;
+        p
+    };
+    for (family, own) in FAMILIES {
+        let hurt_own = score(&[degrade(own)], &w, family);
+        for (other_family, other) in FAMILIES {
+            if other_family == family {
+                continue;
+            }
+            let hurt_other = score(&[degrade(other)], &w, family);
+            assert!(
+                hurt_own > hurt_other,
+                "under {family}, degrading {other_family} ({hurt_other}) cost at \
+                 least as much as degrading {family} itself ({hurt_own})"
+            );
+        }
     }
-    assert_eq!(
-        score(&[a], &w, REGION_MANIFOLD),
-        score(&[b], &w, REGION_MANIFOLD)
-    );
-    // ...and differently under the projected region, or the regions would be
-    // measuring the same thing.
-    assert_ne!(
-        score(&[a], &w, REGION_PROJECTED),
-        score(&[b], &w, REGION_PROJECTED)
-    );
 }
 
 // ─── The indicator ───────────────────────────────────────────────────────────
@@ -170,8 +194,8 @@ fn the_ideal_point_scores_zero_and_the_nadir_scores_worst() {
 fn the_indicator_is_weakly_pareto_compliant() {
     // The property ΔR2 > 0 rests on: a dominating front can never score worse.
     let w = Weights::new();
-    let worse = [0.3, 0.4, 0.5, 0.2, 0.6, 0.7, 0.1, 0.4, 0.5, 0.3];
-    let better = [0.4, 0.5, 0.5, 0.3, 0.8, 0.7, 0.2, 0.6, 0.5, 0.9];
+    let worse = [0.3, 0.4, 0.5, 0.2, 0.6, 0.7];
+    let better = [0.4, 0.5, 0.5, 0.3, 0.8, 0.9];
     for region in &w.regions {
         let (region, b, a) = (
             region.name.as_str(),
@@ -214,7 +238,7 @@ fn the_indicator_is_order_independent() {
     let mut a = flat(0.5);
     a[3] = 0.9;
     let mut b = flat(0.6);
-    b[7] = 0.2;
+    b[5] = 0.2;
     assert_eq!(
         score(&[a, b], &w, REGION_ALL),
         score(&[b, a], &w, REGION_ALL)
@@ -226,14 +250,12 @@ fn the_indicator_is_order_independent() {
 #[test]
 fn a_metric_region_recommends_the_point_that_is_good_at_that_metric() {
     let w = Weights::new();
-    // Point 0 is strong on trustworthiness (objectives 0, 1) and weak elsewhere;
-    // point 1 is the mirror image on neighbourhood hit (objectives 8, 9).
+    // Point 0 is strong on trustworthiness (objective 0) and weak elsewhere;
+    // point 1 is the mirror image on neighbourhood hit (objective 4).
     let mut trust = flat(0.2);
     trust[0] = 0.95;
-    trust[1] = 0.95;
     let mut hit = flat(0.2);
-    hit[8] = 0.95;
-    hit[9] = 0.95;
+    hit[4] = 0.95;
     let front = [trust, hit];
     let u = front_utilities(&front, &w.vectors);
 
@@ -271,6 +293,7 @@ fn record(v: f64) -> TrialRecord {
         shepard_goodness_manifold: Some(v),
         neighborhood_hit: Some(v),
         neighborhood_hit_manifold: Some(v),
+        class_density_measure: Some(v),
         ..Default::default()
     }
 }
@@ -302,7 +325,7 @@ fn a_diverged_trial_scores_worst_rather_than_vanishing() {
     let w = Weights::new();
     let mut diverged = record(0.9);
     diverged.trustworthiness = None;
-    diverged.continuity_manifold = Some(f64::NAN);
+    diverged.continuity = Some(f64::NAN);
 
     let good = cell_summary(&[record(0.9)], &w);
     let bad = cell_summary(&[diverged], &w);

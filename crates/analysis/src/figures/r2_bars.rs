@@ -81,28 +81,43 @@ pub fn load_deltas(path: &Path) -> Result<Vec<DeltaRow>> {
 
 /// Short axis labels for the preference regions, in report order.
 ///
-/// The five per-metric regions are derived from [`METRIC_PAIRS`] rather than
-/// written out again — a region *is* a metric pair's weight set, so a metric
-/// added there has to appear here too, and the derived form cannot desync.
+/// Derived from [`FAMILIES`] and [`OBJECTIVES`] rather than written out again,
+/// so the order and membership cannot desync from `r2::build_regions`, which
+/// builds the regions in exactly this order.
 fn regions() -> Vec<(&'static str, String)> {
     let mut out = vec![("all", "W_all".to_string())];
     out.extend(
-        METRIC_PAIRS
+        FAMILIES
             .iter()
-            .map(|(metric, _)| (*metric, format!("W_{}", short_metric(metric)))),
+            .map(|(family, _)| (*family, format!("W_{}", short_metric(family)))),
     );
-    out.push(("manifold", "W_man".to_string()));
-    out.push(("projected", "W_proj".to_string()));
+    out.extend(
+        OBJECTIVES
+            .iter()
+            .map(|objective| (*objective, format!("W_{}", short_metric(objective)))),
+    );
     out
 }
 
+/// Abbreviations for the axis labels; the full names do not fit.
+///
+/// The fallthrough is a hazard rather than a convenience: an unabbreviated name
+/// renders at full width and overlaps its neighbours, so every region
+/// [`regions`] can emit needs an arm here. `every_region_label_is_abbreviated`
+/// in `test_r2.rs` pins that.
 fn short_metric(metric: &str) -> &str {
     match metric {
+        // objectives
         "trustworthiness" => "trust",
         "continuity" => "cont",
         "normalized_stress" => "stress",
         "shepard_goodness" => "shep",
         "neighborhood_hit" => "nh",
+        "class_density_measure" => "cdm",
+        // families
+        "structure" => "struct",
+        "distance" => "dist",
+        "class_separation" => "class",
         other => other,
     }
 }
@@ -348,5 +363,40 @@ impl Figure for R2Bars {
             ))?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `short_metric` falls through to the full name, which renders at full
+    /// width and overlaps its neighbours instead of erroring. Every region
+    /// [`regions`] emits therefore needs its own arm.
+    #[test]
+    fn every_region_label_is_abbreviated() {
+        for (name, label) in regions() {
+            if name == "all" {
+                continue;
+            }
+            assert_ne!(
+                short_metric(name),
+                name,
+                "region `{name}` has no abbreviation, so it renders as `{label}`"
+            );
+        }
+    }
+
+    /// The bar chart's x axis is `r2::build_regions`' output order; a region
+    /// added to one and not the other silently mislabels every bar after it.
+    #[test]
+    fn labels_match_the_regions_the_indicator_builds() {
+        let built: Vec<String> = crate::r2::Weights::new()
+            .regions
+            .iter()
+            .map(|r| r.name.clone())
+            .collect();
+        let labelled: Vec<String> = regions().into_iter().map(|(n, _)| n.to_string()).collect();
+        assert_eq!(labelled, built);
     }
 }

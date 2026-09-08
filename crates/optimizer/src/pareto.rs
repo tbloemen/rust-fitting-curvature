@@ -239,22 +239,46 @@ pub fn run_pareto(
     pb.println(format!("Pareto front written to {}", front_path));
 }
 
-/// Default set of objectives for --mode pareto.
+/// Default set of objectives for --mode pareto: six metrics, all measured on
+/// the 2D projection, giving 6 objectives total.
 ///
-/// Includes both the 2D (post-projection) and manifold (pre-projection) variants
-/// of the five core DR quality metrics, giving 10 objectives total.
-fn default_pareto_metrics() -> Vec<Metric> {
+/// Two rules fix this list.
+///
+/// **Projected only.** The manifold (pre-projection, geodesic) variants used to
+/// take half the objective budget. What the thesis judges is the 2D
+/// visualisation, so the manifold half optimised a surface no reader looks at.
+/// Those metrics are still measured and written to the JSONL — nothing about
+/// `AllMetrics` changed — they just no longer steer the search. `figures/exp4.rs`
+/// reads those columns and is what shows whether dropping them was justified.
+///
+/// **Bounded in `[0, 1]` only.** `class_density_measure` is the one of the four
+/// label-aware, projection-only metrics that qualifies. `dunn_index`,
+/// `davies_bouldin_ratio` and `cluster_density_measure` are ratios, unbounded
+/// above, and measured over `results/` their upper tails reach 3.0e10, 2.9e11
+/// and 2e24 respectively — the last mostly from collapsed clusters hitting the
+/// `1e-12` radius floor in the formula. Admitting one would break both consumers:
+/// `scalarize_subset` min-max normalises per batch, so a single outlier flattens
+/// that axis to ~0 for every real trial, and `fitting_analysis::oriented_value`
+/// clamps to `[0, 1]`, which would peg 74% of trials at 1.0 on that axis.
+///
+/// Keeping every objective naturally bounded is what lets both of those stay as
+/// they are, with no transform and no estimated bounds (Karl et al., *MOHPO — An
+/// Overview*, §3.3.3 and §4: normalise to `[0, 1]`, which is "fairly simple"
+/// for metrics with known limits and needs estimation otherwise). It is also
+/// what the DR-quality literature does — Espadoto et al. and Telea et al. use
+/// metrics that all range in `[0, 1]`, and reach for bounded class-separation
+/// measures rather than repairing unbounded ones.
+pub(crate) fn default_pareto_metrics() -> Vec<Metric> {
     vec![
+        // structure
         Metric::Trustworthiness,
-        Metric::TrustworthinessManifold,
         Metric::Continuity,
-        Metric::ContinuityManifold,
+        // distance preservation
         Metric::NormalizedStress,
-        Metric::NormalizedStressManifold,
         Metric::ShepardGoodness,
-        Metric::ShepardGoodnessManifold,
+        // class separation
         Metric::NeighborhoodHit,
-        Metric::NeighborhoodHitManifold,
+        Metric::ClassDensityMeasure,
     ]
 }
 

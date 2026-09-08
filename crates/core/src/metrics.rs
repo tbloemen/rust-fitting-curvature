@@ -661,12 +661,18 @@ pub fn neighborhood_hit(embedded_distances: &[f64], labels: &[u32], n: usize, k:
 ///
 /// Two project-specific deviations from textbook `r_s ∈ [−1, 1]`:
 ///
-/// - The result is clipped to 0 from below, since negative correlations are
-///   meaningless for projection quality. So the returned value is in [0, 1],
-///   with **1 being best** (perfect rank order preservation).
+/// - The result is **normalised onto [0, 1]** by the order-preserving affine
+///   map `(r_s + 1) / 2`, so that every reported metric shares one range.
+///   1 is perfect rank-order preservation, 0.5 is rank-order independence
+///   (the no-skill value of a rank correlation), and 0 would be exact rank
+///   reversal. The map is strictly monotone, so no information in `r_s` is
+///   lost and the induced ordering of embeddings is unchanged; note that it
+///   moves the no-skill point off zero, so **0.5, not 0, is the score of an
+///   embedding that preserves nothing**.
 /// - Degenerate input — either side constant, so `σ_R = 0` and `r_s` is
-///   undefined (`scipy.stats.spearmanr` returns NaN here) — returns 0 rather
-///   than NaN, because this feeds a Pareto objective where NaN is a hazard.
+///   undefined (`scipy.stats.spearmanr` returns NaN here) — returns 0.5, the
+///   image of "no rank information", rather than NaN, because this feeds a
+///   Pareto objective where NaN is a hazard.
 pub fn shepard_goodness(high_dim_distances: &[f64], embedded_distances: &[f64], n: usize) -> f64 {
     let m = n * (n - 1) / 2;
     if m < 2 {
@@ -702,13 +708,15 @@ pub fn shepard_goodness(high_dim_distances: &[f64], embedded_distances: &[f64], 
 
     // A constant distance vector collapses every rank onto `mean_rank`, so
     // σ_R = 0 and r_s is undefined. That is a total loss of rank structure,
-    // so it scores 0, not 1.
+    // which on this scale is the no-skill value 0.5 — not 1, and not the 0
+    // that exact rank *reversal* would earn.
     let sigma_product = (var_x * var_y).sqrt();
     if sigma_product < 1e-12 {
-        return 0.0;
+        return 0.5;
     }
 
-    (cov / sigma_product).max(0.0)
+    // (r_s + 1) / 2, clamped only against floating-point overshoot at the ends.
+    ((cov / sigma_product + 1.0) / 2.0).clamp(0.0, 1.0)
 }
 
 // ---------------------------------------------------------------------------

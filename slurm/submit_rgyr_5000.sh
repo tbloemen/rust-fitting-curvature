@@ -1,13 +1,15 @@
 #!/bin/sh
 # Re-run the N=5000 sweeps to log the origin-free radius `r_gyration`, so kappa
-# can be gauged the same way on every arm. See slurm/run_5000_rgyr.sh for why.
+# can be gauged the same way on every arm, and to re-measure `shepard_goodness`
+# on its current definition. See slurm/run_5000_rgyr.sh for why.
 #
 # Covers, into results-rgyr/:
 #
 #   spherical   8 datasets x 4 settings = 32   (the broken arm)
 #   hyperbolic  8 datasets x 6 settings = 48
+#   euclidean   8 datasets x 5 settings = 40
 #                                       ----
-#                                         80 cells
+#                                        120 cells
 #
 # TWO DELIBERATE DEPARTURES from the cell grid under results/:
 #
@@ -20,20 +22,37 @@
 #
 # Everything else is a twin of an existing cell.
 #
-# Euclidean is deliberately absent too: `Euclidean::center` subtracts the
-# coordinate mean every iteration, so r_gyration == r_rms there exactly, and
-# euclidean kappa is 0 on any gauge. Re-running its cells would buy nothing.
+# EUCLIDEAN IS NOW INCLUDED, although the gauge never needed fixing there:
+# `Euclidean::center` subtracts the coordinate mean every iteration, so
+# r_gyration == r_rms exactly and euclidean kappa is 0 on any gauge. It is
+# re-run for a second reason that arrived later and applies to every arm --
+# `shepard_goodness` changed twice on 2026-09-07. Fractional ranks replaced the
+# tie-free Spearman shortcut, and the score is now normalised onto [0, 1] as
+# (r_s + 1) / 2 instead of being clipped at 0. Every shepard value under
+# results/ is therefore on a scale no current build produces, and none of them
+# can be converted after the fact: the clipped zeros lost their sign. Euclidean
+# has to be re-fitted for the metric even though it needs nothing from the gauge.
+#
+# Consequence for reading the output: these cells are NO LONGER bit-for-bit
+# twins of their results/ counterparts. `shepard_goodness` is one of the six
+# qParEGO objectives, and it moved non-affinely, so the scalarisation, the GP
+# proposals and hence the trial sequence all diverge from the original run.
+# (The (r_s + 1) / 2 step alone would not have done that -- `scalarize_subset`
+# min-max normalises each objective per batch, which absorbs any affine map --
+# but the fractional-rank fix does.) Compare cells by their fronts and their
+# indicator values, not trial by trial.
 #
 # COST. Each cell is ~60-72h at N=5000, chunked into 24h jobs, so CHUNKS=4 means
-# 80 x 4 = 320 queued jobs. Most sites cap jobs per user well below that. Submit
+# 120 x 4 = 480 queued jobs. Most sites cap jobs per user well below that. Submit
 # in phases with GEOMETRIES, starting with the arm that is actually broken:
 #
 #   sh slurm/sync.sh                      # then, on the login node:
 #   cargo build --release --locked
 #   GEOMETRIES=spherical  sh slurm/submit_rgyr_5000.sh    # 32 cells, 128 jobs
 #   GEOMETRIES=hyperbolic sh slurm/submit_rgyr_5000.sh    # 48 cells, 192 jobs
+#   GEOMETRIES=euclidean  sh slurm/submit_rgyr_5000.sh    # 40 cells, 160 jobs
 #
-# Before either, run ONE cell by hand and check its output (see the plan's
+# Before any of them, run ONE cell by hand and check its output (see the plan's
 # staged-submission section):
 #   sbatch --export=ALL,DATASET=sphere,EXPERIMENT=all_off,GEOMETRY=spherical \
 #     slurm/run_5000_rgyr.sh
@@ -47,18 +66,21 @@ set -eu
 # from every rms_anchored run in the first place. Its cells under results/ keep
 # the old r_rms gauge and have no results-rgyr/ counterpart.
 DATASETS="${DATASETS:-mnist fashion_mnist pbmc wordnet_mammals sphere tree hyperbolic_shells grid}"
-GEOMETRIES="${GEOMETRIES:-spherical hyperbolic}"
+GEOMETRIES="${GEOMETRIES:-spherical hyperbolic euclidean}"
 
 # Number of chained ~24h chunks per cell. A full run needs ~3.
 CHUNKS="${CHUNKS:-4}"
 
 # Settings per geometry. The sweep is not rectangular: norm_only was never run
 # spherically, and rms_anchored is hyperbolic-only (it anchors the hyperboloid's
-# radial spread, which has no spherical counterpart).
+# radial spread, which has no spherical or euclidean counterpart). Each list is
+# the set that geometry actually has under results/, so every cell here has a
+# twin -- except rms_anchored x grid, noted above.
 settings_for() {
   case "$1" in
   spherical) echo "all_off centering_only global_only all_free" ;;
   hyperbolic) echo "all_off centering_only global_only norm_only all_free rms_anchored" ;;
+  euclidean) echo "all_off centering_only global_only norm_only all_free" ;;
   *)
     echo "submit_rgyr_5000.sh: no settings for geometry '$1'" >&2
     exit 1

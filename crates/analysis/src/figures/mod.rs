@@ -115,9 +115,13 @@ const fn synth_datasets() -> [&'static str; SYNTH_TRUTH.len()] {
 pub const CURVED: [&str; 2] = ["hyperbolic", "spherical"];
 
 pub use crate::cell::GEOMETRIES;
-/// The five paired metrics (2D vs manifold); Exp 4 plots one panel per metric,
-/// in table order.
+/// The five metrics that have both a 2D and a manifold reading; Exp 4 plots one
+/// panel per metric, in table order. A *diagnostic* table — no longer the
+/// objective list, which is [`OBJECTIVES`].
 pub use crate::objectives::METRIC_PAIRS;
+/// The six objectives and the three preference families, in region order;
+/// `r2_bars` labels its axes from these.
+pub use crate::objectives::{FAMILIES, OBJECTIVES};
 
 /// All datasets, real first — the order Exp 3 iterates in.
 pub fn all_datasets() -> Vec<&'static str> {

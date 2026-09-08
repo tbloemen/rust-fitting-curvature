@@ -7,8 +7,11 @@ use fitting_analysis::{
     Variant,
 };
 
-/// A record whose 10 objectives are all *v* except normalised stress, which is
+/// A record whose 6 objectives are all *v* except normalised stress, which is
 /// set so that its oriented value is also *v* (stress is minimised).
+///
+/// The manifold columns are populated too. They are no longer objectives, so
+/// `oriented_row` ignores them — which is part of what the row test checks.
 fn record_at(v: f64) -> TrialRecord {
     TrialRecord {
         trustworthiness: Some(v),
@@ -21,6 +24,7 @@ fn record_at(v: f64) -> TrialRecord {
         shepard_goodness_manifold: Some(v),
         neighborhood_hit: Some(v),
         neighborhood_hit_manifold: Some(v),
+        class_density_measure: Some(v),
         ..Default::default()
     }
 }
@@ -108,7 +112,10 @@ fn rejects_front_files_and_junk() {
 fn orientation_flips_minimised_objectives() {
     assert_eq!(oriented_value("trustworthiness", Some(0.8)), 0.8);
     assert_eq!(oriented_value("normalized_stress", Some(0.3)), 0.7);
-    assert_eq!(oriented_value("normalized_stress_manifold", Some(0.3)), 0.7);
+    // `normalized_stress_manifold` is no longer an objective, so it is not in
+    // MINIMIZE and is not flipped. It is never looked up either — this only
+    // pins that dropping it from MINIMIZE was deliberate.
+    assert_eq!(oriented_value("normalized_stress_manifold", Some(0.3)), 0.3);
 }
 
 #[test]
@@ -131,7 +138,7 @@ fn orientation_clamps_out_of_range_values() {
 }
 
 #[test]
-fn oriented_row_covers_all_ten_objectives_in_order() {
+fn oriented_row_covers_all_six_objectives_in_order() {
     assert_eq!(OBJECTIVES.len(), N_OBJECTIVES);
     let row = oriented_row(&record_at(0.6));
     assert_eq!(row, [0.6; N_OBJECTIVES]);
