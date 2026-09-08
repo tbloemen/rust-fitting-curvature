@@ -9,8 +9,8 @@ use plotters::style::text_anchor::{HPos, Pos, VPos};
 
 use super::{
     all_datasets, draw_legend, geometry_color, load_kappa_data, log_tick, median_front_kappa,
-    padded_log_range, padded_range, snap_to_decades, CellMap, Figure, IoContext, KappaData,
-    LegendEntry, Res, CURVED, OK_BLACK, OK_BLUE, OK_ORANGE, REAL_DATASETS,
+    padded_log_range, padded_range, snap_to_decades, CellMap, Figure, KappaData, LegendEntry, Res,
+    CURVED, OK_BLACK, OK_BLUE, OK_ORANGE, REAL_DATASETS,
 };
 use crate::cell::Cell;
 use crate::error::Result;
