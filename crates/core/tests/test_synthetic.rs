@@ -793,6 +793,33 @@ fn test_load_all_datasets() {
     }
 }
 
+/// Every synthetic dataset must ship its own intrinsic distance matrix.
+///
+/// Consumers choose between `EmbeddingState::from_distances` and
+/// `EmbeddingState::new` on exactly this test (`optimizer::Evaluator::new`,
+/// `web::EmbeddingRunner::from_synthetic`). It is load-bearing in two ways: a
+/// graph dataset like `tree_graph` has *no* coordinates, so falling through to
+/// the coordinate path embeds n zero-length vectors and collapses the result to
+/// a single point; and a curved generator embedded from its ambient coordinates
+/// would be fitted to chordal rather than geodesic distances, so the viewer
+/// would not show the data the sweeps are computed from.
+#[test]
+fn test_every_synthetic_ships_intrinsic_distances() {
+    for &name in DATASET_NAMES {
+        let data = load_synthetic(name, 40, 42).unwrap();
+        assert_eq!(
+            data.distances.len(),
+            40 * 40,
+            "{name} ships no distance matrix; every consumer would fall back to \
+             coordinates, which is wrong for a curved manifold and degenerate for a graph"
+        );
+        assert!(
+            !data.x.is_empty() || data.ambient_dim == 0,
+            "{name} has an ambient dimension but no coordinates"
+        );
+    }
+}
+
 #[test]
 fn test_load_unknown_dataset() {
     let result = load_synthetic("nonexistent", 50, 42);

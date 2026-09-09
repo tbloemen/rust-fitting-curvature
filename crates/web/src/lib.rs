@@ -79,8 +79,6 @@ impl EmbeddingRunner {
         let synth = synthetic_data::load_synthetic(dataset_name, n_points, 42)
             .map_err(|e| JsValue::from_str(&e))?;
 
-        let n_features = synth.ambient_dim;
-
         let config = TrainingConfig {
             n_points: synth.n_points,
             curvature,
@@ -97,9 +95,22 @@ impl EmbeddingRunner {
         };
 
         let proj = parse_projection(projection);
-        let state = EmbeddingState::new(&synth.x, n_features, &config)
-            .with_labels(synth.labels.clone())
-            .with_projection(proj);
+        // Prefer the generator's own intrinsic distance matrix, exactly as
+        // `optimizer::Evaluator::new` does. Two things go wrong without this:
+        // a graph dataset (`tree_graph`) has no coordinates at all, so
+        // `EmbeddingState::new` would see 1000 zero-length feature vectors and
+        // collapse the embedding to a point; and every curved generator would
+        // be embedded from *ambient* Euclidean distances — chordal across the
+        // sphere, hyperboloid ambient coordinates for H² — instead of the
+        // geodesics the sweeps use, so the viewer would not be showing the same
+        // data the results are computed from.
+        let state = if synth.distances.is_empty() {
+            EmbeddingState::new(&synth.x, synth.ambient_dim, &config)
+        } else {
+            EmbeddingState::from_distances(&synth.distances, synth.n_points, &config)
+        }
+        .with_labels(synth.labels.clone())
+        .with_projection(proj);
         let canvas = get_canvas(canvas_id)?;
 
         Ok(EmbeddingRunner {
