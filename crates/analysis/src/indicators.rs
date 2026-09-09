@@ -21,7 +21,7 @@
 //! "objective units", and the NaN-freedom `oriented_value` guarantees carries
 //! through: nothing here can produce a NaN from finite input.
 
-use crate::objectives::N_OBJECTIVES;
+use crate::objectives::Row;
 
 /// `I_ε+(A, B)`: the smallest ε such that every point of *b* is weakly dominated
 /// by some point of *a* shifted up by ε on every objective.
@@ -38,7 +38,7 @@ use crate::objectives::N_OBJECTIVES;
 /// `None` when either front is empty: with no *a* there is nothing to shift, and
 /// with no *b* there is nothing to cover, and neither is a value of zero.
 #[must_use]
-pub fn epsilon_additive(a: &[[f64; N_OBJECTIVES]], b: &[[f64; N_OBJECTIVES]]) -> Option<f64> {
+pub fn epsilon_additive(a: &[Row], b: &[Row]) -> Option<f64> {
     if a.is_empty() || b.is_empty() {
         return None;
     }
@@ -48,8 +48,8 @@ pub fn epsilon_additive(a: &[[f64; N_OBJECTIVES]], b: &[[f64; N_OBJECTIVES]]) ->
         let mut best = f64::INFINITY;
         for point_a in a {
             let mut shift = f64::NEG_INFINITY;
-            for j in 0..N_OBJECTIVES {
-                let gap = point_b[j] - point_a[j];
+            for (b_j, a_j) in point_b.iter().zip(point_a) {
+                let gap = b_j - a_j;
                 if gap > shift {
                     shift = gap;
                 }
@@ -98,10 +98,7 @@ impl EpsilonPair {
 ///
 /// `None` when either front is empty, matching [`epsilon_additive`].
 #[must_use]
-pub fn epsilon_pair(
-    setting: &[[f64; N_OBJECTIVES]],
-    baseline: &[[f64; N_OBJECTIVES]],
-) -> Option<EpsilonPair> {
+pub fn epsilon_pair(setting: &[Row], baseline: &[Row]) -> Option<EpsilonPair> {
     let setting_vs_baseline = epsilon_additive(setting, baseline)?;
     let baseline_vs_setting = epsilon_additive(baseline, setting)?;
     Some(EpsilonPair {

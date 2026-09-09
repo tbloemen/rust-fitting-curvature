@@ -1,6 +1,6 @@
 //! Cell parsing, objective orientation, and Pareto non-domination.
 
-use fitting_analysis::objectives::{oriented_row, oriented_value, N_OBJECTIVES, OBJECTIVES};
+use fitting_analysis::objectives::{oriented_row, oriented_value, ObjectiveSpace, OBJECTIVES};
 use fitting_analysis::pareto::{slice_front_2d, step_polyline};
 use fitting_analysis::{
     pareto_front_mask, pareto_front_records, parse_cell_stem, parse_cell_stem_variant, TrialRecord,
@@ -193,23 +193,49 @@ fn orientation_clamps_out_of_range_values() {
 
 #[test]
 fn oriented_row_covers_all_six_objectives_in_order() {
-    assert_eq!(OBJECTIVES.len(), N_OBJECTIVES);
-    let row = oriented_row(&record_at(0.6));
-    assert_eq!(row.partial_cmp(&[0.6; N_OBJECTIVES]), Some(Ordering::Equal));
+    let space = ObjectiveSpace::Current6;
+    assert_eq!(OBJECTIVES.len(), space.len());
+    let row = oriented_row(&record_at(0.6), space);
+    assert_eq!(row, vec![0.6; space.len()]);
     // An empty record is the all-zeros worst case.
     assert_eq!(
-        oriented_row(&TrialRecord::default()).partial_cmp(&[0.0; N_OBJECTIVES]),
-        Some(Ordering::Equal)
+        oriented_row(&TrialRecord::default(), space),
+        vec![0.0; space.len()]
     );
+}
+
+/// The legacy space is ten wide and interleaved: a metric's projected reading
+/// then its manifold one. A record whose manifold columns read lower must show
+/// that at the odd indices, which is what makes the two halves separable — the
+/// whole reason the space existed.
+#[test]
+fn the_legacy_space_interleaves_projected_and_manifold_readings() {
+    let space = ObjectiveSpace::Legacy10;
+    assert_eq!(space.len(), 10);
+    for (j, metric) in space.metrics().iter().enumerate() {
+        let manifold = metric.name().ends_with("_manifold");
+        assert_eq!(
+            manifold,
+            j % 2 == 1,
+            "objective {j} is `{}`, which breaks the (projected, manifold) interleaving \
+             that `build_regions` indexes by parity",
+            metric.name()
+        );
+    }
 }
 
 // ─── Non-domination ───────────────────────────────────────────────────────────
 
+/// A constant row of the current space's width.
+fn flat(v: f64) -> fitting_analysis::objectives::Row {
+    vec![v; ObjectiveSpace::Current6.len()]
+}
+
 #[test]
 fn front_keeps_only_non_dominated_rows() {
-    let a = [0.9; N_OBJECTIVES];
-    let b = [0.5; N_OBJECTIVES]; // dominated by a in every objective
-    let mut c = [0.5; N_OBJECTIVES];
+    let a = flat(0.9);
+    let b = flat(0.5); // dominated by a in every objective
+    let mut c = flat(0.5);
     c[0] = 1.0; // better than a in one objective → non-dominated
     assert_eq!(pareto_front_mask(&[a, b, c]), vec![true, false, true]);
 }
@@ -217,14 +243,17 @@ fn front_keeps_only_non_dominated_rows() {
 #[test]
 fn identical_rows_are_all_kept() {
     // No row strictly dominates an identical one, so duplicates survive.
-    let a = [0.7; N_OBJECTIVES];
-    assert_eq!(pareto_front_mask(&[a, a, a]), vec![true, true, true]);
+    let a = flat(0.7);
+    assert_eq!(
+        pareto_front_mask(&[a.clone(), a.clone(), a]),
+        vec![true, true, true]
+    );
 }
 
 #[test]
 fn weak_domination_needs_a_strict_improvement() {
-    let a = [0.5; N_OBJECTIVES];
-    let mut b = [0.5; N_OBJECTIVES];
+    let a = flat(0.5);
+    let mut b = flat(0.5);
     b[3] = 0.6;
     // b is >= a everywhere and strictly better in one → a is dropped.
     assert_eq!(pareto_front_mask(&[a, b]), vec![false, true]);
@@ -233,7 +262,7 @@ fn weak_domination_needs_a_strict_improvement() {
 #[test]
 fn empty_input_gives_empty_front() {
     assert!(pareto_front_mask(&[]).is_empty());
-    assert!(pareto_front_records(&[]).is_empty());
+    assert!(pareto_front_records(&[], ObjectiveSpace::Current6).is_empty());
 }
 
 #[test]
@@ -241,7 +270,7 @@ fn front_records_round_trip_through_orientation() {
     // 0.9 dominates 0.5 on every objective once stress is oriented, so only the
     // better record survives — this is the path cell_summary uses.
     let records = vec![record_at(0.5), record_at(0.9), record_at(0.7)];
-    let front = pareto_front_records(&records);
+    let front = pareto_front_records(&records, ObjectiveSpace::Current6);
     assert_eq!(front.len(), 1);
     assert_eq!(front[0].objective("trustworthiness"), Some(0.9));
 }

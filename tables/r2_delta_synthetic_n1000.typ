@@ -9,7 +9,7 @@
       inset: (x: 2.5pt, y: 3pt),
       table.hline(stroke: 0.8pt),
       table.header(
-        table.cell(rowspan: 2, align: horizon)[*Dataset*], table.cell(rowspan: 2, align: horizon)[*Geom.*], table.cell(rowspan: 2, align: horizon)[*Setting*], table.cell(rowspan: 2, align: horizon + right)[$W_"all"$], table.cell(colspan: 5, align: center)[*Per-metric*], table.cell(colspan: 2, align: center)[*Surface*],
+        table.cell(rowspan: 2, align: horizon)[*Dataset*], table.cell(rowspan: 2, align: horizon)[*Geom.*], table.cell(rowspan: 2, align: horizon)[*Setting*], table.cell(rowspan: 2, align: horizon + right)[$W_"all"$], table.cell(colspan: 2, align: center)[*Family*], table.cell(colspan: 5, align: center)[*Per-objective*],
         [$W_"trust"$], [$W_"cont"$], [$W_"stress"$], [$W_"shep"$], [$W_"nh"$], [$W_"man"$], [$W_"proj"$],
       ),
       table.hline(stroke: 0.5pt),
@@ -47,35 +47,18 @@
       [`norm_only`], [$bold(+0.41)$], [$approx 0$], [$+1.30$], [$bold(+0.94)$], [$bold(+2.35)$], [$-6.95$], [$bold(+1.08)$], [$-1.04$],
       [`all_free`], [$+0.14$], [$-0.81$], [$+0.99$], [$+0.25$], [$+0.16$], [$-2.90$], [$-1.16$], [$bold(+1.44)$],
       table.hline(stroke: 0.5pt),
-      table.cell(rowspan: 4)[antipodal], table.cell(rowspan: 4)[sph], [`all_off`], [$50.2$], [$45.1$], [$46.8$], [$82.3$], [$80.7$], [$29.3$], [$56.8$], [$66.3$],
-      [`centering_only`], [$bold(+1.34)$], [$+0.40$], [$bold(+0.38)$], [$-0.38$], [$+6.74$], [$bold(+0.88)$], [$bold(+1.25)$], [$+2.14$],
-      [`global_only`], [$+1.13$], [$+0.08$], [$-0.13$], [$-1.28$], [$bold(+9.80)$], [$+0.46$], [$-0.56$], [$bold(+4.02)$],
-      [`all_free`], [$+0.52$], [$bold(+0.47)$], [$-0.29$], [$-2.34$], [$+5.92$], [$+0.20$], [$-1.18$], [$+2.70$],
-      table.hline(stroke: 0.2pt, start: 1),
-      table.cell(rowspan: 5)[#text(fill: luma(40%))[antipodal]], table.cell(rowspan: 5)[euc], [`all_off`], [$53.9$], [$46.3$], [$47.7$], [$93.5$], [$86.5$], [$31.2$], [$66.4$], [$66.4$],
-      [`centering_only`], [$bold(+0.15)$], [$+0.11$], [$bold(+0.05)$], [$bold(+0.16)$], [$+0.16$], [$+0.01$], [$+0.12$], [$+0.12$],
-      [`global_only`], [$-0.08$], [$+0.26$], [$-1.42$], [$+0.15$], [$+0.15$], [$-0.01$], [$-0.17$], [$-0.17$],
-      [`norm_only`], [$+0.05$], [$+0.01$], [$-0.21$], [$+0.14$], [$+0.14$], [$-0.01$], [$+0.02$], [$+0.02$],
-      [`all_free`], [$+0.14$], [$bold(+0.61)$], [$-0.29$], [$+0.15$], [$bold(+0.22)$], [$bold(+0.06)$], [$bold(+0.15)$], [$bold(+0.15)$],
-      table.hline(stroke: 0.2pt, start: 1),
-      table.cell(rowspan: 5)[#text(fill: luma(40%))[antipodal]], table.cell(rowspan: 5)[hyp], [`all_off`], [$51.9$], [$45.0$], [$47.5$], [$82.6$], [$87.7$], [$30.2$], [$61.2$], [$66.4$],
-      [`centering_only`], [$bold(+1.13)$], [$-0.18$], [$-0.28$], [$bold(+6.49)$], [$bold(+1.76)$], [$bold(+0.52)$], [$bold(+2.81)$], [$bold(+0.77)$],
-      [`global_only`], [$-0.85$], [$-0.36$], [$-0.47$], [$-2.98$], [$-0.58$], [$-0.42$], [$-1.39$], [$-0.70$],
-      [`norm_only`], [$+0.28$], [$-0.87$], [$-0.28$], [$+1.07$], [$+1.50$], [$+0.27$], [$+0.67$], [$+0.04$],
-      [`all_free`], [$+0.10$], [$-0.74$], [$-0.68$], [$+4.43$], [$+0.04$], [$+0.11$], [$+1.30$], [$+0.37$],
-      table.hline(stroke: 0.5pt),
-      table.cell(rowspan: 4)[tree], table.cell(rowspan: 4)[sph], [`all_off`], [$78.6$], [$43.3$], [$49.9$], [$167$], [$118$], [$43.8$], [$90.6$], [$95.9$],
+      table.cell(rowspan: 4)[tree (layout)], table.cell(rowspan: 4)[sph], [`all_off`], [$78.6$], [$43.3$], [$49.9$], [$167$], [$118$], [$43.8$], [$90.6$], [$95.9$],
       [`centering_only`], [$-2.05$], [$-1.04$], [$-0.99$], [$-6.66$], [$-0.91$], [$-1.00$], [$-4.65$], [$-0.30$],
       [`global_only`], [$-0.64$], [$-0.27$], [$-0.33$], [$-1.59$], [$-0.90$], [$-0.28$], [$-1.22$], [$-0.31$],
       [`all_free`], [$-1.45$], [$-0.68$], [$-0.66$], [$-5.16$], [$-0.08$], [$-0.75$], [$-3.41$], [$-0.04$],
       table.hline(stroke: 0.2pt, start: 1),
-      table.cell(rowspan: 5)[#text(fill: luma(40%))[tree]], table.cell(rowspan: 5)[euc], [`all_off`], [$80.9$], [$44.4$], [$51.0$], [$175$], [$118$], [$45.0$], [$96.1$], [$96.1$],
+      table.cell(rowspan: 5)[#text(fill: luma(40%))[tree (layout)]], table.cell(rowspan: 5)[euc], [`all_off`], [$80.9$], [$44.4$], [$51.0$], [$175$], [$118$], [$45.0$], [$96.1$], [$96.1$],
       [`centering_only`], [$+0.01$], [$+0.01$], [$+0.07$], [$approx 0$], [$-0.01$], [$+0.02$], [$+0.01$], [$+0.01$],
       [`global_only`], [$-0.16$], [$-0.06$], [$-0.02$], [$-0.11$], [$-0.65$], [$-0.01$], [$-0.19$], [$-0.19$],
       [`norm_only`], [$bold(+15.6)$], [$bold(+8.95)$], [$+7.66$], [$+13.3$], [$bold(+51.8)$], [$+9.10$], [$bold(+19.3)$], [$bold(+19.3)$],
       [`all_free`], [$+15.6$], [$+8.91$], [$bold(+7.67)$], [$bold(+13.3)$], [$+51.8$], [$bold(+9.10)$], [$+19.3$], [$+19.3$],
       table.hline(stroke: 0.2pt, start: 1),
-      table.cell(rowspan: 5)[#text(fill: luma(40%))[tree]], table.cell(rowspan: 5)[hyp], [`all_off`], [$57.7$], [$31.0$], [$36.0$], [$123$], [$82.4$], [$31.7$], [$30.7$], [$95.3$],
+      table.cell(rowspan: 5)[#text(fill: luma(40%))[tree (layout)]], table.cell(rowspan: 5)[hyp], [`all_off`], [$57.7$], [$31.0$], [$36.0$], [$123$], [$82.4$], [$31.7$], [$30.7$], [$95.3$],
       [`centering_only`], [$-7.10$], [$-5.26$], [$-3.79$], [$-6.69$], [$-19.9$], [$-4.35$], [$-19.5$], [$-2.84$],
       [`global_only`], [$+0.45$], [$+0.28$], [$+0.23$], [$-0.32$], [$+2.44$], [$+0.26$], [$-0.27$], [$+1.35$],
       [`norm_only`], [$+2.08$], [$+1.24$], [$bold(+1.12)$], [$+1.83$], [$+6.27$], [$bold(+0.82)$], [$bold(+0.71)$], [$+4.19$],
@@ -115,11 +98,11 @@
     resolution printed here, where the front barely moved and the sign carries nothing.
 
     The columns are the weight sets of @preference-regions: $W_"all"$ is the full simplex and
-    is the only one under which $Delta R_2$ is a claim about overall front quality; the five
-    per-metric regions hold the weight vectors placing at least half their mass on that
-    metric's two objectives; $W_"man"$ and $W_"proj"$ hold those supported entirely on the
-    five manifold, respectively the five projected, objectives.  A setting that helps under
-    one priority and costs under another is visible as a sign change along its row.
+    is the only one under which $Delta R_2$ is a claim about overall front quality.  The
+    remaining columns each hold the weight vectors placing at least half their mass on a
+    stated part of the objective space -- the three *family* columns on that family's two
+    objectives, the six *per-objective* columns on that one objective.  A setting that helps
+    under one priority and costs under another is visible as a sign change along its row.
 
     `norm_only` is absent from every spherical block because the depth-norm loss is
     undefined on the sphere (@norm-loss).  `rms_anchored` is not an ablation of a loss term

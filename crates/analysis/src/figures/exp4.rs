@@ -45,7 +45,8 @@ use plotters::style::text_anchor::{HPos, Pos, VPos};
 
 use super::{
     binned_median, draw_legend, geometry_color, log_tick, padded_log_range, padded_range,
-    snap_to_decades, CellMap, Figure, LegendEntry, Res, CURVED, METRIC_PAIRS, OK_BLACK,
+    snap_to_decades, CellMap, Figure, LegendEntry, ObjectiveSpace, Res, CURVED, METRIC_PAIRS,
+    OK_BLACK,
 };
 use crate::objectives::{oriented_value, N_METRIC_PAIRS};
 use crate::pareto::pareto_front_records;
@@ -306,7 +307,7 @@ pub struct ProjGap {
 }
 
 impl ProjGap {
-    pub fn new(cells: &CellMap, n: usize) -> Self {
+    pub fn new(cells: &CellMap, n: usize, space: ObjectiveSpace) -> Self {
         let mut points: [Vec<GapPoint>; CURVED.len()] = Default::default();
         for (key, recs) in cells {
             if key.n != n {
@@ -315,7 +316,7 @@ impl ProjGap {
             let Some(slot) = CURVED.iter().position(|g| *g == key.geometry) else {
                 continue;
             };
-            for r in pareto_front_records(recs) {
+            for r in pareto_front_records(recs, space) {
                 // A non-positive or absent κ cannot be placed on the log axis.
                 let Some(kappa) = r.kappa().filter(|k| k.is_finite() && *k > 0.0) else {
                     continue;

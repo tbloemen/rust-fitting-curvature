@@ -37,12 +37,17 @@ pub const GEOMETRIES: [&str; 3] = ["euclidean", "hyperbolic", "spherical"];
 ///
 /// The real datasets are deliberately absent: their geometry is the question,
 /// not the given.
-pub const SYNTH_TRUTH: [(&str, &str); 12] = [
+pub const SYNTH_TRUTH: [(&str, &str); 11] = [
     // The original suite. Unchanged generators, so the results already under
-    // `results/` stay valid for these five.
+    // `results/` stay valid for these four.
+    //
+    // `antipodal_clusters` was the fifth and is **retired**: dropped from the
+    // sweep grid in 7ed38aa and from the reported set here, so nothing in the
+    // analysis tables or figures carries it any more. Its generator and its
+    // cells under `results/` both survive — retiring a dataset stops it being
+    // reported, it does not delete anything.
     ("grid", "euclidean"),
     ("sphere", "spherical"),
-    ("antipodal_clusters", "spherical"),
     ("tree", "hyperbolic"),
     ("hyperbolic_shells", "hyperbolic"),
     // A tree metric, not a manifold. "hyperbolic" here means the geometry that
@@ -60,6 +65,27 @@ pub const SYNTH_TRUTH: [(&str, &str); 12] = [
     ("ball9_spherical", "spherical"),
     ("ball9_hyperbolic", "hyperbolic"),
 ];
+
+/// Datasets no analysis output reports, whatever is still on disk.
+///
+/// `antipodal_clusters` was dropped from the sweep grid in commit 7ed38aa and
+/// retired from the reported set here. Its ~30 cells are still under
+/// `results/` and its generator still exists — retiring a dataset stops it
+/// being *reported*, it deletes nothing, and pointing `--results-dir` at an
+/// archive still finds the files.
+///
+/// Applied in [`discover_cells`], which is the single door every stage walks
+/// through, so one entry retires a dataset from the stage-1 table, ΔR2, the
+/// ε-indicator, the recommendations, Experiment 1 and every figure at once.
+/// Filtering per output instead is what left the Experiment 4 bar charts
+/// drawing a dataset the tables had already dropped.
+pub const RETIRED_DATASETS: [&str; 1] = ["antipodal_clusters"];
+
+/// Whether *dataset* is retired from the analysis — see [`RETIRED_DATASETS`].
+#[must_use]
+pub fn is_retired(dataset: &str) -> bool {
+    RETIRED_DATASETS.contains(&dataset)
+}
 
 /// The geometry `dataset` is built to have, or `None` for a real dataset (or
 /// any name not in [`SYNTH_TRUTH`]).
@@ -211,8 +237,9 @@ pub struct CellFile {
 
 /// Every trial-results JSONL under *`results_dir`*, with its parsed cell.
 ///
-/// Front files (`*_pareto_*.json`) and anything whose stem doesn't parse as a
-/// cell are skipped. Sorted by stem so the output order is stable.
+/// Front files (`*_pareto_*.json`), anything whose stem doesn't parse as a
+/// cell, and cells of a [`RETIRED_DATASETS`] dataset are skipped. Sorted by
+/// stem so the output order is stable.
 ///
 /// # Errors
 ///
@@ -228,6 +255,9 @@ pub fn discover_cells(results_dir: &Path) -> Result<Vec<CellFile>> {
             continue;
         };
         if let Some((cell, variant)) = parse_cell_stem_variant(stem) {
+            if is_retired(&cell.dataset) {
+                continue;
+            }
             out.push(CellFile {
                 stem: stem.to_string(),
                 path: path.clone(),

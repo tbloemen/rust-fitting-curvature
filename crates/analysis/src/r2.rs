@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::objectives::{oriented_matrix, FAMILIES, N_OBJECTIVES, OBJECTIVES};
+use crate::objectives::{oriented_matrix, ObjectiveSpace, Row, FAMILIES, METRIC_PAIRS};
 use crate::pareto::pareto_front_mask;
 use crate::records::TrialRecord;
 
@@ -48,20 +48,18 @@ pub struct Region {
 /// methods chapter.
 #[derive(Debug, Clone)]
 pub struct Weights {
+    /// The space these weights are enumerated over. Fronts scored against them
+    /// must be oriented in the same one, which is what makes the width of a
+    /// vector and the width of a row agree.
+    pub space: ObjectiveSpace,
     /// Granularity of the enumeration: every `λ_j` is a multiple of `1 / s`.
     pub s: usize,
     /// Integer counts summing to `s`, one per weight vector.
-    pub counts: Vec<[u8; N_OBJECTIVES]>,
+    pub counts: Vec<Vec<u8>>,
     /// The same vectors as `λ_j = l_j / s`.
-    pub vectors: Vec<[f64; N_OBJECTIVES]>,
-    /// `all`, one per family, then one per objective — in that order.
+    pub vectors: Vec<Row>,
+    /// The preference regions, in report order — see [`build_regions`].
     pub regions: Vec<Region>,
-}
-
-impl Default for Weights {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl Weights {
@@ -78,8 +76,8 @@ impl Weights {
     ///
     /// For six objectives at `s = 5` this is `C(10, 5) = 252` vectors.
     #[must_use]
-    pub fn new() -> Self {
-        Self::with_resolution(Self::DEFAULT_S)
+    pub fn new(space: ObjectiveSpace) -> Self {
+        Self::with_resolution(space, Self::DEFAULT_S)
     }
 
     /// Enumerate the simplex at an arbitrary granularity.
@@ -91,19 +89,22 @@ impl Weights {
     ///
     /// Panics if `s` is outside `1..=255`.
     #[must_use]
-    pub fn with_resolution(s: usize) -> Self {
+    pub fn with_resolution(space: ObjectiveSpace, s: usize) -> Self {
         assert!(
             (1..=usize::from(u8::MAX)).contains(&s),
             "simplex resolution {s} must be in 1..=255"
         );
-        let counts =
-            enumerate_simplex(u8::try_from(s).expect("resolution is asserted 1..=255 above"));
-        let vectors: Vec<[f64; N_OBJECTIVES]> = counts
+        let counts = enumerate_simplex(
+            space.len(),
+            u8::try_from(s).expect("resolution is asserted 1..=255 above"),
+        );
+        let vectors: Vec<Row> = counts
             .iter()
-            .map(|c| c.map(|l| f64::from(l) / count_to_f64(s)))
+            .map(|c| c.iter().map(|&l| f64::from(l) / count_to_f64(s)).collect())
             .collect();
-        let regions = build_regions(&counts, s);
+        let regions = build_regions(space, &counts, s);
         Self {
+            space,
             s,
             counts,
             vectors,
@@ -127,22 +128,17 @@ impl Weights {
 /// (1, 0, 1)
 /// (1, 1, 0
 /// (2, 0, 0)
-fn enumerate_simplex(s: u8) -> Vec<[u8; N_OBJECTIVES]> {
+fn enumerate_simplex(n: usize, s: u8) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
-    let mut counts = [0u8; N_OBJECTIVES];
+    let mut counts = vec![0u8; n];
     fill(0, s, &mut counts, &mut out);
     out
 }
 
-fn fill(
-    dim: usize,
-    remaining: u8,
-    counts: &mut [u8; N_OBJECTIVES],
-    out: &mut Vec<[u8; N_OBJECTIVES]>,
-) {
-    if dim == N_OBJECTIVES - 1 {
+fn fill(dim: usize, remaining: u8, counts: &mut Vec<u8>, out: &mut Vec<Vec<u8>>) {
+    if dim == counts.len() - 1 {
         counts[dim] = remaining;
-        out.push(*counts);
+        out.push(counts.clone());
         return;
     }
     for l in 0..=remaining {
@@ -152,47 +148,149 @@ fn fill(
     counts[dim] = 0;
 }
 
-/// The preference regions: the whole simplex, one per family, one per objective.
+/// Name of the region supported entirely on the manifold objectives, and its
+/// projected twin. [`ObjectiveSpace::Legacy10`] only — the current space has no
+/// manifold axes to separate.
+pub const REGION_MANIFOLD: &str = "manifold";
+pub const REGION_PROJECTED: &str = "projected";
+
+/// The preference regions of *space*, in report order.
 ///
-/// Both the family and the single-objective regions use the same "at least half
-/// the mass" rule, which at `s = 5` means an integer count of 3 or more. Over
-/// the 252 vectors of the 6-objective simplex that admits 66 for a
-/// two-objective family — which all three now are — and 21 for a single
-/// objective. `test_r2.rs` pins all of them.
+/// The two spaces do not share a region set, and cannot: a region is a subset
+/// of a simplex whose dimension is the space's.
 ///
-/// The families are *not* defined as "supported entirely on" their objectives,
-/// the way the old `manifold` / `projected` surface regions were. A family holds
-/// only two objectives, so that rule would admit 6 vectors — too thin for a mean
-/// to say anything. The surface regions could afford it at five objectives each.
-fn build_regions(counts: &[[u8; N_OBJECTIVES]], s: usize) -> Vec<Region> {
+/// * [`ObjectiveSpace::Current6`] — `all`, one per [`FAMILIES`] family, then one
+///   per objective. Both kinds use the same "at least half the mass" rule, which
+///   at `s = 5` means an integer count of 3 or more: over the 252 vectors of the
+///   6-objective simplex that admits 66 for a two-objective family and 21 for a
+///   single objective.
+/// * [`ObjectiveSpace::Legacy10`] — `all`, one per *metric pair* (the vectors
+///   placing at least half their mass on that metric's two objectives, its
+///   projected and manifold readings together), then the two **surface**
+///   regions: the vectors supported entirely on the manifold objectives, and
+///   entirely on the projected ones. This is the set the sweeps under
+///   `results/` were reported under, reconstructed exactly — eight regions, not
+///   thirteen, because a legacy region is per *metric*, never per objective.
+///
+/// The surface regions use "supported entirely on" rather than "at least half":
+/// each holds five objectives, which is wide enough for that rule to admit a
+/// meaningful set. The current space's families hold two, where it would admit
+/// six vectors — too thin for a mean to say anything, which is why they use the
+/// half-mass rule instead.
+fn build_regions(space: ObjectiveSpace, counts: &[Vec<u8>], s: usize) -> Vec<Region> {
     let half = u8::try_from(s.div_ceil(2)).expect("s is at most 255, so half is at most 128"); // 3 of 5: "at least half the mass"
     let mut regions = vec![Region {
         name: REGION_ALL.to_string(),
         indices: (0..counts.len()).collect(),
     }];
 
-    for (name, members) in FAMILIES {
-        regions.push(Region {
-            name: name.to_string(),
-            // `u16` because a family may hold more than two objectives and
-            // `s` can be up to 255; summing `u8` counts in place would wrap.
-            indices: select(counts, |c| {
-                members.iter().map(|&j| u16::from(c[j])).sum::<u16>() >= u16::from(half)
-            }),
-        });
-    }
-
-    for (j, objective) in OBJECTIVES.iter().enumerate() {
-        regions.push(Region {
-            name: objective.name().to_string(),
-            indices: select(counts, |c| c[j] >= half),
-        });
+    match space {
+        ObjectiveSpace::Current6 => {
+            for (name, members) in FAMILIES {
+                regions.push(Region {
+                    name: name.to_string(),
+                    // `u16` because a family may hold more than two objectives
+                    // and `s` can be up to 255; summing `u8` counts in place
+                    // would wrap.
+                    indices: select(counts, |c| {
+                        members.iter().map(|&j| u16::from(c[j])).sum::<u16>() >= u16::from(half)
+                    }),
+                });
+            }
+            for (j, objective) in space.metrics().iter().enumerate() {
+                regions.push(Region {
+                    name: objective.name().to_string(),
+                    indices: select(counts, |c| c[j] >= half),
+                });
+            }
+        }
+        ObjectiveSpace::Legacy10 => {
+            // The interleaving `LEGACY_OBJECTIVES` is built with: metric `i`
+            // owns objectives `2i` (projected) and `2i + 1` (manifold). A
+            // region is named for the *projected* member, which is the metric's
+            // own name.
+            for (i, (projected, _)) in METRIC_PAIRS.iter().enumerate() {
+                let (p, m) = (2 * i, 2 * i + 1);
+                regions.push(Region {
+                    name: projected.name().to_string(),
+                    indices: select(counts, |c| {
+                        u16::from(c[p]) + u16::from(c[m]) >= u16::from(half)
+                    }),
+                });
+            }
+            regions.push(Region {
+                name: REGION_MANIFOLD.to_string(),
+                indices: select(counts, |c| {
+                    c.iter().enumerate().all(|(j, &l)| j % 2 == 1 || l == 0)
+                }),
+            });
+            regions.push(Region {
+                name: REGION_PROJECTED.to_string(),
+                indices: select(counts, |c| {
+                    c.iter().enumerate().all(|(j, &l)| j % 2 == 0 || l == 0)
+                }),
+            });
+        }
     }
 
     regions
 }
 
-fn select(counts: &[[u8; N_OBJECTIVES]], pred: impl Fn(&[u8; N_OBJECTIVES]) -> bool) -> Vec<usize> {
+/// Every region of *space*, as `(name, axis label)`, in the order
+/// [`build_regions`] emits them.
+///
+/// Lives here rather than in the figure that draws them: `r2_bars` used to keep
+/// its own list, and a region added to one and not the other silently mislabels
+/// every bar after it. Now the labels are derived from the same match the
+/// regions are.
+#[must_use]
+pub fn region_labels(space: ObjectiveSpace) -> Vec<(String, String)> {
+    let mut out = vec![(REGION_ALL.to_string(), "W_all".to_string())];
+    match space {
+        ObjectiveSpace::Current6 => {
+            out.extend(
+                FAMILIES
+                    .iter()
+                    .map(|(family, _)| ((*family).to_string(), format!("W_{}", short(family)))),
+            );
+            out.extend(
+                space
+                    .metrics()
+                    .iter()
+                    .map(|m| (m.name().to_string(), format!("W_{}", m.short()))),
+            );
+        }
+        ObjectiveSpace::Legacy10 => {
+            // One region per *metric pair*, named for its projected member,
+            // then the two surface regions.
+            out.extend(
+                METRIC_PAIRS
+                    .iter()
+                    .map(|(p, _)| (p.name().to_string(), format!("W_{}", p.short()))),
+            );
+            out.push((REGION_MANIFOLD.to_string(), "W_man".to_string()));
+            out.push((REGION_PROJECTED.to_string(), "W_proj".to_string()));
+        }
+    }
+    out
+}
+
+/// Abbreviations for the family labels; the full names do not fit an axis.
+///
+/// Only the families need one — a metric carries its own on
+/// `QualityMetric::short`. The fallthrough is a hazard rather than a
+/// convenience: an unabbreviated name renders at full width and overlaps its
+/// neighbours, so every family needs an arm here.
+fn short(family: &str) -> &str {
+    match family {
+        "structure" => "struct",
+        "distance" => "dist",
+        "class_separation" => "class",
+        other => other,
+    }
+}
+
+fn select(counts: &[Vec<u8>], pred: impl Fn(&[u8]) -> bool) -> Vec<usize> {
     counts
         .iter()
         .enumerate()
@@ -218,10 +316,7 @@ pub struct FrontUtility {
 /// An empty front is scored as if it held the single worst point `(0, …, 0)`,
 /// giving `max_j λ_j`. That keeps the indicator total, and a cell whose front is
 /// empty is degenerate anyway.
-pub fn front_utilities(
-    front: &[[f64; N_OBJECTIVES]],
-    weights: &[[f64; N_OBJECTIVES]],
-) -> Vec<FrontUtility> {
+pub fn front_utilities(front: &[Row], weights: &[Row]) -> Vec<FrontUtility> {
     let mut utilities = Vec::with_capacity(weights.len());
 
     for lambda in weights {
@@ -327,9 +422,10 @@ pub struct CellSummary {
 /// Used by the recommendation table, which reports what a recommended
 /// configuration attains on all six objectives alongside its hyperparameters.
 #[must_use]
-pub fn oriented_objectives(record: &TrialRecord) -> BTreeMap<String, f64> {
-    let row = crate::objectives::oriented_row(record);
-    OBJECTIVES
+pub fn oriented_objectives(record: &TrialRecord, space: ObjectiveSpace) -> BTreeMap<String, f64> {
+    let row = crate::objectives::oriented_row(record, space);
+    space
+        .metrics()
         .iter()
         .zip(row)
         .map(|(metric, v)| (metric.name().to_string(), v))
@@ -339,7 +435,9 @@ pub fn oriented_objectives(record: &TrialRecord) -> BTreeMap<String, f64> {
 /// Reduce a cell's trials to its front, then score it under every region.
 #[must_use]
 pub fn cell_summary(records: &[TrialRecord], weights: &Weights) -> CellSummary {
-    let all = oriented_matrix(records);
+    // The space comes off the weights, so a front can only ever be scored
+    // against a simplex of its own dimension.
+    let all = oriented_matrix(records, weights.space);
     let keep = pareto_front_mask(&all);
     let front_idx: Vec<usize> = keep
         .iter()
@@ -347,7 +445,7 @@ pub fn cell_summary(records: &[TrialRecord], weights: &Weights) -> CellSummary {
         .filter(|(_, k)| **k)
         .map(|(i, _)| i)
         .collect();
-    let front: Vec<[f64; N_OBJECTIVES]> = front_idx.iter().map(|&i| all[i]).collect();
+    let front: Vec<Row> = front_idx.iter().map(|&i| all[i].clone()).collect();
 
     let utilities = front_utilities(&front, &weights.vectors);
     let mut r2_by_region = BTreeMap::new();

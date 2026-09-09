@@ -5,7 +5,7 @@
 //! the ΔR2 sign convention.
 
 use fitting_analysis::cell::{truth_of, GEOMETRIES, SYNTH_TRUTH};
-use fitting_analysis::objectives::N_OBJECTIVES;
+use fitting_analysis::objectives::{ObjectiveSpace, Row};
 use fitting_analysis::r2::{front_utilities, r2, Weights};
 use fitting_analysis::TrialRecord;
 
@@ -85,7 +85,6 @@ fn truth_covers_the_optimizer_synthetic_set() {
     // silently drop a dataset from the table rather than failing.
     for dataset in [
         "sphere",
-        "antipodal_clusters",
         "tree",
         "hyperbolic_shells",
         "grid",
@@ -119,8 +118,8 @@ fn truth_covers_the_optimizer_synthetic_set() {
 
 // ─── The ΔR2 sign convention ─────────────────────────────────────────────────
 
-fn point(fill: f64) -> [f64; N_OBJECTIVES] {
-    [fill; N_OBJECTIVES]
+fn point(fill: f64) -> Row {
+    vec![fill; ObjectiveSpace::Current6.len()]
 }
 
 /// ΔR2 is formed baseline-minus-row because R2 is a cost, so a *lower* R2 for
@@ -129,7 +128,7 @@ fn point(fill: f64) -> [f64; N_OBJECTIVES] {
 /// backwards.
 #[test]
 fn delta_r2_is_positive_when_the_row_beats_the_baseline() {
-    let weights = Weights::new();
+    let weights = Weights::new(ObjectiveSpace::Current6);
 
     // A better front: every objective higher, so its R2 is lower.
     let good = vec![point(0.9)];

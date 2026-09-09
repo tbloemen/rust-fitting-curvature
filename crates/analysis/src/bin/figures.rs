@@ -1,4 +1,4 @@
-//! Thesis results figures (Experiments 2–5) from the qParEGO sweeps.
+//! Thesis results figures (Experiments 1–5) from the qParEGO sweeps.
 //!
 //! Rust port of `analyze_experiments.py`. Local-only: this is the one part of
 //! the analysis that needs plotters (and therefore a system font stack), which
@@ -9,13 +9,16 @@
 //! cargo run --release -p fitting-analysis --features plots --bin figures
 //! cargo run --release -p fitting-analysis --features plots --bin figures -- --n 1000
 //! cargo run --release -p fitting-analysis --features plots --bin figures -- --exp 4
+//! cargo run --release -p fitting-analysis --features plots --bin figures -- \
+//!     --exp 1 --exp1-region all structure
 //! ```
 
 use std::path::PathBuf;
 
 use clap::Parser;
 
-use fitting_analysis::figures::{self, exp2, exp3, exp4, exp5, r2_bars, save};
+use fitting_analysis::figures::{self, exp1, exp2, exp3, exp4, exp5, r2_bars, save};
+use fitting_analysis::objectives::ObjectiveSpace;
 use fitting_analysis::Result;
 
 #[derive(Parser, Debug)]
@@ -37,20 +40,39 @@ struct Args {
     n: Vec<usize>,
 
     /// Which experiments to render.
-    #[arg(long, num_args = 1.., default_values_t = [2usize, 3, 4, 5])]
+    #[arg(long, num_args = 1.., default_values_t = [1usize, 2, 3, 4, 5])]
     exp: Vec<usize>,
+
+    /// The Experiment 1 table written by the `exp1` binary, plotted as the
+    /// matched-minus-mismatched gain chart. Absent is not an error — it is a
+    /// separate `exp1` run — and the chart is then simply not written.
+    #[arg(long)]
+    exp1: Option<PathBuf>,
+
+    /// Preference regions to draw Experiment 1's gain chart for, one figure
+    /// each. The same choice `scripts/exp1_r2_typst.py --region` makes for the
+    /// table, and the same default.
+    #[arg(long, num_args = 1.., default_values_t = ["all".to_string()])]
+    exp1_region: Vec<String>,
 
     /// Lowest κ in Exp 4's zoomed gap figure, which is written alongside the
     /// full one. Set to 0 to skip the zoom.
     #[arg(long, default_value_t = 0.01)]
     gap_zoom_kappa: f64,
 
+    /// Force the objective space instead of reading it off the sweeps. The
+    /// sweeps under `results/` were searched in the 10-objective space
+    /// (projected + manifold) and the re-runs in the current 6-objective one;
+    /// every figure's filename carries the tag, so the two sets never collide.
+    #[arg(long)]
+    objectives: Option<ObjectiveSpace>,
+
     /// The R2 table written by `r2 aggregate --deltas`, plotted as one bar
     /// chart per (dataset, geometry) under `<out-dir>/experiment_4`. Absent is
     /// not an error — it is a separate `r2` run — and the charts are then
     /// simply not written.
-    #[arg(long, default_value = "results/r2_delta.jsonl")]
-    r2_delta: PathBuf,
+    #[arg(long)]
+    r2_delta: Option<PathBuf>,
 }
 
 /// A figure with no data behind it is skipped, not an error: the sweep grid is
@@ -60,29 +82,48 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    let cells = figures::load_all_cells(&args.results_dir)?;
+    let (cells, space) = figures::load_all_cells(&args.results_dir, args.objectives)?;
+
+    // Exp 1 is the one figure built from the stage-2 table rather than from
+    // `cells`: it plots the numbers `@tab:geometry-match-r2` carries, so the
+    // two cannot disagree. A region the table does not carry, like a missing
+    // table, leaves the figure unwritten rather than failing.
+    if args.exp.contains(&1) {
+        let path = args.exp1.clone().unwrap_or_else(|| {
+            PathBuf::from(format!("results/exp1_geometry_match_{}.jsonl", space.tag()))
+        });
+        let rows = exp1::load_rows(&path)?;
+        for n in &args.n {
+            for region in &args.exp1_region {
+                let fig = exp1::MatchedGain::new(&rows, *n, region);
+                if fig.has_data() {
+                    save(&fig, &args.out_dir, space)?;
+                }
+            }
+        }
+    }
 
     if args.exp.contains(&2) {
         for n in &args.n {
             let fig = exp2::StackedFronts::new(&cells, *n);
             if fig.has_data() {
-                save(&fig, &args.out_dir)?;
+                save(&fig, &args.out_dir, space)?;
             }
         }
     }
 
     if args.exp.contains(&3) {
         for n in &args.n {
-            let fig = exp3::KappaScatter::new(&cells, &args.results_dir, *n)?;
+            let fig = exp3::KappaScatter::new(&cells, &args.results_dir, *n, space)?;
             if fig.has_kappa_data() {
-                save(&fig, &args.out_dir)?;
+                save(&fig, &args.out_dir, space)?;
             }
 
             // One small SVG per dataset rather than one wide strip, so the
             // panels can be arranged freely in the report.
-            for fig in exp3::RmsAnchored::panels(&cells, *n) {
+            for fig in exp3::RmsAnchored::panels(&cells, *n, space) {
                 if fig.has_anchored() {
-                    save(&fig, &args.out_dir)?;
+                    save(&fig, &args.out_dir, space)?;
                 }
             }
         }
@@ -94,9 +135,11 @@ fn main() -> Result<()> {
     // is the one plotted — `--n 1000` alone still gets a figure.
     if args.exp.contains(&4) {
         if let Some(n) = args.n.iter().max() {
+            // ρ is a within-cell rank correlation over every trial, not over a
+            // front, so it does not depend on the objective space.
             let fig = exp4::RhoManProj::new(&cells, *n);
             if fig.has_data() {
-                save(&fig, &args.out_dir)?;
+                save(&fig, &args.out_dir, space)?;
             }
         }
 
@@ -110,17 +153,17 @@ fn main() -> Result<()> {
         // curved half of the sweep actually lives. Both are kept — the zoom
         // excludes real front points, and the reader should be able to see what.
         for n in &args.n {
-            let fig = exp4::ProjGap::new(&cells, *n);
+            let fig = exp4::ProjGap::new(&cells, *n, space);
             if fig.has_data() {
-                save(&fig, &args.out_dir)?;
+                save(&fig, &args.out_dir, space)?;
             }
 
             // A floor of 0 is "no zoom", not "zoom at zero": with it the zoom
             // would carry the full figure's name and overwrite it.
             if args.gap_zoom_kappa > 0.0 {
-                let zoom = exp4::ProjGap::new(&cells, *n).zoomed(args.gap_zoom_kappa);
+                let zoom = exp4::ProjGap::new(&cells, *n, space).zoomed(args.gap_zoom_kappa);
                 if zoom.has_data() {
-                    save(&zoom, &args.out_dir)?;
+                    save(&zoom, &args.out_dir, space)?;
                 }
             }
         }
@@ -130,25 +173,29 @@ fn main() -> Result<()> {
         // same numbers the thesis table carries, and they go in their own
         // subdirectory: 9 datasets x 3 geometries x 2 N is a lot of files to
         // leave loose among the other figures.
-        let deltas = r2_bars::load_deltas(&args.r2_delta)?;
+        let r2_delta = args
+            .r2_delta
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(format!("results/r2_delta_{}.jsonl", space.tag())));
+        let deltas = r2_bars::load_deltas(&r2_delta)?;
         let bars_dir = args.out_dir.join("experiment_4");
         for n in &args.n {
-            for fig in r2_bars::R2Bars::panels(&deltas, *n) {
-                save(&fig, &bars_dir)?;
+            for fig in r2_bars::R2Bars::panels(&deltas, *n, space) {
+                save(&fig, &bars_dir, space)?;
             }
         }
     }
 
     if args.exp.contains(&5) {
         for n in &args.n {
-            let fig = exp5::FrontGrid::new(&cells, *n);
+            let fig = exp5::FrontGrid::new(&cells, *n, space);
             if fig.has_data() {
-                save(&fig, &args.out_dir)?;
+                save(&fig, &args.out_dir, space)?;
             }
 
-            let fig = exp5::Marginals::new(&cells, *n);
+            let fig = exp5::Marginals::new(&cells, *n, space);
             if fig.has_data() {
-                save(&fig, &args.out_dir)?;
+                save(&fig, &args.out_dir, space)?;
             }
         }
     }

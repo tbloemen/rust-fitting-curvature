@@ -33,6 +33,7 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 
 use fitting_analysis::cell::{discover_cells, truth_of};
+use fitting_analysis::objectives::{resolve_space, ObjectiveSpace};
 use fitting_analysis::r2::{cell_summary, Weights};
 use fitting_analysis::stats;
 use fitting_analysis::{load_jsonl, trial_records, write_jsonl, Error, Result};
@@ -72,8 +73,16 @@ struct Args {
     #[arg(long)]
     wilson_fallback: bool,
 
-    #[arg(long, default_value = "results/exp1_geometry_match.jsonl")]
-    out: PathBuf,
+    /// Output JSONL. Defaults to
+    /// `results/exp1_geometry_match_<space>.jsonl` — the objective space is in
+    /// the name because a legacy-scored table and a re-run one are not
+    /// comparable and must not overwrite each other.
+    #[arg(long)]
+    out: Option<PathBuf>,
+
+    /// Force the objective space instead of reading it off the sweeps.
+    #[arg(long)]
+    objectives: Option<ObjectiveSpace>,
 }
 
 // ─── Input: the detection table ──────────────────────────────────────────────
@@ -163,6 +172,10 @@ struct Exp1Row {
     dataset: String,
     n: usize,
     setting: String,
+    /// The objective space the R2 values were computed in
+    /// (`ObjectiveSpace::tag`). Every consumer reads it: a gain formed from
+    /// legacy R2 and one formed from current R2 are different quantities.
+    space: &'static str,
     geometry: String,
     /// The geometry the dataset is built to have (`cell::SYNTH_TRUTH`).
     truth: &'static str,
@@ -216,7 +229,8 @@ fn main() -> Result<()> {
         detect_by_key.insert((d.dataset.clone(), d.n_samples), d);
     }
 
-    let weights = Weights::new();
+    let space = resolve_space(&cells, args.objectives)?;
+    let weights = Weights::new(space);
 
     // Pass 1: score every cell of interest. Cells are walked in
     // `discover_cells` order (sorted by stem) so the output is byte-identical
@@ -286,6 +300,7 @@ fn main() -> Result<()> {
             dataset: dataset.clone(),
             n: *n,
             setting: args.setting.clone(),
+            space: space.tag(),
             geometry: geometry.clone(),
             truth,
             matched: truth == geometry,
@@ -301,7 +316,12 @@ fn main() -> Result<()> {
         });
     }
 
-    write_jsonl(&args.out, &rows)
+    write_jsonl(
+        args.out.unwrap_or_else(|| {
+            PathBuf::from(format!("results/exp1_geometry_match_{}.jsonl", space.tag()))
+        }),
+        &rows,
+    )
 }
 
 /// This row's Wilson arm, taken from the detection record for its dataset.

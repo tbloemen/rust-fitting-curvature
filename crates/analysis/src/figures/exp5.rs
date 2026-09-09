@@ -7,8 +7,8 @@ use plotters::prelude::*;
 use super::exp3::{draw_histogram, log_histogram, Bin};
 use super::{
     convex_lower_hull, draw_legend, finite_xy, geometry_color, log_tick, padded_log_range,
-    padded_range, snap_to_decades, CellMap, Figure, LegendEntry, Res, GEOMETRIES, OK_BLACK,
-    REAL_DATASETS, X_LABEL, X_METRIC, Y_LABEL, Y_METRIC,
+    padded_range, snap_to_decades, CellMap, Figure, LegendEntry, ObjectiveSpace, Res, GEOMETRIES,
+    OK_BLACK, REAL_DATASETS, X_LABEL, X_METRIC, Y_LABEL, Y_METRIC,
 };
 use crate::cell::Cell;
 use crate::pareto::pareto_front_records;
@@ -19,18 +19,20 @@ use crate::style_mesh;
 pub struct FrontGrid<'a> {
     cells: &'a CellMap,
     n: usize,
+    /// The space each cell is reduced to its front in.
+    space: ObjectiveSpace,
 }
 
 impl<'a> FrontGrid<'a> {
     #[must_use]
-    pub fn new(cells: &'a CellMap, n: usize) -> Self {
-        Self { cells, n }
+    pub fn new(cells: &'a CellMap, n: usize, space: ObjectiveSpace) -> Self {
+        Self { cells, n, space }
     }
 
     fn front_xy(&self, dataset: &str, geometry: &str) -> (Vec<f64>, Vec<f64>) {
         let key = Cell::new("all_off", dataset, self.n, geometry);
         match self.cells.get(&key) {
-            Some(recs) => finite_xy(&pareto_front_records(recs), X_METRIC, Y_METRIC),
+            Some(recs) => finite_xy(&pareto_front_records(recs, self.space), X_METRIC, Y_METRIC),
             None => (Vec::new(), Vec::new()),
         }
     }
@@ -133,12 +135,14 @@ const N_BINS: usize = 18;
 pub struct Marginals<'a> {
     cells: &'a CellMap,
     n: usize,
+    /// The space each cell is reduced to its front in.
+    space: ObjectiveSpace,
 }
 
 impl<'a> Marginals<'a> {
     #[must_use]
-    pub fn new(cells: &'a CellMap, n: usize) -> Self {
-        Self { cells, n }
+    pub fn new(cells: &'a CellMap, n: usize, space: ObjectiveSpace) -> Self {
+        Self { cells, n, space }
     }
 
     /// Positive, finite values of one parameter over a cell's Pareto front.
@@ -151,7 +155,7 @@ impl<'a> Marginals<'a> {
         let Some(recs) = self.cells.get(&key) else {
             return Vec::new();
         };
-        pareto_front_records(recs)
+        pareto_front_records(recs, self.space)
             .iter()
             .filter_map(|r| r.param(param))
             .filter(|v| v.is_finite() && *v > 0.0)

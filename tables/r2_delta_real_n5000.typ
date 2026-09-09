@@ -9,7 +9,7 @@
       inset: (x: 2.5pt, y: 3pt),
       table.hline(stroke: 0.8pt),
       table.header(
-        table.cell(rowspan: 2, align: horizon)[*Dataset*], table.cell(rowspan: 2, align: horizon)[*Geom.*], table.cell(rowspan: 2, align: horizon)[*Setting*], table.cell(rowspan: 2, align: horizon + right)[$W_"all"$], table.cell(colspan: 5, align: center)[*Per-metric*], table.cell(colspan: 2, align: center)[*Surface*],
+        table.cell(rowspan: 2, align: horizon)[*Dataset*], table.cell(rowspan: 2, align: horizon)[*Geom.*], table.cell(rowspan: 2, align: horizon)[*Setting*], table.cell(rowspan: 2, align: horizon + right)[$W_"all"$], table.cell(colspan: 2, align: center)[*Family*], table.cell(colspan: 5, align: center)[*Per-objective*],
         [$W_"trust"$], [$W_"cont"$], [$W_"stress"$], [$W_"shep"$], [$W_"nh"$], [$W_"man"$], [$W_"proj"$],
       ),
       table.hline(stroke: 0.5pt),
@@ -98,11 +98,11 @@
     resolution printed here, where the front barely moved and the sign carries nothing.
 
     The columns are the weight sets of @preference-regions: $W_"all"$ is the full simplex and
-    is the only one under which $Delta R_2$ is a claim about overall front quality; the five
-    per-metric regions hold the weight vectors placing at least half their mass on that
-    metric's two objectives; $W_"man"$ and $W_"proj"$ hold those supported entirely on the
-    five manifold, respectively the five projected, objectives.  A setting that helps under
-    one priority and costs under another is visible as a sign change along its row.
+    is the only one under which $Delta R_2$ is a claim about overall front quality.  The
+    remaining columns each hold the weight vectors placing at least half their mass on a
+    stated part of the objective space -- the three *family* columns on that family's two
+    objectives, the six *per-objective* columns on that one objective.  A setting that helps
+    under one priority and costs under another is visible as a sign change along its row.
 
     `norm_only` is absent from every spherical block because the depth-norm loss is
     undefined on the sphere (@norm-loss).  `rms_anchored` is not an ablation of a loss term

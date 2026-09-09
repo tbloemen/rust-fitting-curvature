@@ -1,8 +1,13 @@
-//! Thesis results figures (Experiments 2–5) from the qParEGO sweeps.
+//! Thesis results figures (Experiments 1–5) from the qParEGO sweeps.
 //!
 //! Port of `analyze_experiments.py`. Produces the figures the results chapter
 //! marks with `// TODO: figure:` in `docs/thesis/sections/5results.typ`:
 //!
+//! * **Exp 1** (`geometry-match`) — the matched-minus-mismatched R2 gain, one
+//!   group per synthetic dataset, one bar per mismatched embedding geometry.
+//!   The figure companion to `@tab:geometry-match-r2`, read back from the same
+//!   JSONL. Unlike the others this one comes from the stage-2 table rather than
+//!   from `cells`, so it and the thesis table cannot disagree.
 //! * **Exp 2** (`ablation-results`) — stacked Pareto fronts, one panel per
 //!   (dataset, geometry), one curve per loss-weight setting.
 //! * **Exp 3** (`curvature-magnitude-results`) — median Pareto-front
@@ -23,6 +28,7 @@
 //!
 //! κ uses **`R_rms`** (`r_rms`), not `R_max` — the thesis definition.
 
+pub mod exp1;
 pub mod exp2;
 pub mod exp3;
 pub mod exp4;
@@ -39,6 +45,7 @@ use plotters::style::text_anchor::{HPos, Pos, VPos};
 
 use crate::cell::{discover_cells, Cell, SYNTH_TRUTH};
 use crate::error::{Error, IoContext, Result};
+use crate::objectives::{resolve_space, ObjectiveSpace};
 use crate::pareto::pareto_front_records;
 use crate::records::{load_jsonl, trial_records, TrialRecord};
 use crate::stats::{median, quantile};
@@ -164,9 +171,13 @@ pub trait Figure {
 /// # Errors
 ///
 /// Returns errors from directory creation, backend creation, or drawing.
-pub fn save<F: Figure>(fig: &F, out_dir: &Path) -> Result<()> {
+pub fn save<F: Figure>(fig: &F, out_dir: &Path, space: ObjectiveSpace) -> Result<()> {
     std::fs::create_dir_all(out_dir).at(out_dir)?;
-    let name = fig.name();
+    // The objective-space tag is applied here rather than by each `name()`, so
+    // no figure can forget it. Two runs over differently-scored sweeps then
+    // write two sets of files instead of one overwriting the other — the same
+    // rule the JSONL tables follow.
+    let name = format!("{}_{}", fig.name(), space.tag());
     let size = fig.size();
 
     let svg_path = out_dir.join(format!("{name}.svg"));
@@ -326,12 +337,29 @@ where
 /// # Errors
 ///
 /// Propagates errors from [`discover_cells`] and [`trial_records`].
-pub fn load_all_cells(results_dir: &Path) -> Result<CellMap> {
+/// Map every (setting, dataset, n, geometry) to its trial records, with the
+/// objective space they were all written in.
+///
+/// *forced* is the `--objectives` override; `None` reads the space off the
+/// sweeps. The space comes back with the cells because every figure that
+/// reduces a cell to its Pareto front needs it — the front is a different set
+/// in each space, not a rescaling of one.
+///
+/// # Errors
+///
+/// Propagates errors from [`discover_cells`], [`trial_records`] and
+/// [`resolve_space`].
+pub fn load_all_cells(
+    results_dir: &Path,
+    forced: Option<ObjectiveSpace>,
+) -> Result<(CellMap, ObjectiveSpace)> {
+    let found = discover_cells(results_dir)?;
+    let space = resolve_space(&found, forced)?;
     let mut cells = CellMap::new();
-    for cf in discover_cells(results_dir)? {
+    for cf in found {
         cells.insert(cf.cell, trial_records(&cf.path)?);
     }
-    Ok(cells)
+    Ok((cells, space))
 }
 
 /// One `kappa_data` row: the data-intrinsic curvature under each fitted geometry.
@@ -391,8 +419,8 @@ pub fn load_kappa_data(results_dir: &Path, n: usize) -> Result<BTreeMap<String, 
 
 /// Median κ over the 10-objective Pareto front of *records*.
 #[must_use]
-pub fn median_front_kappa(records: &[TrialRecord]) -> Option<f64> {
-    let front = pareto_front_records(records);
+pub fn median_front_kappa(records: &[TrialRecord], space: ObjectiveSpace) -> Option<f64> {
+    let front = pareto_front_records(records, space);
     let ks: Vec<f64> = front
         .iter()
         .filter_map(super::records::TrialRecord::kappa)
