@@ -5,7 +5,7 @@
 # TrialConfig::rms_anchored() path exists but was never swept. Only the
 # hyperbolic geometry is meaningful here (rms_anchored gauge-fixes curvature).
 #
-# Covers all 8 datasets (matching submit_all.sh/submit_main.sh), not just the
+# Covers every dataset in slurm/datasets.sh (matching submit_all.sh/submit_main.sh), not just the
 # 4 real ones -- the synthetic hyperbolic fixtures (tree, hyperbolic_shells)
 # and the euclidean/spherical-verdict synthetics all feed the analysis too.
 #
@@ -17,7 +17,8 @@
 
 set -eu
 
-DATASETS="${DATASETS:-mnist fashion_mnist pbmc wordnet_mammals sphere antipodal_clusters tree hyperbolic_shells}"
+. ./slurm/datasets.sh
+DATASETS="${DATASETS:-$DATASETS_ALL}"
 
 for ds in $DATASETS; do
   sbatch \

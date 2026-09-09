@@ -6,6 +6,7 @@
 //! - `distances`: precomputed intrinsic distance matrix (flat n × n)
 
 use crate::cast::{count_to_f64, to_u32, to_usize};
+use crate::graph::{all_pairs_bfs_distances, RootedTree};
 use std::f64::consts::PI;
 
 pub use crate::rng::Rng;
@@ -103,7 +104,13 @@ fn sample_unit_sphere(rng: &mut Rng, dim: usize) -> Vec<f64> {
     v
 }
 
-/// Generate a tree structure in the 2D Poincaré disk.
+/// Lay out tree *levels* as concentric rings in the 2D Poincaré disk.
+///
+/// This is a radial hyperbolic point distribution keyed by depth, **not** a
+/// tree metric: no parent/child relation enters the distances, which are the
+/// continuous hyperbolic ones between ring positions. For the hierarchy
+/// itself see [`generate_tree_graph`].
+///
 /// Returns (`poincaré_coords` [n×2], labels [n]).
 fn poincare_tree_2d(n_samples: usize, rng: &mut Rng) -> (Vec<f64>, Vec<u32>) {
     let max_depth = to_usize(count_to_f64(n_samples).log2().ceil());
@@ -451,7 +458,11 @@ pub fn generate_uniform_hyperbolic(n_samples: usize, seed: u64, max_rho: f64) ->
     }
 }
 
-/// Regular branching tree embedded in hyperbolic space, labels by depth.
+/// Radial hyperbolic layout by tree level, labels by depth (0-4).
+///
+/// Despite the name this measures continuous H² distances between points
+/// placed on concentric rings — it tests a radial distribution, not hierarchy
+/// preservation. [`generate_tree_graph`] is the tree-metric benchmark.
 #[must_use]
 pub fn generate_tree_structured(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
@@ -616,10 +627,15 @@ pub fn generate_hd_antipodal_clusters(n_samples: usize, dim: usize, seed: u64) -
     }
 }
 
-/// Branching tree on H^(dim-1) embedded in R^dim.
-/// The tree structure is generated in a 2D Poincaré disk; extra Poincaré dimensions
-/// receive small noise so the data is non-degenerate in all ambient dimensions.
-/// Labels by depth (0-4).
+/// Radial hyperbolic layout by tree level on H^(dim-1), embedded in R^dim.
+///
+/// Like [`generate_tree_structured`], this is a point distribution rather than
+/// a hierarchy — see [`generate_tree_graph`] for the tree metric. The layout is
+/// built in a 2D Poincaré disk and the extra Poincaré dimensions receive
+/// `0.05·N(0,1)` noise so the data is non-degenerate in all ambient dimensions;
+/// that noise pushes most points outside the unit ball at the deeper levels, so
+/// the rescale below fires for the majority of them and the boundary shell it
+/// produces is largely an artefact of this generator. Labels by depth (0-4).
 ///
 /// # Panics
 ///
@@ -710,6 +726,269 @@ pub fn generate_hd_hyperbolic_shells(n_samples: usize, dim: usize, seed: u64) ->
         distances,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Hierarchy benchmark: a real tree metric
+// ---------------------------------------------------------------------------
+
+/// Rooted `branching`-ary tree carrying its unweighted shortest-path metric.
+///
+/// Unlike [`generate_tree_structured`], the distances here *are* the hierarchy:
+/// `d(u,v) = depth(u) + depth(v) − 2·depth(lca(u,v))`, the number of edges
+/// between two nodes. No manifold is involved and no Riemannian curvature is
+/// claimed — a tree is not a constant-curvature space. Hyperbolic space is a
+/// candidate *representation* of this metric, which is the same footing
+/// `wordnet_mammals` sits on.
+///
+/// `detect_geometry` calls this hyperbolic, as it should: measured at n = 1000
+/// the δ(k) tail slope is 0.000 — a tree metric is exactly 0-hyperbolic. Two
+/// caveats on the numbers beside that verdict. Its `κ_data` reads `0.0100`,
+/// which is `HYPERBOLIC_KAPPA_MIN` exactly and so is the search window's bound
+/// rather than a measurement; and both Wilson arms fit badly (residual ~2e-1),
+/// because a tree is not a constant-curvature manifold and neither model
+/// describes it. The verdict is sound; the curvature magnitude is not a reading.
+///
+/// Shaped like the `WordNet` loader: empty `x`, `ambient_dim: 0`, populated
+/// `distances` and `labels`. Labels are branch membership at depth
+/// `label_level` (see [`RootedTree::branch_labels`]); depth is deliberately not
+/// folded into them and is recoverable with
+/// `RootedTree::complete(n, branching).depths()`.
+///
+/// # Panics
+///
+/// Panics if `n_samples == 0` or `branching < 2`.
+#[must_use]
+pub fn generate_tree_graph(n_samples: usize, branching: usize, label_level: u32) -> DataPoints {
+    let tree = RootedTree::complete(n_samples, branching);
+    let distances = all_pairs_bfs_distances(&tree.adjacency(), n_samples);
+    let labels = tree.branch_labels(label_level);
+
+    DataPoints {
+        // No feature representation: the tree metric drives affinities and
+        // evaluation through `distances`, exactly as for `wordnet_mammals`.
+        x: Vec::new(),
+        n_points: n_samples,
+        ambient_dim: 0,
+        labels,
+        distances,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Matched geodesic balls: one sampling scheme, three geometries
+// ---------------------------------------------------------------------------
+
+/// The shared draw behind [`generate_matched_ball`]: radial quantiles and unit
+/// directions, in one fixed order so every curvature sign consumes the same
+/// random stream.
+fn matched_ball_draw(n_samples: usize, m: usize, seed: u64) -> (Vec<f64>, Vec<f64>) {
+    let mut rng = Rng::new(seed);
+    let mut u = Vec::with_capacity(n_samples);
+    let mut dirs = Vec::with_capacity(n_samples * m);
+    for _ in 0..n_samples {
+        u.push(rng.uniform());
+        dirs.extend_from_slice(&sample_unit_sphere(&mut rng, m));
+    }
+    (u, dirs)
+}
+
+/// A geodesic ball of radius `extent` in the constant-curvature space of the
+/// given sign, sampled so that **geometry is the only difference** between the
+/// three signs.
+///
+/// Given the same `seed` and `intrinsic_dim`, all three signs draw the same
+/// radial quantiles `u_i` and the same unit directions `d_i` — one `Rng`, one
+/// draw order — and then map them into their own manifold. The radial law is
+/// `r_i = extent · u_i^(1/m)`, the Euclidean uniform-in-ball law, used
+/// unchanged in all three. These are *matched sampling distributions*, and
+/// deliberately **not** uniform with respect to each manifold's volume:
+/// sampling each manifold uniformly would put a distributional difference back
+/// alongside the geometric one, which is the confound this family exists to
+/// remove.
+///
+/// Curvature is fixed at `+1 / 0 / −1`, so `extent` is directly in
+/// curvature-radius units and means the same thing in all three.
+///
+/// Coordinate layout, with `m = intrinsic_dim`:
+///
+/// | sign | ambient | coordinates                       | origin        |
+/// |------|---------|-----------------------------------|---------------|
+/// | `0`  | `m`     | `r·d`                             | `0`           |
+/// | `+1` | `m+1`   | `(sin r · d, cos r)` (pole last)  | `e_m`         |
+/// | `−1` | `m+1`   | `(cosh r, sinh r · d)` (time first) | `(1, 0, …)` |
+///
+/// Each satisfies `d(origin, x_i) = r_i` exactly. The pole-last convention on
+/// the sphere matches what `embedding::lift_pca_to_manifold` produces for a
+/// fitted embedding; time-first on the hyperboloid matches
+/// [`poincare_to_hyperboloid_nd`] and the `Hyperboloid` manifold.
+///
+/// Labels combine the direction sector with the radial band, so they are
+/// bit-identical across the three signs.
+///
+/// # Panics
+///
+/// Panics if `intrinsic_dim < 2`, if `extent <= 0`, or if `curvature_sign > 0`
+/// and `extent > PI` (past the antipode the ball stops being a ball).
+#[expect(
+    clippy::many_single_char_names,
+    reason = "m = intrinsic dimension, u = radial quantile, d = unit direction, r = geodesic radius, x = ambient coordinates: the notation of the table above"
+)]
+#[must_use]
+pub fn generate_matched_ball(
+    n_samples: usize,
+    intrinsic_dim: usize,
+    curvature_sign: f64,
+    extent: f64,
+    seed: u64,
+) -> DataPoints {
+    assert!(intrinsic_dim >= 2, "intrinsic_dim must be at least 2");
+    assert!(extent > 0.0, "extent must be positive");
+    assert!(
+        curvature_sign <= 0.0 || extent <= PI,
+        "a spherical ball cannot reach past the antipode: extent must be <= PI"
+    );
+
+    let m = intrinsic_dim;
+    let (u, dirs) = matched_ball_draw(n_samples, m, seed);
+
+    let ambient = if curvature_sign == 0.0 { m } else { m + 1 };
+    let mut x = Vec::with_capacity(n_samples * ambient);
+    let mut labels = Vec::with_capacity(n_samples);
+
+    let inv_m = 1.0 / count_to_f64(m);
+    for i in 0..n_samples {
+        let d = &dirs[i * m..(i + 1) * m];
+        let r = extent * u[i].powf(inv_m);
+
+        if curvature_sign > 0.0 {
+            // Sphere: the constrained coordinate goes in slot 0 as `-cos r`, so
+            // the ball is centred on the SOUTH pole `(-1, 0, …)` — the origin
+            // `Sphere::distances_from_origin` actually measures from.
+            let (sin_r, cos_r) = r.sin_cos();
+            x.push(-cos_r);
+            x.extend(d.iter().map(|dk| sin_r * dk));
+        } else if curvature_sign < 0.0 {
+            // Hyperboloid upper sheet: time component first.
+            x.push(r.cosh());
+            let sinh_r = r.sinh();
+            x.extend(d.iter().map(|dk| sinh_r * dk));
+        } else {
+            x.extend(d.iter().map(|dk| r * dk));
+        }
+
+        // Four direction sectors x two radial bands. Derived from the shared
+        // draw alone, so the three geometries get identical label vectors.
+        let sector = 2 * u32::from(d[0] >= 0.0) + u32::from(d[1] >= 0.0);
+        let band = 4 * u32::from(u[i] >= 0.5);
+        labels.push(band + sector);
+    }
+
+    let distances = if curvature_sign > 0.0 {
+        spherical_distances_nd(&x, n_samples, ambient)
+    } else if curvature_sign < 0.0 {
+        hyperboloid_distances_nd(&x, n_samples, ambient)
+    } else {
+        euclidean_distances(&x, n_samples, ambient)
+    };
+
+    DataPoints {
+        x,
+        n_points: n_samples,
+        ambient_dim: ambient,
+        labels,
+        distances,
+    }
+}
+
+/// The ball radius, in curvature-radius units, the matched family is generated
+/// at.
+///
+/// **This is a compromise, and it is not the value that maximises detectability
+/// on both curved arms — no single value does.** Measured with `detect_geometry`
+/// / `detect_hyperbolic` at n = 500, m = 2, over extents 1.0 … 6.0:
+///
+/// | extent | spherical verdict | fitted `r*` | hyperbolic δ tail slope |
+/// |--------|-------------------|-------------|-------------------------|
+/// | 1.0    | euclidean (pinned)| 0.795       | 0.571                   |
+/// | 1.3    | spherical         | 1.000       | 0.407                   |
+/// | 1.5    | spherical         | 1.000       | 0.377                   |
+/// | 2.5    | spherical         | 1.000       | 0.232                   |
+/// | 4.0    | —  (past π)       | —           | 0.085 → hyperbolic      |
+/// | 6.0    | —  (past π)       | —           | 0.020 → hyperbolic      |
+///
+/// The spherical arm needs `extent > 1.25` for the Wilson radius search to clear
+/// its flat-ward bound (`d_max/`[`SPHERICAL_ANGULAR_MIN`]-equivalent), and wants
+/// `extent < π/2` so that `d_max ≈ 2·extent` stays below π: past that `d_max`
+/// saturates at π, the search window's lower edge climbs to `d_max/π ≈ 1`, and
+/// the true `r* = 1` ends up sitting on it with a margin of ~0.002. The δ(k)
+/// saturation gate, meanwhile, only fires below a slope of 0.15, which needs
+/// `extent ≥ 4`. The two windows do not overlap.
+///
+/// Matching wins, because a shared radius is what the family is *for*: the three
+/// arms must differ in curvature and nothing else. So the value is chosen inside
+/// the spherical window, and `detect_geometry`'s *verdict* on the hyperbolic arm
+/// is then `"euclidean"` — as it already is for `hyperbolic_shells`.
+///
+/// That verdict understates what the detector actually recovers, and the
+/// distinction matters. Measured at n = 1000, extent 1.5, m = 2:
+///
+/// - `ball2_spherical`: verdict spherical, `r* = 1.000`, residual 1.4e-7.
+/// - `ball2_hyperbolic`: verdict euclidean, but the **hyperbolic Wilson arm
+///   fits `r* = 1.000` with residual 2.3e-8** — the signature test identifies
+///   the curvature radius exactly. Only the δ(k) saturation gate declines
+///   (slope 0.396), because a radius-1.5 ball is not tree-like.
+/// - `ball2_euclidean`: verdict euclidean, spherical arm pinned, δ slope 0.508.
+///
+/// So the data *is* exactly H² and the signature residual says so to eight
+/// digits; `detect_geometry` gates hyperbolicity on δ-saturation rather than on
+/// that residual, and saturation needs a radius the sphere cannot match. At this
+/// extent κ = |K|·`R_rms`² ≈ 1.1 (m = 2), well above every real dataset in the
+/// thesis. Detection proper is served by the unmatched controls
+/// (`generate_uniform_hyperbolic(n, seed, 5.0)`), which are free to use a radius
+/// the sphere cannot reach.
+///
+/// Do not raise this to satisfy the hyperbolic gate: it would move all three
+/// arms and break the match.
+///
+/// # The 9-D tier is not a detection fixture, for two independent reasons
+///
+/// Measured at n = 1000, extent 1.5, m = 9 (and reproduced at n = 500 across
+/// every extent from 1.0 to 6.0):
+///
+/// | dataset | verdict | sph `r*` | sph residual | δ slope |
+/// |---------|---------|----------|--------------|---------|
+/// | `ball9_euclidean`  | **hyperbolic** | 1.169 (pinned) | 1.4e-1 | 0.100 |
+/// | `ball9_spherical`  | euclidean      | 0.988          | 8.6e-2 | 0.195 |
+/// | `ball9_hyperbolic` | hyperbolic     | 1.177 (pinned) | 2.0e-1 | 0.047 |
+///
+/// The flat ball, which has exactly zero curvature by construction, is called
+/// hyperbolic. Two separate things break, and neither is a defect in the
+/// generator:
+///
+/// 1. **The signature arms fit a 2-dimensional model.** `detect_geometry` is
+///    called with `dim = 2`, so a 9-dimensional sample cannot conform to it
+///    whatever its curvature: `ball9_spherical`'s radius search lands on
+///    `r* = 0.988`, within 1.2% of the truth, yet its residual is 8.6e-2 —
+///    almost two orders of magnitude above the threshold a spherical verdict
+///    needs. The radius is right and the model is still rejected.
+/// 2. **The δ(k) gate false-positives under concentration.** Uniform directions
+///    on S⁸ pull the pairwise distances together: the coefficient of variation
+///    falls from 0.47 at m = 2 to 0.19 at m = 9. A δ curve that is flat because
+///    every distance is nearly equal is indistinguishable, to the saturation
+///    test, from one that is flat because the space is tree-like. (`grid`
+///    escapes this only because a *cube* has corners, keeping its spread wide
+///    enough for a tail slope of 0.53.)
+///
+/// Both hyperbolic verdicts above also report `κ_data = 0.0100`, which is
+/// `HYPERBOLIC_KAPPA_MIN` exactly — the flat-ward edge of the search window,
+/// i.e. a bound rather than a measurement.
+///
+/// The consequence is a scope limit, not a fix: the 9-D tier is a
+/// **dimension-reduction** fixture for the geometry-matching experiment, where
+/// the truth is known by construction, and it must not be read as a curvature
+/// detection benchmark. The 2-D tier is the one whose geometry the detector
+/// recovers.
+pub const MATCHED_BALL_EXTENT: f64 = 1.5;
 
 // ---------------------------------------------------------------------------
 // Higher-dimensional generators (for curvature detection experiments)
@@ -915,6 +1194,13 @@ pub const DATASET_NAMES: &[&str] = &[
     "uniform_hyperbolic",
     "tree_structured",
     "hyperbolic_shells",
+    "tree_graph",
+    "ball2_euclidean",
+    "ball2_spherical",
+    "ball2_hyperbolic",
+    "ball9_euclidean",
+    "ball9_spherical",
+    "ball9_hyperbolic",
 ];
 
 /// Load a synthetic dataset by name (2D/3D frontend generators).
@@ -933,6 +1219,49 @@ pub fn load_synthetic(name: &str, n_samples: usize, seed: u64) -> Result<DataPoi
         "uniform_hyperbolic" => Ok(generate_uniform_hyperbolic(n_samples, seed, 3.0)),
         "tree_structured" => Ok(generate_tree_structured(n_samples, seed)),
         "hyperbolic_shells" => Ok(generate_hyperbolic_shells(n_samples, seed)),
+        "tree_graph" => Ok(generate_tree_graph(n_samples, 2, 3)),
+        "ball2_euclidean" => Ok(generate_matched_ball(
+            n_samples,
+            2,
+            0.0,
+            MATCHED_BALL_EXTENT,
+            seed,
+        )),
+        "ball2_spherical" => Ok(generate_matched_ball(
+            n_samples,
+            2,
+            1.0,
+            MATCHED_BALL_EXTENT,
+            seed,
+        )),
+        "ball2_hyperbolic" => Ok(generate_matched_ball(
+            n_samples,
+            2,
+            -1.0,
+            MATCHED_BALL_EXTENT,
+            seed,
+        )),
+        "ball9_euclidean" => Ok(generate_matched_ball(
+            n_samples,
+            9,
+            0.0,
+            MATCHED_BALL_EXTENT,
+            seed,
+        )),
+        "ball9_spherical" => Ok(generate_matched_ball(
+            n_samples,
+            9,
+            1.0,
+            MATCHED_BALL_EXTENT,
+            seed,
+        )),
+        "ball9_hyperbolic" => Ok(generate_matched_ball(
+            n_samples,
+            9,
+            -1.0,
+            MATCHED_BALL_EXTENT,
+            seed,
+        )),
         _ => Err(format!(
             "Unknown synthetic dataset: {name}. Available: {DATASET_NAMES:?}"
         )),

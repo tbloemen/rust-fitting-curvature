@@ -25,6 +25,12 @@
 //!
 //! * **`front`** — recompute a cell's Pareto front in the optimizer's
 //!   `*_pareto_*.json` schema, for the cells whose sweep predates front writing.
+//!
+//! * **`reference`** — the per-objective attainment table: for each cell, the
+//!   best and median value the front reaches on each objective separately, and
+//!   beside them the value the dataset's *ground-truth source configuration*
+//!   reaches (from `optimizer --mode reference`), where one exists. This is the
+//!   per-objective best-attainable table the methods chapter specifies.
 
 use fitting_core::cast::count_to_f64;
 use std::collections::BTreeMap;
@@ -74,6 +80,9 @@ enum Command {
     Recommend(RecommendArgs),
     /// Recompute Pareto fronts in the optimizer's `*_pareto_*.json` schema.
     Front(FrontArgs),
+    /// Per-objective attainment of each front, beside the ground-truth
+    /// reference configuration where one exists.
+    Reference(ReferenceArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -185,6 +194,7 @@ fn main() -> Result<()> {
         Command::Compare(a) => run_compare(a),
         Command::Recommend(a) => run_recommend(a),
         Command::Front(a) => run_front(a),
+        Command::Reference(a) => run_reference(a),
     }
 }
 
@@ -624,4 +634,144 @@ fn run_front(args: FrontArgs) -> Result<()> {
         std::fs::write(&front_path, json).at(&front_path)?;
     }
     Ok(())
+}
+
+// ─── reference ────────────────────────────────────────────────────────────────
+
+#[derive(Parser, Debug)]
+struct ReferenceArgs {
+    /// Directory of `*.jsonl` result files.
+    #[arg(long, default_value = "results")]
+    results_dir: PathBuf,
+
+    /// Reference table written by `optimizer --mode reference`. A missing file
+    /// is not an error: the attainment columns still render and the reference
+    /// ones are null, the same rule `exp1 --kappa-data` follows.
+    #[arg(long, default_value = "results/reference.jsonl")]
+    reference: PathBuf,
+
+    /// Output JSONL path (one line per cell).
+    #[arg(long, default_value = "results/reference_table.jsonl")]
+    out: PathBuf,
+}
+
+/// Per-objective attainment for one cell.
+///
+/// **There is deliberately no scalar here comparing `reference` to the front.**
+/// R2 is monotone under set inclusion, so a one-point set can never beat a front
+/// containing a comparable point; every number that scored a singleton against a
+/// front has already been removed from this crate once (see the Wilson section
+/// of `CLAUDE.md`, and the deleted `--mode wilson-mds`). What is sound is the
+/// per-objective reading: each objective is one bounded, higher-is-better axis,
+/// so "the source configuration reaches 0.94 where the front reaches 0.81" is
+/// six independent same-unit statements and never collapses a set into a point.
+#[derive(Debug, Serialize)]
+struct ReferenceRow {
+    stem: String,
+    setting: String,
+    dataset: String,
+    n: usize,
+    geometry: String,
+    n_trials: usize,
+    n_front: usize,
+    /// Best oriented value any front point reaches, per objective.
+    front_best: BTreeMap<&'static str, f64>,
+    /// Median oriented value over the front, per objective.
+    front_median: BTreeMap<&'static str, f64>,
+    /// The ground-truth source configuration's oriented values, when the
+    /// dataset has one. `None` for every dataset whose source is not itself a
+    /// valid 2-D embedding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reference: Option<BTreeMap<&'static str, f64>>,
+}
+
+fn median(mut xs: Vec<f64>) -> f64 {
+    if xs.is_empty() {
+        return 0.0;
+    }
+    xs.sort_by(f64::total_cmp);
+    let mid = xs.len() / 2;
+    if xs.len() % 2 == 0 {
+        // `f64::midpoint` is 1.85; the crate's MSRV is 1.82.
+        (xs[mid - 1] + xs[mid]) / 2.0
+    } else {
+        xs[mid]
+    }
+}
+
+fn run_reference(args: ReferenceArgs) -> Result<()> {
+    let cells = discover_cells(&args.results_dir)?;
+    if cells.is_empty() {
+        return Err(Error::NoCells(args.results_dir));
+    }
+
+    // Reference rows keyed by (dataset, geometry). Absent file → no rows, which
+    // renders as null reference columns rather than an error.
+    let references: BTreeMap<(String, String), BTreeMap<&'static str, f64>> =
+        if args.reference.exists() {
+            trial_records(&args.reference)?
+                .iter()
+                .filter_map(|r| {
+                    let dataset = r.dataset_name.clone()?;
+                    let geometry = r.geometry.clone()?;
+                    let row: BTreeMap<&'static str, f64> = OBJECTIVES
+                        .iter()
+                        .zip(fitting_analysis::objectives::oriented_row(r))
+                        .map(|(metric, v)| (metric.name(), v))
+                        .collect();
+                    Some(((dataset, geometry), row))
+                })
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
+
+    let weights = Weights::new();
+    let mut rows: Vec<ReferenceRow> = Vec::new();
+
+    for cf in &cells {
+        let records = trial_records(&cf.path)?;
+        let summary = cell_summary(&records, &weights);
+
+        let front: Vec<[f64; OBJECTIVES.len()]> = summary
+            .front
+            .iter()
+            .map(|&i| fitting_analysis::objectives::oriented_row(&records[i]))
+            .collect();
+        if front.is_empty() {
+            continue;
+        }
+
+        let mut best = BTreeMap::new();
+        let mut med = BTreeMap::new();
+        for (slot, metric) in OBJECTIVES.iter().enumerate() {
+            let column: Vec<f64> = front.iter().map(|row| row[slot]).collect();
+            best.insert(
+                metric.name(),
+                column.iter().copied().fold(f64::MIN, f64::max),
+            );
+            med.insert(metric.name(), median(column));
+        }
+
+        rows.push(ReferenceRow {
+            stem: cf.stem.clone(),
+            setting: cf.cell.setting.clone(),
+            dataset: cf.cell.dataset.clone(),
+            n: cf.cell.n,
+            geometry: cf.cell.geometry.clone(),
+            n_trials: summary.n_trials,
+            n_front: summary.n_front,
+            front_best: best,
+            front_median: med,
+            reference: references
+                .get(&(cf.cell.dataset.clone(), cf.cell.geometry.clone()))
+                .cloned(),
+        });
+    }
+
+    rows.sort_by(|a, b| {
+        (a.n, &a.geometry, &a.dataset, &a.setting).cmp(&(b.n, &b.geometry, &b.dataset, &b.setting))
+    });
+
+    write_jsonl(&args.out, &rows)
 }

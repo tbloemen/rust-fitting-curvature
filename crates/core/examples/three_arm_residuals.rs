@@ -39,7 +39,9 @@
 //! ```
 //!
 //! Flags: `--n <usize>`, `--seed <u64>`, `--data-root <path>`,
-//! `--jsonl <path>`, `--all`. The data root defaults to `www/public/data`
+//! `--jsonl <path>`, `--all`. `--all` adds the matched geodesic balls and the
+//! tree metric (`common::matched`) plus the unmatched controls
+//! (`common::controls`) to the ten thesis rows. The data root defaults to `www/public/data`
 //! (relative to the cwd, so run from the repo root); a bare positional
 //! argument is still accepted as the data root. The JSONL defaults to
 //! `results/three_arm_residuals.jsonl`, where `scripts/three_arm_typst.py`
@@ -223,6 +225,7 @@ fn main() {
 
     let mut fixtures = common::thesis(args.n, args.seed, &args.data_root);
     if args.all {
+        fixtures.extend(common::matched(args.n, args.seed));
         fixtures.extend(common::controls(args.n, args.seed));
     }
 

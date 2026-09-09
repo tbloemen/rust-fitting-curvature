@@ -231,6 +231,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut fixtures = common::synthetic(args.n, args.seed);
     if args.all {
+        fixtures.extend(common::matched(args.n, args.seed));
         fixtures.extend(common::controls(args.n, args.seed));
     }
     let cases: Vec<Case> = map_parallel(&fixtures, build_case);

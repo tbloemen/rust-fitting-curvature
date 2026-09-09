@@ -11,7 +11,8 @@
 
 set -eu
 
-DATASETS="mnist fashion_mnist pbmc wordnet_mammals sphere antipodal_clusters tree hyperbolic_shells"
+. ./slurm/datasets.sh
+DATASETS="${DATASETS:-$DATASETS_ALL}"
 
 for ds in $DATASETS; do
   sbatch \

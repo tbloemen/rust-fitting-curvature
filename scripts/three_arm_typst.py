@@ -43,6 +43,16 @@ ROW_ORDER = [
     "sphere 10D",
     "tree 2D",
     "tree 10D",
+    # `--all` only. Listed before FIRST_REAL so the rule still separates every
+    # synthetic from the real datasets; without them they would be appended
+    # after `pbmc` and land on the wrong side of it.
+    "tree metric",
+    "ball E2",
+    "ball S2",
+    "ball H2",
+    "ball E9",
+    "ball S9",
+    "ball H9",
     "mnist",
     "mnist-fashion",
     "wordnet-mammals",

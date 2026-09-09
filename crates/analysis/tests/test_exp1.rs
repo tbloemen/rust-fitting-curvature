@@ -79,16 +79,23 @@ fn every_synthetic_dataset_has_a_valid_truth() {
 
 #[test]
 fn truth_covers_the_optimizer_synthetic_set() {
-    // `crates/optimizer/src/data.rs::load_synthetic` accepts exactly these five
-    // names. Experiment 1 filters cells by `truth_of(..).is_some()`, so a name
-    // missing here would silently drop a dataset from the table rather than
-    // failing.
+    // `crates/optimizer/src/data.rs::load_synthetic` accepts exactly these
+    // names (`main.rs::SYNTHETIC_DATASETS` is the same list). Experiment 1
+    // filters cells by `truth_of(..).is_some()`, so a name missing here would
+    // silently drop a dataset from the table rather than failing.
     for dataset in [
         "sphere",
         "antipodal_clusters",
         "tree",
         "hyperbolic_shells",
         "grid",
+        "tree_graph",
+        "ball2_euclidean",
+        "ball2_spherical",
+        "ball2_hyperbolic",
+        "ball9_euclidean",
+        "ball9_spherical",
+        "ball9_hyperbolic",
     ] {
         assert!(
             truth_of(dataset).is_some(),

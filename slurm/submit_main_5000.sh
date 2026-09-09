@@ -20,7 +20,8 @@
 
 set -eu
 
-DATASETS="mnist fashion_mnist pbmc wordnet_mammals sphere antipodal_clusters tree hyperbolic_shells"
+. ./slurm/datasets.sh
+DATASETS="${DATASETS:-$DATASETS_ALL}"
 GEOMETRIES="hyperbolic euclidean spherical"
 
 # Number of chained ~24h chunks per (dataset, geometry). A full run needs ~3.

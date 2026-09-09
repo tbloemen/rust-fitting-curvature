@@ -4,7 +4,7 @@
 # via run_5000.sh, same as submit_all_5000.sh, since a single geometry at
 # N=5000 does not fit the 24h wall-clock cap.
 #
-# Covers all 8 datasets (matching submit_main_5000.sh); pass DATASETS to
+# Covers every dataset in slurm/datasets.sh (matching submit_main_5000.sh); pass DATASETS to
 # restrict to a subset.
 #
 # Run on the DelftBlue login node from the repo root, after
@@ -14,7 +14,8 @@
 
 set -eu
 
-DATASETS="${DATASETS:-mnist fashion_mnist pbmc wordnet_mammals sphere antipodal_clusters tree hyperbolic_shells}"
+. ./slurm/datasets.sh
+DATASETS="${DATASETS:-$DATASETS_ALL}"
 EXPERIMENT="rms_anchored"
 GEOMETRY="hyperbolic"
 

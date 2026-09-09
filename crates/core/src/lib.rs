@@ -5,6 +5,7 @@ pub mod context;
 pub mod curvature_detection;
 pub mod data;
 pub mod embedding;
+pub mod graph;
 pub mod kernels;
 pub mod kl_divergence;
 pub mod manifolds;

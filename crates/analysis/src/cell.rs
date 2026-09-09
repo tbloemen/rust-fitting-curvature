@@ -37,12 +37,28 @@ pub const GEOMETRIES: [&str; 3] = ["euclidean", "hyperbolic", "spherical"];
 ///
 /// The real datasets are deliberately absent: their geometry is the question,
 /// not the given.
-pub const SYNTH_TRUTH: [(&str, &str); 5] = [
+pub const SYNTH_TRUTH: [(&str, &str); 12] = [
+    // The original suite. Unchanged generators, so the results already under
+    // `results/` stay valid for these five.
     ("grid", "euclidean"),
     ("sphere", "spherical"),
     ("antipodal_clusters", "spherical"),
     ("tree", "hyperbolic"),
     ("hyperbolic_shells", "hyperbolic"),
+    // A tree metric, not a manifold. "hyperbolic" here means the geometry that
+    // can *represent* the metric — the same footing `wordnet_mammals` sits on —
+    // not a claim that the data has constant sectional curvature.
+    ("tree_graph", "hyperbolic"),
+    // The matched geodesic balls: within a tier these share a sampling scheme,
+    // a radius and a label vector, and differ only in curvature. Tier 2 is a
+    // 2-D source into a 2-D target; tier 9 shares a 9-D source, so the
+    // dimension reduction is matched across the three as well.
+    ("ball2_euclidean", "euclidean"),
+    ("ball2_spherical", "spherical"),
+    ("ball2_hyperbolic", "hyperbolic"),
+    ("ball9_euclidean", "euclidean"),
+    ("ball9_spherical", "spherical"),
+    ("ball9_hyperbolic", "hyperbolic"),
 ];
 
 /// The geometry `dataset` is built to have, or `None` for a real dataset (or

@@ -25,7 +25,17 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) dataset: Option<String>,
 
-    /// Run mode: "random" (default), "bayes", "scan", "pareto" or "detect".
+    /// Run mode: "random" (default), "bayes", "scan", "pareto", "detect" or
+    /// "reference".
+    ///
+    /// "reference" scores a dataset's known source configuration through the
+    /// trial metric pipeline instead of fitting an embedding, and ignores
+    /// --n-trials, --n-seeds, --experiment and --geometry: the curvature comes
+    /// from the dataset registry, not from detection. Give it an --output that
+    /// does NOT start with a loss-setting name (results/reference.jsonl is the
+    /// default shape): the analysis crate's `discover_cells` walks every
+    /// *.jsonl under results/ and would read `all_off_ball2_spherical.jsonl`
+    /// as a full sweep cell with a one-trial Pareto front.
     /// random: sample random configs with continuous curvature, compute all metrics.
     /// bayes:  Bayesian optimisation over all 7 hyperparameters (requires --metric).
     ///         Geometry sign is detected automatically unless --geometry is given.
