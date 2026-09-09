@@ -49,7 +49,6 @@ DATASET_GROUPS = {
     "synthetic": [
         "grid",
         "sphere",
-        "antipodal_clusters",
         "tree",
         "hyperbolic_shells",
         "tree_graph",
@@ -66,7 +65,6 @@ DATASET_GROUPS = {
 DATASET_LABEL = {
     "grid": "grid",
     "sphere": "sphere",
-    "antipodal_clusters": "antipodal",
     "tree": "tree (layout)",
     "hyperbolic_shells": "hyp. shells",
     "tree_graph": "tree (metric)",
@@ -100,21 +98,61 @@ SETTING_ORDER = [BASELINE, "centering_only", "global_only", "norm_only", "all_fr
 # other per-objective table in the thesis.
 # The three preference families, as `r2::build_regions` names them.  Used to
 # split the header row; everything else treats a region as just a column.
-FAMILY_REGIONS = ("structure", "distance", "class_separation")
+FAMILY_REGIONS = ("structure", "distance", "class_separation", "manifold", "projected")
 
-REGIONS = [
-    ("all", '$W_"all"$'),
-    # families
-    ("structure", '$W_"struct"$'),
-    ("distance", '$W_"dist"$'),
-    ("class_separation", '$W_"class"$'),
-    # objectives
-    ("trustworthiness", '$W_"trust"$'),
-    ("continuity", '$W_"cont"$'),
-    ("normalized_stress", '$W_"stress"$'),
-    ("shepard_goodness", '$W_"shep"$'),
-    ("neighborhood_hit", '$W_"nh"$'),
-]
+# The two objective spaces build different region sets (see
+# `crates/analysis/src/r2.rs::build_regions`), so the columns depend on which
+# space wrote the table.  `obj6` is the current projected-only search; `obj10`
+# is the legacy projected+manifold one every sweep under `results/` was run in,
+# whose regions are per *metric pair* plus the two evaluation surfaces.  The
+# group header calls both middle blocks "Family", which is what they are: a
+# region over more than one objective.
+REGIONS_BY_SPACE = {
+    "obj6": [
+        ("all", '$W_"all"$'),
+        # families
+        ("structure", '$W_"struct"$'),
+        ("distance", '$W_"dist"$'),
+        ("class_separation", '$W_"class"$'),
+        # objectives
+        ("trustworthiness", '$W_"trust"$'),
+        ("continuity", '$W_"cont"$'),
+        ("normalized_stress", '$W_"stress"$'),
+        ("shepard_goodness", '$W_"shep"$'),
+        ("neighborhood_hit", '$W_"nh"$'),
+    ],
+    "obj10": [
+        ("all", '$W_"all"$'),
+        # one per metric pair
+        ("trustworthiness", '$W_"trust"$'),
+        ("continuity", '$W_"cont"$'),
+        ("normalized_stress", '$W_"stress"$'),
+        ("shepard_goodness", '$W_"shep"$'),
+        ("neighborhood_hit", '$W_"nh"$'),
+        # evaluation surfaces
+        ("manifold", '$W_"man"$'),
+        ("projected", '$W_"proj"$'),
+    ],
+}
+
+
+def regions_for(rows):
+    """The column set of the space these rows were scored in.
+
+    Read off the rows themselves rather than passed in: `r2 stats` stamps every
+    record with its space, so the table cannot be rendered with the wrong
+    columns.  Rows written before the split are legacy ones.
+    """
+    spaces = {r.get("space", "obj10") for r in rows}
+    if len(spaces) > 1:
+        raise SystemExit(
+            f"input mixes objective spaces ({', '.join(sorted(spaces))}); "
+            "R2 in one is not comparable to R2 in the other"
+        )
+    space = spaces.pop()
+    if space not in REGIONS_BY_SPACE:
+        raise SystemExit(f"unknown objective space {space!r}")
+    return space, REGIONS_BY_SPACE[space]
 
 # Every entry in the table is scaled by this.  |ΔR2| spans 8e-5 to 0.13, so the
 # unscaled numbers would need four decimals to say anything and would then read
@@ -159,7 +197,12 @@ def cell(text, bold=False):
 
 
 def load(path, n, datasets, settings):
-    """Rows for one sample size, indexed as dataset → geometry → setting → region."""
+    """Rows for one sample size, indexed as dataset → geometry → setting → region.
+
+    Returns `(table, space, regions)` — the column set comes from the rows, so
+    a table scored in the legacy space renders its own regions rather than
+    failing against the current space's names.
+    """
     with open(path) as f:
         rows = [json.loads(line) for line in f if line.strip()]
     if not rows:
@@ -176,11 +219,13 @@ def load(path, n, datasets, settings):
     if not table:
         raise SystemExit(f"no {datasets} rows with n = {n} in {path}")
 
+    space, regions = regions_for(rows)
+
     # A stale or half-regenerated table is the failure mode worth catching here:
     # `delta_r2` is written by the same pass that writes `r2` and `r2_baseline`,
     # so if the identity does not hold, the file mixes runs and every number
     # below it is suspect.
-    names = [name for name, _ in REGIONS]
+    names = [name for name, _ in regions]
     for dataset, arms in table.items():
         for geometry, by_setting in arms.items():
             for setting, by_region in by_setting.items():
@@ -202,7 +247,7 @@ def load(path, n, datasets, settings):
                             f"{dataset}/{geometry}/{setting}/{region} at n={n}: "
                             f"delta_r2 {delta} != r2_baseline - r2 {base - r['r2']}"
                         )
-    return table
+    return table, space, regions
 
 
 def ordered(present, order):
@@ -212,7 +257,7 @@ def ordered(present, order):
     return out + [k for k in present if k not in order]
 
 
-def build(table, n, datasets, settings):
+def build(table, n, datasets, settings, regions):
     dataset_order = ordered(table, DATASET_GROUPS[datasets])
 
     # Rows per (dataset, geometry) block, needed up front for the rowspans.
@@ -223,15 +268,15 @@ def build(table, n, datasets, settings):
                 table[dataset][geometry], settings
             )
 
-    n_cols = 3 + len(REGIONS)
-    align = ["left", "left", "left"] + ["right"] * len(REGIONS)
+    n_cols = 3 + len(regions)
+    align = ["left", "left", "left"] + ["right"] * len(regions)
 
     # Row 1 groups the regions by the question they ask; the three identity
     # columns span both header rows instead.  The two spans are derived from
     # REGIONS rather than hardcoded, so adding an objective or a family cannot
     # leave the header a column short of the body.
-    n_families = sum(1 for name, _ in REGIONS if name in FAMILY_REGIONS)
-    n_objectives = len(REGIONS) - 1 - n_families
+    n_families = sum(1 for name, _ in regions if name in FAMILY_REGIONS)
+    n_objectives = len(regions) - 1 - n_families
     row1 = [
         "table.cell(rowspan: 2, align: horizon)[*Dataset*]",
         "table.cell(rowspan: 2, align: horizon)[*Geom.*]",
@@ -240,7 +285,7 @@ def build(table, n, datasets, settings):
         f"table.cell(colspan: {n_families}, align: center)[*Family*]",
         f"table.cell(colspan: {n_objectives}, align: center)[*Per-objective*]",
     ]
-    row2 = [f"[{label}]" for _, label in REGIONS[1:]]
+    row2 = [f"[{label}]" for _, label in regions[1:]]
 
     lines = [
         "// Generated by scripts/r2_delta_typst.py -- do not edit by hand.",
@@ -280,7 +325,7 @@ def build(table, n, datasets, settings):
             # positive gain can win: bolding the least bad of a block of losses
             # would read as an endorsement.
             best = {}
-            for region, _ in REGIONS:
+            for region, _ in regions:
                 gains = [
                     (by_setting[s][region]["delta_r2"], s)
                     for s in rows
@@ -318,7 +363,7 @@ def build(table, n, datasets, settings):
                 cells.append(f"[`{setting}`]")
 
                 by_region = by_setting[setting]
-                for region, _ in REGIONS:
+                for region, _ in regions:
                     r = by_region[region]
                     if setting == BASELINE:
                         # The level, not a gain: unsigned, and never bolded --
@@ -400,11 +445,11 @@ def main():
         raise SystemExit(f"--settings must include the {BASELINE!r} baseline")
     out = a.output or f"tables/r2_delta_{a.datasets}_n{a.n}.typ"
 
-    table = load(a.input, a.n, a.datasets, settings)
+    table, space, regions = load(a.input, a.n, a.datasets, settings)
     _ensure_parent(out)
     with open(out, "w") as f:
-        f.write(build(table, a.n, a.datasets, settings))
-    print(f"wrote {out} (n={a.n}, datasets={a.datasets})")
+        f.write(build(table, a.n, a.datasets, settings, regions))
+    print(f"wrote {out} (n={a.n}, datasets={a.datasets}, space={space})")
 
 
 if __name__ == "__main__":

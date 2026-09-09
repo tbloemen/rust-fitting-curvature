@@ -32,7 +32,6 @@ ROW_ORDER = [
     # The original suite: flat first, then grouped by intended geometry.
     "grid",
     "sphere",
-    "antipodal_clusters",
     "tree",
     "hyperbolic_shells",
     # The hierarchy benchmark.
@@ -58,7 +57,6 @@ PINNED_MARK = "#super[†]"
 DATASET_LABEL = {
     "grid": "grid",
     "sphere": "sphere",
-    "antipodal_clusters": "antipodal",
     "tree": "tree (layout)",
     "hyperbolic_shells": "hyp. shells",
     "tree_graph": "tree (metric)",

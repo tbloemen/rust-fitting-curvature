@@ -37,17 +37,19 @@ const REAL_DATASETS: [&str; 4] = ["mnist", "fashion_mnist", "pbmc", "wordnet_mam
 
 /// Every synthetic dataset `Dataset::load_synthetic` accepts.
 ///
-/// The first five are the original suite and are unchanged, so the results
-/// already under `results/` remain valid for them. `tree_graph` and the
+/// The first four are the original suite and are unchanged, so the results
+/// already under `results/` remain valid for them. `antipodal_clusters` was a
+/// fifth and is retired — `load_synthetic` still builds it on an explicit
+/// `--dataset antipodal_clusters`, but it is no longer part of the suite and
+/// `SYNTH_TRUTH` no longer carries a truth for it. `tree_graph` and the
 /// `ball*` family were added for the geometry-matching redesign: the balls are
 /// one sampling scheme mapped into three geometries, so within a tier they
 /// differ in curvature and nothing else.
 ///
 /// `crates/analysis/src/cell.rs::SYNTH_TRUTH` must carry a truth for every name
 /// here, or Experiment 1 silently drops the dataset; a test there pins it.
-const SYNTHETIC_DATASETS: [&str; 12] = [
+const SYNTHETIC_DATASETS: [&str; 11] = [
     "sphere",
-    "antipodal_clusters",
     "tree",
     "hyperbolic_shells",
     "grid",

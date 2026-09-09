@@ -72,6 +72,11 @@ pub struct CellRecord {
 /// than recomputing them, so the charts and the thesis table cannot disagree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeltaRow {
+    /// The objective space these R2 values were computed in, carried through
+    /// from [`CellRecord::space`] so the bar charts and the Typst table pick
+    /// the right region columns without re-reading the sweeps.
+    #[serde(default = "legacy_tag")]
+    pub space: String,
     pub n: usize,
     pub geometry: String,
     pub setting: String,
@@ -129,6 +134,9 @@ pub fn regions(table: &[CellRecord]) -> Vec<String> {
 /// ΔR2 rows for every (n, geometry, setting, dataset, region) against the baseline.
 #[must_use]
 pub fn compute_deltas(table: &[CellRecord]) -> Vec<DeltaRow> {
+    // One table is one space — `run_aggregate` rejects a mixed one before
+    // getting here — so the first row's tag names every output row's.
+    let space = table.first().map_or_else(legacy_tag, |r| r.space.clone());
     let mut values: BTreeMap<(usize, String, String, String, String), f64> = BTreeMap::new();
     for r in table {
         for (region, &v) in &r.r2 {
@@ -158,6 +166,7 @@ pub fn compute_deltas(table: &[CellRecord]) -> Vec<DeltaRow> {
                 ))
                 .copied();
             DeltaRow {
+                space: space.clone(),
                 n: *n,
                 geometry: geom.clone(),
                 setting: setting.clone(),

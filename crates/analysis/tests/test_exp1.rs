@@ -85,7 +85,6 @@ fn truth_covers_the_optimizer_synthetic_set() {
     // silently drop a dataset from the table rather than failing.
     for dataset in [
         "sphere",
-        "antipodal_clusters",
         "tree",
         "hyperbolic_shells",
         "grid",

@@ -36,6 +36,14 @@ def _ensure_parent(path: str) -> None:
 
 # Table order. Rows absent from the JSONL are skipped; rows present but not
 # listed here are appended at the end, so `--all` runs still produce output.
+# Retired datasets, skipped even when the input JSONL still carries them.
+#
+# `antipodal_clusters` was retired from the analysis (see
+# `crates/analysis/src/cell.rs::SYNTH_TRUTH`); a fresh `--mode detect` run no
+# longer emits it, but an existing `results/three_arm_residuals.jsonl` predates
+# that and would otherwise append the row at the end as an unlisted name.
+RETIRED = {"antipodal_clusters"}
+
 ROW_ORDER = [
     "grid 10D",
     "grid 2D",
@@ -95,8 +103,12 @@ def cell(text: str, pinned: bool) -> str:
 
 def build(rows: list[dict]) -> str:
     by_name = {r["dataset"]: r for r in rows}
-    order = [n for n in ROW_ORDER if n in by_name]
-    order += [r["dataset"] for r in rows if r["dataset"] not in ROW_ORDER]
+    order = [n for n in ROW_ORDER if n in by_name and n not in RETIRED]
+    order += [
+        r["dataset"]
+        for r in rows
+        if r["dataset"] not in ROW_ORDER and r["dataset"] not in RETIRED
+    ]
 
     n_values = sorted({r["n"] for r in rows})
     dims = sorted({r["dim"] for r in rows})

@@ -87,7 +87,6 @@ const HEAD_ROOM: f64 = 0.18;
 /// through to its own name, which is only ever a little wider.
 fn dataset_label(dataset: &str) -> &str {
     match dataset {
-        "antipodal_clusters" => "antipodal",
         "hyperbolic_shells" => "hyp. shells",
         "tree" => "tree (layout)",
         "tree_graph" => "tree (metric)",
