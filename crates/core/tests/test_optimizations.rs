@@ -32,34 +32,38 @@ fn naive_kernel(distances: &[f64], dof: f64) -> Vec<f64> {
         .collect()
 }
 
+#[expect(
+    clippy::many_single_char_names,
+    reason = "p,q,k,d,w,alpha,u are conventional Riemannian gradient algorithm variables mirroring the original naive reference"
+)]
 fn naive_kl_gradient(
     manifold: &dyn Manifold,
     points: &[f64],
     q: &[f64],
     p: &[f64],
     distances: &[f64],
-    n: usize,
-    ad: usize,
+    n_points: usize,
+    ambient_dim: usize,
 ) -> Vec<f64> {
     let k = manifold.curvature();
     let r_sq = manifold.radius() * manifold.radius();
-    let mut grad = vec![0.0; n * ad];
+    let mut grad = vec![0.0; n_points * ambient_dim];
 
-    for i in 0..n {
-        let oi = i * ad;
-        for j in 0..n {
+    for i in 0..n_points {
+        let oi = i * ambient_dim;
+        for j in 0..n_points {
             if i == j {
                 continue;
             }
-            let idx = i * n + j;
+            let idx = i * n_points + j;
             let d = distances[idx];
-            let oj = j * ad;
+            let oj = j * ambient_dim;
 
             if k < 0.0 {
                 let w = 1.0 / (1.0 + d * d);
                 let coeff = 4.0 * (p[idx] - q[idx]) * w;
                 let mut lorentz = -points[oi] * points[oj];
-                for dim in 1..ad {
+                for dim in 1..ambient_dim {
                     lorentz += points[oi + dim] * points[oj + dim];
                 }
                 let alpha = (-lorentz / r_sq).max(1.0);
@@ -68,7 +72,7 @@ fn naive_kl_gradient(
                 } else {
                     alpha.acosh() / (alpha * alpha - 1.0).sqrt()
                 };
-                for dim in 0..ad {
+                for dim in 0..ambient_dim {
                     let u = points[oj + dim] - alpha * points[oi + dim];
                     grad[oi + dim] += coeff * (-scale * u);
                 }
@@ -76,7 +80,7 @@ fn naive_kl_gradient(
                 let w = 1.0 / (1.0 + d * d);
                 let coeff = 4.0 * (p[idx] - q[idx]) * w;
                 let mut inner = 0.0;
-                for dim in 0..ad {
+                for dim in 0..ambient_dim {
                     inner += points[oi + dim] * points[oj + dim];
                 }
                 let cos_theta = (inner / r_sq).clamp(-1.0 + 1e-7, 1.0 - 1e-7);
@@ -87,13 +91,13 @@ fn naive_kl_gradient(
                 } else {
                     theta / sin_theta
                 };
-                for dim in 0..ad {
+                for dim in 0..ambient_dim {
                     let u = points[oj + dim] - cos_theta * points[oi + dim];
                     grad[oi + dim] += coeff * (-scale * u);
                 }
             } else {
                 let factor = 4.0 * (p[idx] - q[idx]) / (1.0 + d * d);
-                for dim in 0..ad {
+                for dim in 0..ambient_dim {
                     let diff = points[oi + dim] - points[oj + dim];
                     grad[oi + dim] += factor * diff;
                 }

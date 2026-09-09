@@ -338,143 +338,22 @@ impl EmbeddingState {
         // Phase transition
         if self.iteration == self.config.early_exaggeration_iterations {
             self.optimizer.set_momentum(self.config.momentum_main);
-            // The exaggerated P copy is only needed during the early phase; free
-            // it now that we switch back to the un-exaggerated `p_base`.
             self.p_early = Vec::new();
         }
 
         // Current P: the pre-computed exaggerated copy during the early phase,
-        // otherwise the base affinities. No per-iteration allocation.
-        let p_current: &[f64] = if self.iteration < self.config.early_exaggeration_iterations
+        // otherwise the base affinities. Clone to avoid borrow conflict with the
+        // mutable self borrow in compute_loss_and_gradient.
+        let p_current: Vec<f64> = if self.iteration < self.config.early_exaggeration_iterations
             && !self.p_early.is_empty()
         {
-            &self.p_early
+            self.p_early.clone()
         } else {
-            &self.p_base
+            self.p_base.clone()
         };
 
-        // Compute Q and distances
-        let (q, distances) = compute_q_matrix_with_distances(
-            self.manifold.as_ref(),
-            &self.points,
-            n_points,
-            ambient_dim,
-            1.0,
-        );
-
-        // Compute loss (skipped when loss tracking is disabled, e.g. the search).
-        if self.track_loss {
-            self.loss = kl_loss(&q, p_current, n_points);
-        }
-
-        // Compute Riemannian gradient (already a tangent vector)
-        let mut grad = kl_gradient(
-            self.manifold.as_ref(),
-            &self.points,
-            &q,
-            p_current,
-            &distances,
-            n_points,
-            ambient_dim,
-        );
-
-        // Radial scaling loss (hyperbolic only): penalizes spread of points from origin.
-        // Gradient is in ambient coordinates; project to tangent space before adding.
-        if self.config.centering_weight > 0.0 {
-            let (scaling_loss, mut scale_grad) = scaling_loss::compute(
-                self.config.scaling_loss_type,
-                &self.points,
-                n_points,
-                ambient_dim,
-                self.manifold.radius(),
-                self.config.curvature,
-            );
-            self.manifold
-                .project_to_tangent(&self.points, &mut scale_grad, n_points, ambient_dim);
-            for k in 0..grad.len() {
-                grad[k] += self.config.centering_weight * scale_grad[k];
-            }
-            self.loss += self.config.centering_weight * scaling_loss;
-        }
-
-        // Global t-SNE loss (Zhou & Sharpee): adds a KL term with globally-normalized
-        // similarities, improving preservation of large-scale structure. Applies to all
-        // geometries. The gradient has the same Riemannian structure as the KL gradient.
-        if self.config.global_loss_weight > 0.0 {
-            let q_hat = compute_global_similarities(&distances, n_points);
-            let global_grad = kl_gradient(
-                self.manifold.as_ref(),
-                &self.points,
-                &q_hat,
-                &self.p_hat,
-                &distances,
-                n_points,
-                ambient_dim,
-            );
-            for k in 0..grad.len() {
-                grad[k] += self.config.global_loss_weight * global_grad[k];
-            }
-            if self.track_loss {
-                self.loss +=
-                    self.config.global_loss_weight * kl_loss(&q_hat, &self.p_hat, n_points);
-            }
-        }
-
-        // Depth norm loss: compares each point's depth (Poincaré radius for k < 0)
-        // from the embedding origin to a bounded target. The target is derived from
-        // the root graph distance (distance-based path) or from the input vector's
-        // own Poincaré radius (hyperbolic feature path). Bounded, so it cannot dwarf
-        // the KL gradient the way the raw-‖x‖² feature loss does.
-        if self.config.norm_loss_weight > 0.0 && !self.target_norms.is_empty() {
-            let (depth_loss, mut depth_grad) = depth_norm_loss_gradient(
-                &self.points,
-                &self.target_norms,
-                n_points,
-                ambient_dim,
-                self.config.curvature,
-                self.manifold.radius(),
-            );
-            self.manifold
-                .project_to_tangent(&self.points, &mut depth_grad, n_points, ambient_dim);
-            let mut sumsq = 0.0;
-            for k in 0..grad.len() {
-                let contrib = self.config.norm_loss_weight * depth_grad[k];
-                grad[k] += contrib;
-                sumsq += contrib * contrib;
-            }
-            self.last_norm_grad_rms = (sumsq / count_to_f64(grad.len())).sqrt();
-            self.loss += self.config.norm_loss_weight * depth_loss;
-        }
-
-        // Feature norm loss: penalizes mismatch between ||x_i||² and ||y_i||².
-        // Gradient is in ambient coordinates; project to tangent space first.
-        // Skipped when distances drive the loss and when `target_norms` is set
-        // (the bounded Poincaré-radius depth loss above replaces it for k < 0).
-        if self.config.norm_loss_weight > 0.0 && self.n_features > 0 && self.target_norms.is_empty()
-        {
-            let (norm_loss, mut norm_grad) = norm_loss_gradient(
-                &self.input_data,
-                &self.points,
-                n_points,
-                self.n_features,
-                ambient_dim,
-            );
-            self.manifold
-                .project_to_tangent(&self.points, &mut norm_grad, n_points, ambient_dim);
-            let mut sumsq = 0.0;
-            for k in 0..grad.len() {
-                let contrib = self.config.norm_loss_weight * norm_grad[k];
-                grad[k] += contrib;
-                sumsq += contrib * contrib;
-            }
-            self.last_norm_grad_rms = (sumsq / count_to_f64(grad.len())).sqrt();
-            self.loss += self.config.norm_loss_weight * norm_loss;
-        }
-
-        // Diagnostic: RMS of the full gradient (for comparison with the norm-loss
-        // contribution captured above).
-        let total_sumsq: f64 = grad.iter().map(|g| g * g).sum();
-        self.last_total_grad_rms = (total_sumsq / count_to_f64(grad.len())).sqrt();
+        let (grad, _centering_loss, _global_loss, _depth_loss) =
+            self.compute_loss_and_gradient(&p_current, n_points, ambient_dim);
 
         // Optimizer step
         self.optimizer.step(
@@ -496,6 +375,137 @@ impl EmbeddingState {
         } else {
             "main"
         }
+    }
+
+    /// Compute the full loss and gradient for one training step.
+    ///
+    /// Returns `(gradient, centering_loss, global_loss, depth_or_feature_loss)`.
+    /// The caller applies the losses and takes the optimizer step.
+    fn compute_loss_and_gradient(
+        &mut self,
+        p_current: &[f64],
+        n_points: usize,
+        ambient_dim: usize,
+    ) -> (Vec<f64>, f64, f64, f64) {
+        let (q, distances) = compute_q_matrix_with_distances(
+            self.manifold.as_ref(),
+            &self.points,
+            n_points,
+            ambient_dim,
+            1.0,
+        );
+        if self.track_loss {
+            self.loss = kl_loss(&q, p_current, n_points);
+        }
+        let mut grad = kl_gradient(
+            self.manifold.as_ref(),
+            &self.points,
+            &q,
+            p_current,
+            &distances,
+            n_points,
+            ambient_dim,
+        );
+        let mut centering_loss = 0.0;
+        if self.config.centering_weight > 0.0 {
+            let (scaling_loss, mut scale_grad) = scaling_loss::compute(
+                self.config.scaling_loss_type,
+                &self.points,
+                n_points,
+                ambient_dim,
+                self.manifold.radius(),
+                self.config.curvature,
+            );
+            self.manifold
+                .project_to_tangent(&self.points, &mut scale_grad, n_points, ambient_dim);
+            for k in 0..grad.len() {
+                grad[k] += self.config.centering_weight * scale_grad[k];
+            }
+            centering_loss = self.config.centering_weight * scaling_loss;
+            self.loss += centering_loss;
+        }
+        let mut global_loss = 0.0;
+        if self.config.global_loss_weight > 0.0 {
+            let q_hat = compute_global_similarities(&distances, n_points);
+            let global_grad = kl_gradient(
+                self.manifold.as_ref(),
+                &self.points,
+                &q_hat,
+                &self.p_hat,
+                &distances,
+                n_points,
+                ambient_dim,
+            );
+            for k in 0..grad.len() {
+                grad[k] += self.config.global_loss_weight * global_grad[k];
+            }
+            if self.track_loss {
+                global_loss =
+                    self.config.global_loss_weight * kl_loss(&q_hat, &self.p_hat, n_points);
+                self.loss += global_loss;
+            }
+        }
+        let mut depth_feature_loss = 0.0;
+        if self.config.norm_loss_weight > 0.0 {
+            let (nl, nl_rms) = self.compute_norm_loss(&mut grad, n_points, ambient_dim);
+            depth_feature_loss = nl;
+            if nl_rms.is_finite() {
+                self.last_norm_grad_rms = nl_rms;
+            }
+        }
+        let total_sumsq: f64 = grad.iter().map(|g| g * g).sum();
+        self.last_total_grad_rms = (total_sumsq / count_to_f64(grad.len())).sqrt();
+
+        (grad, centering_loss, global_loss, depth_feature_loss)
+    }
+
+    /// Compute the depth or feature norm loss (whichever is active), apply its
+    /// gradient into `grad`, and return `(loss, grad_rms)` where `grad_rms` is
+    /// `NaN` when no norm loss is active.
+    fn compute_norm_loss(
+        &mut self,
+        grad: &mut [f64],
+        n_points: usize,
+        ambient_dim: usize,
+    ) -> (f64, f64) {
+        let weight = self.config.norm_loss_weight;
+        let (loss, mut ngrad, active) = if !self.target_norms.is_empty() {
+            let (loss, ngrad) = depth_norm_loss_gradient(
+                &self.points,
+                &self.target_norms,
+                n_points,
+                ambient_dim,
+                self.config.curvature,
+                self.manifold.radius(),
+            );
+            (loss, ngrad, true)
+        } else if self.n_features > 0 {
+            let (loss, ngrad) = norm_loss_gradient(
+                &self.input_data,
+                &self.points,
+                n_points,
+                self.n_features,
+                ambient_dim,
+            );
+            (loss, ngrad, true)
+        } else {
+            (0.0, Vec::new(), false)
+        };
+        if !active {
+            return (0.0, f64::NAN);
+        }
+        self.manifold
+            .project_to_tangent(&self.points, &mut ngrad, n_points, ambient_dim);
+        let mut sumsq = 0.0;
+        for k in 0..grad.len() {
+            let contrib = weight * ngrad[k];
+            grad[k] += contrib;
+            sumsq += contrib * contrib;
+        }
+        let rms = (sumsq / count_to_f64(grad.len())).sqrt();
+        let weighted_loss = weight * loss;
+        self.loss += weighted_loss;
+        (weighted_loss, rms)
     }
 
     /// Whether all iterations have been completed.

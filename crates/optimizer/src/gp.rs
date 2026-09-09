@@ -595,23 +595,25 @@ fn cholesky(a: &[f64], n: usize) -> Vec<f64> {
 }
 
 /// Forward substitution: solve L y = b.
-fn forward_sub(l: &[f64], b: &[f64], n: usize) -> Vec<f64> {
-    let mut y = vec![0.0; n];
-    for i in 0..n {
-        let s: f64 = (0..i).map(|j| l[i * n + j] * y[j]).sum();
-        y[i] = (b[i] - s) / l[i * n + i];
+fn forward_sub(lower: &[f64], rhs: &[f64], n: usize) -> Vec<f64> {
+    let mut sol = vec![0.0; n];
+    for row in 0..n {
+        let sum: f64 = (0..row).map(|col| lower[row * n + col] * sol[col]).sum();
+        sol[row] = (rhs[row] - sum) / lower[row * n + row];
     }
-    y
+    sol
 }
 
 /// Backward substitution: solve Lᵀ x = y.
-fn backward_sub(l: &[f64], y: &[f64], n: usize) -> Vec<f64> {
-    let mut x = vec![0.0; n];
-    for i in (0..n).rev() {
-        let s: f64 = ((i + 1)..n).map(|j| l[j * n + i] * x[j]).sum();
-        x[i] = (y[i] - s) / l[i * n + i];
+fn backward_sub(lower: &[f64], y: &[f64], n: usize) -> Vec<f64> {
+    let mut sol = vec![0.0; n];
+    for row in (0..n).rev() {
+        let sum: f64 = ((row + 1)..n)
+            .map(|col| lower[col * n + row] * sol[col])
+            .sum();
+        sol[row] = (y[row] - sum) / lower[row * n + row];
     }
-    x
+    sol
 }
 
 /// Solve K x = b given the Cholesky factor L of K.

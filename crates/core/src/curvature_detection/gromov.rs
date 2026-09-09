@@ -17,6 +17,10 @@
 /// # Panics
 ///
 /// Panics if any element of `distances` is NaN.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "a,b,c,d are the four conventional vertex indices of the Gromov four-point condition; s,s1,s2,s3 are the three pair-sums per NumRec convention"
+)]
 #[must_use]
 pub fn quad_delta(distances: &[f64], n: usize, a: usize, b: usize, c: usize, d: usize) -> f64 {
     let s1 = distances[a * n + b] + distances[c * n + d];

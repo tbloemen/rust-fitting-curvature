@@ -312,6 +312,10 @@ pub fn generate_uniform_sphere(n_samples: usize, seed: u64) -> DataPoints {
 /// # Panics
 ///
 /// Panics if `n_samples == 0` or if any distance is NaN.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "m,b,c,z,w,u,x,y are the standard Wood (1994) vMF rejection sampling variables: m=dim-1, b=rejection bound, c=acceptance threshold"
+)]
 #[must_use]
 pub fn generate_von_mises_fisher(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);

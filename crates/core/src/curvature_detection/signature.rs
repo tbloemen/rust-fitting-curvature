@@ -118,6 +118,10 @@ const QL_MAX_ITER: usize = 50;
 /// This is the hot path — [`minimise_log_spaced`] calls it once per
 /// candidate radius — so it skips the `O(n³)` back-transformation that
 /// [`eigen_symmetric`] pays for.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "a,z,d,e are the standard NumRec symmetric eigenvalue decomposition variables (matrix, workspace, diagonal, off-diagonal)"
+)]
 #[must_use]
 pub fn eigenvalues_symmetric(a: &[f64], n: usize) -> Vec<f64> {
     if n == 0 {
@@ -169,6 +173,10 @@ impl Eigen {
 /// The eigenvalues it returns agree with [`eigenvalues_symmetric`] to
 /// rounding: both call the same two routines on the same input, and the
 /// vector accumulation does not feed back into `d` or `e`.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "a,z,d,e are the standard NumRec symmetric eigenvalue decomposition variables (matrix, workspace, diagonal, off-diagonal)"
+)]
 #[must_use]
 pub fn eigen_symmetric(a: &[f64], n: usize) -> Eigen {
     if n == 0 {
@@ -208,6 +216,10 @@ pub fn eigen_symmetric(a: &[f64], n: usize) -> Eigen {
 /// only the `(2/3)n³` reduction runs.  With it true, `z` comes back
 /// holding the accumulated orthogonal transformation, which is the extra
 /// `O(n³)` back-transformation loop at the end.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "z,n,d,e,i,l,h,k,f,g,j,scale,hh are the standard NumRec tred2 Householder tridiagonalisation variables"
+)]
 fn tridiagonalise(z: &mut [f64], n: usize, d: &mut [f64], e: &mut [f64], want_vectors: bool) {
     for i in (1..n).rev() {
         let l = i - 1;
@@ -310,6 +322,10 @@ fn tridiagonalise(z: &mut [f64], n: usize, d: &mut [f64], e: &mut [f64], want_ve
 /// columns come back as the eigenvectors of the *original* matrix, in the
 /// same order as `d`.  `None` skips that work entirely, which is what the
 /// radius search wants.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "d,e,n,l,m,g,r,s,c,p,f,b,i are the standard NumRec tqli implicit-shift QL iteration variables"
+)]
 fn ql_implicit(d: &mut [f64], e: &mut [f64], n: usize, mut vectors: Option<&mut [f64]>) {
     for i in 1..n {
         e[i - 1] = e[i];

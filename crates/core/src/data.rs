@@ -126,33 +126,9 @@ pub fn load_fashion_mnist(path: &str, n_samples: usize) -> Result<DataPoints, St
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<DataPoints, String> {
     use std::collections::VecDeque;
-    use std::io::{BufRead, BufReader};
 
     // --- Parse edge list ---
-    let edges_path = format!("{path}/mammals_edges.tsv");
-    let edges_file =
-        File::open(&edges_path).map_err(|e| format!("Failed to open {edges_path}: {e}"))?;
-    let mut edges: Vec<(usize, usize)> = Vec::new();
-    let mut max_id = 0usize;
-    for (line_no, line) in BufReader::new(edges_file).lines().enumerate() {
-        let line = line.map_err(|e| format!("Read error in {edges_path}: {e}"))?;
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let mut parts = line.splitn(2, '\t');
-        let parse_id = |s: Option<&str>, field: &str| -> Result<usize, String> {
-            s.ok_or_else(|| format!("{edges_path}:{}: missing {field}", line_no + 1))?
-                .trim()
-                .parse::<usize>()
-                .map_err(|e| format!("{edges_path}:{}: bad {field}: {e}", line_no + 1))
-        };
-        let parent = parse_id(parts.next(), "parent_id")?;
-        let child = parse_id(parts.next(), "child_id")?;
-        max_id = max_id.max(parent).max(child);
-        edges.push((parent, child));
-    }
-    let n_nodes_full = max_id + 1;
+    let (edges, n_nodes_full) = parse_edge_list(path)?;
 
     // --- Build adjacency list (undirected for BFS) ---
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n_nodes_full];
@@ -200,6 +176,61 @@ pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<DataPoints, 
     }
 
     // --- BFS from every node to compute all-pairs distances ---
+    let dist_matrix = compute_all_pairs_bfs_distances(&compact_adj, n);
+
+    // --- Labels ---
+    let labels = load_or_derive_labels(path, &bfs_order, &compact_adj, n);
+
+    Ok(DataPoints {
+        // No feature representation for graph data; the distance matrix drives
+        // affinities and evaluation via the `distances` field.
+        x: Vec::new(),
+        labels,
+        n_points: n,
+        ambient_dim: 0,
+        distances: dist_matrix,
+    })
+}
+
+/// Parse the edge-list TSV into a list of parent→child edges and the total
+/// number of nodes.
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_edge_list(path: &str) -> Result<(Vec<(usize, usize)>, usize), String> {
+    use std::io::BufRead;
+
+    let edges_path = format!("{path}/mammals_edges.tsv");
+    let edges_file =
+        File::open(&edges_path).map_err(|e| format!("Failed to open {edges_path}: {e}"))?;
+    let mut edges: Vec<(usize, usize)> = Vec::new();
+    let mut max_id = 0usize;
+    for (line_no, line) in BufReader::new(edges_file).lines().enumerate() {
+        let line = line.map_err(|e| format!("Read error in {edges_path}: {e}"))?;
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut parts = line.splitn(2, '\t');
+        let parse_id = |s: Option<&str>, field: &str| -> Result<usize, String> {
+            s.ok_or_else(|| format!("{edges_path}:{}: missing {field}", line_no + 1))?
+                .trim()
+                .parse::<usize>()
+                .map_err(|e| format!("{edges_path}:{}: bad {field}: {e}", line_no + 1))
+        };
+        let parent = parse_id(parts.next(), "parent_id")?;
+        let child = parse_id(parts.next(), "child_id")?;
+        max_id = max_id.max(parent).max(child);
+        edges.push((parent, child));
+    }
+    Ok((edges, max_id + 1))
+}
+
+/// Compute all-pairs BFS distances on the compact adjacency list. Returns a
+/// flat `n × n` distance matrix (row-major). Unreachable nodes get a large
+/// but finite distance.
+#[cfg(not(target_arch = "wasm32"))]
+fn compute_all_pairs_bfs_distances(compact_adj: &[Vec<usize>], n: usize) -> Vec<f64> {
+    use std::collections::VecDeque;
+
     let mut dist_matrix = vec![f64::INFINITY; n * n];
     for src in 0..n {
         dist_matrix[src * n + src] = 0.0;
@@ -214,18 +245,29 @@ pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<DataPoints, 
                 }
             }
         }
-        // Unreachable nodes: use a large but finite distance.
         for j in 0..n {
             if dist_matrix[src * n + j] == f64::INFINITY {
                 dist_matrix[src * n + j] = count_to_f64(n) * 2.0;
             }
         }
     }
+    dist_matrix
+}
 
-    // --- Labels ---
+/// Load labels from the labels TSV if present, otherwise derive them from the
+/// tree structure (depth-2 ancestor grouping).
+#[cfg(not(target_arch = "wasm32"))]
+fn load_or_derive_labels(
+    path: &str,
+    bfs_order: &[usize],
+    compact_adj: &[Vec<usize>],
+    n: usize,
+) -> Vec<u32> {
+    use std::collections::VecDeque;
+    use std::io::{BufRead, BufReader};
+
     let labels_path = format!("{path}/mammals_labels.tsv");
-    let labels: Vec<u32> = if let Ok(file) = File::open(&labels_path) {
-        // Load from file; one label per line in original node order; remap via bfs_order.
+    if let Ok(file) = File::open(&labels_path) {
         let raw: Vec<u32> = BufReader::new(file)
             .lines()
             .map_while(Result::ok)
@@ -237,11 +279,8 @@ pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<DataPoints, 
             .map(|&orig| raw.get(orig).copied().unwrap_or(0))
             .collect()
     } else {
-        // Derive from tree: label = depth-2 ancestor group.
-        // BFS from root to find depth-2 ancestors.
         let mut depth2_label = vec![0u32; n];
-        // Root and depth-1 nodes get their own labels.
-        let mut group_queue: VecDeque<(usize, u32, usize)> = VecDeque::new(); // (node, group, depth)
+        let mut group_queue: VecDeque<(usize, u32, usize)> = VecDeque::new();
         let mut assigned = vec![false; n];
         group_queue.push_back((0, 0, 0));
         assigned[0] = true;
@@ -263,17 +302,7 @@ pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<DataPoints, 
             }
         }
         depth2_label
-    };
-
-    Ok(DataPoints {
-        // No feature representation for graph data; the distance matrix drives
-        // affinities and evaluation via the `distances` field.
-        x: Vec::new(),
-        labels,
-        n_points: n,
-        ambient_dim: 0,
-        distances: dist_matrix,
-    })
+    }
 }
 
 /// Load pre-processed PBMC single-cell RNA-seq data from a TSV file.

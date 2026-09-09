@@ -218,6 +218,10 @@ fn betai(a: f64, b: f64, x: f64) -> f64 {
 }
 
 /// Continued-fraction expansion for the incomplete beta (Lentz's method).
+#[expect(
+    clippy::many_single_char_names,
+    reason = "Numerical Recipes Lentz continued fraction — names match the reference"
+)]
 fn betacf(a: f64, b: f64, x: f64) -> f64 {
     const MAXIT: usize = 200;
     const EPS: f64 = 3.0e-14;
@@ -452,6 +456,10 @@ fn gamma_series(a: f64, x: f64) -> f64 {
 }
 
 /// Continued-fraction expansion for `Q(a, x)` (Lentz's method).
+#[expect(
+    clippy::many_single_char_names,
+    reason = "Numerical Recipes Lentz continued fraction — names match the reference"
+)]
 fn gamma_cf(a: f64, x: f64) -> f64 {
     const MAXIT: usize = 500;
     const EPS: f64 = 3.0e-14;

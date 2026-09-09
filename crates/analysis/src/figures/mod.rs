@@ -271,40 +271,48 @@ where
     if entries.is_empty() {
         return Ok(());
     }
-    let (w, h) = area.dim_in_pixel();
+    let (width, height) = area.dim_in_pixel();
     let font = ("sans-serif", 15).into_font().color(&OK_BLACK);
     // Lay the entries out in equal slots: swatch, then text.
     let slot =
-        i32::try_from(w).unwrap_or(i32::MAX) / i32::try_from(entries.len()).unwrap_or(i32::MAX);
-    let y = i32::try_from(h).unwrap_or(i32::MAX) / 2;
+        i32::try_from(width).unwrap_or(i32::MAX) / i32::try_from(entries.len()).unwrap_or(i32::MAX);
+    let vertical_centre = i32::try_from(height).unwrap_or(i32::MAX) / 2;
     for (i, e) in entries.iter().enumerate() {
         let x0 = i32::try_from(i).expect("legend has fewer than 2^31 entries") * slot + 12;
         match e.dash {
             // Tile the pattern across the swatch, clipped to its width.
             Some((dash, gap)) if dash > 0 && gap > 0 => {
-                let mut a = x0;
-                while a < x0 + SWATCH {
-                    let b = (a + dash).min(x0 + SWATCH);
+                let mut dash_start = x0;
+                while dash_start < x0 + SWATCH {
+                    let dash_end = (dash_start + dash).min(x0 + SWATCH);
                     area.draw(&PathElement::new(
-                        vec![(a, y), (b, y)],
+                        vec![(dash_start, vertical_centre), (dash_end, vertical_centre)],
                         e.color.stroke_width(3),
                     ))?;
-                    a = b + gap;
+                    dash_start = dash_end + gap;
                 }
             }
             _ => area.draw(&PathElement::new(
-                vec![(x0, y), (x0 + SWATCH, y)],
+                vec![(x0, vertical_centre), (x0 + SWATCH, vertical_centre)],
                 e.color.stroke_width(3),
             ))?,
         }
         if e.triangle {
-            area.draw(&TriangleMarker::new((x0 + 13, y), 5, e.color.filled()))?;
+            area.draw(&TriangleMarker::new(
+                (x0 + 13, vertical_centre),
+                5,
+                e.color.filled(),
+            ))?;
         } else {
-            area.draw(&Circle::new((x0 + 13, y), 4, e.color.filled()))?;
+            area.draw(&Circle::new(
+                (x0 + 13, vertical_centre),
+                4,
+                e.color.filled(),
+            ))?;
         }
         area.draw(&Text::new(
             e.label.clone(),
-            (x0 + 34, y),
+            (x0 + 34, vertical_centre),
             font.clone().pos(Pos::new(HPos::Left, VPos::Center)),
         ))?;
     }

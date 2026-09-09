@@ -88,7 +88,7 @@ fn apply_param(config: &mut TrialConfig, param: &str, val: f64) {
 /// Geometry is resolved once (via `--geometry` or auto-detection).  When the geometry
 /// is non-Euclidean, curvature magnitude is also swept as an additional parameter.
 pub fn run_scan(dataset_name: &str, args: &Args, evaluator: &Evaluator, mp: &MultiProgress) {
-    use crate::search_space::{param_bounds, ParamSpec};
+    use crate::search_space::ParamSpec;
 
     let metric = args.metric.as_deref().unwrap();
     let n_points = evaluator.n_points();
@@ -127,7 +127,49 @@ pub fn run_scan(dataset_name: &str, args: &Args, evaluator: &Evaluator, mp: &Mul
         .abs()
         .max(crate::search_space::param_bounds("curvature_magnitude").0);
     let curvature_mag_max = args.curvature_max.abs().max(curvature_mag_min);
-    let mut params: Vec<(&str, Vec<f64>)> = Vec::new();
+    let params = build_scan_params(
+        &hp,
+        optimize_curvature,
+        curvature_mag_min,
+        curvature_mag_max,
+        n,
+    );
+
+    let total = params.iter().map(|(_, v)| v.len()).sum::<usize>() as u64;
+    let pb = make_progress_bar(
+        mp,
+        total,
+        "{spinner:.green} scan={msg} [{bar:35.cyan/blue}] {pos}/{len} {wide_msg}",
+    );
+    pb.set_message(format!("{dataset_name} ({geometry})"));
+
+    let out_path = &args.output;
+    run_scan_sweep(
+        &params,
+        &base,
+        evaluator,
+        curvature_sign,
+        metric,
+        args,
+        dataset_name,
+        geometry,
+        optimize_curvature,
+        out_path,
+        &pb,
+    );
+
+    pb.finish_with_message(format!("{dataset_name} ({geometry}) scan done"));
+}
+
+fn build_scan_params(
+    hp: &TrialConfig,
+    optimize_curvature: bool,
+    curvature_mag_min: f64,
+    curvature_mag_max: f64,
+    n: usize,
+) -> Vec<(&'static str, Vec<f64>)> {
+    use crate::search_space::param_bounds;
+    let mut params: Vec<(&'static str, Vec<f64>)> = Vec::new();
     if hp.learning_rate.is_optimized() {
         let (lo, hi, log) = param_bounds("learning_rate");
         params.push(("learning_rate", sweep_values(lo, hi, n, log)));
@@ -158,20 +200,30 @@ pub fn run_scan(dataset_name: &str, args: &Args, evaluator: &Evaluator, mp: &Mul
             sweep_values(curvature_mag_min, curvature_mag_max, n, true),
         ));
     }
+    params
+}
 
-    let total = params.iter().map(|(_, v)| v.len()).sum::<usize>() as u64;
-    let pb = make_progress_bar(
-        mp,
-        total,
-        "{spinner:.green} scan={msg} [{bar:35.cyan/blue}] {pos}/{len} {wide_msg}",
-    );
-    pb.set_message(format!("{dataset_name} ({geometry})"));
-
-    let out_path = &args.output;
+#[expect(
+    clippy::too_many_arguments,
+    reason = "bundles the per-trial scan state"
+)]
+fn run_scan_sweep(
+    params: &[(&'static str, Vec<f64>)],
+    base: &TrialConfig,
+    evaluator: &Evaluator,
+    curvature_sign: f64,
+    metric: &str,
+    args: &Args,
+    dataset_name: &str,
+    geometry: &str,
+    optimize_curvature: bool,
+    out_path: &str,
+    pb: &ProgressBar,
+) {
     let pb_iters = ProgressBar::hidden();
     let mut trial_idx = 0usize;
 
-    for (param_name, values) in &params {
+    for (param_name, values) in params {
         for &val in values {
             trial_idx += 1;
             let mut config = base.clone();
@@ -213,6 +265,4 @@ pub fn run_scan(dataset_name: &str, args: &Args, evaluator: &Evaluator, mp: &Mul
             pb.inc(1);
         }
     }
-
-    pb.finish_with_message(format!("{dataset_name} ({geometry}) scan done"));
 }

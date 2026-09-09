@@ -10,12 +10,7 @@ lto = true
 codegen-units = 1
 
 # Pedantic clippy is enabled workspace-wide (see `[lints] workspace = true` in
-# each crate). The allow-list below is a *temporary ratchet*: every entry is a
-# lint that still fires somewhere, and each cleanup commit deletes the entries it
-# has fixed. When the list is empty this block is just the `pedantic` line.
+# each crate). The ratchet of temporary allow-list entries has been cleared:
+# every clippy::pedantic lint that fired anywhere has been fixed.
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
-
-# --- ratchet: still to fix -------------------------------------------------
-many_single_char_names = "allow"
-too_many_lines = "allow"

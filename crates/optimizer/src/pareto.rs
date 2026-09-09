@@ -4,8 +4,10 @@ use crate::common::{make_progress_bar, parse_experiment};
 use crate::evaluate::Evaluator;
 use crate::gp::{MultiTrial, ParEgoOptimizer};
 use crate::metrics::{Direction, Metric, MetricValues, OBJECTIVES};
-use crate::resume::{eval_or_reuse_batch, load_prior_evals, BatchOutcome, FreshEval};
+use crate::resume::{eval_or_reuse_batch, load_prior_evals, BatchOutcome, FreshEval, PriorEval};
+use crate::search_space::TrialConfig;
 use crate::trial_result::{write_result, TrialResult};
+use fitting_core::spread::SpreadDiagnostics;
 use indicatif::MultiProgress;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -80,6 +82,64 @@ pub fn run_pareto(
     }
 
     // ── Phase 1: LHS init ────────────────────────────────────────────────────
+    run_pareto_lhs(
+        &mut optimizer,
+        &mut rng,
+        &prior,
+        evaluator,
+        curvature_sign,
+        args,
+        dataset_name,
+        geometry,
+        optimize_curvature,
+        out_path,
+        mp,
+        lhs_total,
+        n_objectives,
+        batch_size,
+    );
+
+    // ── Phase 2: GP optimisation ─────────────────────────────────────────────
+    run_pareto_gp(
+        &mut optimizer,
+        &mut rng,
+        &prior,
+        evaluator,
+        curvature_sign,
+        args,
+        dataset_name,
+        geometry,
+        optimize_curvature,
+        out_path,
+        mp,
+        lhs_total,
+        batch_size,
+        &front_path,
+    );
+}
+
+/// Phase 1: initial LHS exploration, evaluating the design points in parallel
+/// until the LHS design is drained.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "bundles the phase-1 runner state"
+)]
+fn run_pareto_lhs(
+    optimizer: &mut ParEgoOptimizer,
+    rng: &mut fitting_core::synthetic_data::Rng,
+    prior: &[PriorEval],
+    evaluator: &Evaluator,
+    curvature_sign: f64,
+    args: &Args,
+    dataset_name: &str,
+    geometry: &str,
+    optimize_curvature: bool,
+    out_path: &str,
+    mp: &MultiProgress,
+    lhs_total: usize,
+    n_objectives: usize,
+    batch_size: usize,
+) {
     let pb = make_progress_bar(
         mp,
         lhs_total as u64,
@@ -94,12 +154,12 @@ pub fn run_pareto(
     while !optimizer.lhs_drained() {
         let remaining_lhs = lhs_total.saturating_sub(lhs_completed);
         let this_batch = batch_size.min(remaining_lhs.max(1));
-        let configs = optimizer.suggest_batch(this_batch, &mut rng);
+        let configs = optimizer.suggest_batch(this_batch, rng);
 
         let outcomes = eval_or_reuse_batch(
             &configs,
             lhs_completed,
-            &prior,
+            prior,
             evaluator,
             curvature_sign,
             args.n_seeds,
@@ -129,20 +189,18 @@ pub fn run_pareto(
                         spread.r_rms().unwrap_or(f64::NAN),
                     );
 
-                    let mut result = TrialResult::new(
+                    write_fresh_result(
                         config,
-                        dataset_name,
-                        args.n_samples,
-                        args.n_seeds,
+                        &all,
+                        &spread,
                         actual_curvature,
                         elapsed_ms,
-                    )
-                    .with_all_metrics(&all, &spread);
-                    result.geometry = Some(geometry.to_string());
-                    if optimize_curvature {
-                        result.curvature_magnitude = Some(config.curvature_magnitude.value());
-                    }
-                    write_result(&result, out_path);
+                        dataset_name,
+                        args,
+                        geometry,
+                        optimize_curvature,
+                        out_path,
+                    );
                 }
             }
             lhs_completed += 1;
@@ -150,8 +208,29 @@ pub fn run_pareto(
         }
     }
     pb.finish_with_message(format!("{geometry} LHS done ({lhs_completed} points)"));
+}
 
-    // ── Phase 2: GP optimisation ─────────────────────────────────────────────
+/// Phase 2: GP-driven surrogate optimisation over the remaining trial budget.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "bundles the phase-2 runner state"
+)]
+fn run_pareto_gp(
+    optimizer: &mut ParEgoOptimizer,
+    rng: &mut fitting_core::synthetic_data::Rng,
+    prior: &[PriorEval],
+    evaluator: &Evaluator,
+    curvature_sign: f64,
+    args: &Args,
+    dataset_name: &str,
+    geometry: &str,
+    optimize_curvature: bool,
+    out_path: &str,
+    mp: &MultiProgress,
+    lhs_total: usize,
+    batch_size: usize,
+    front_path: &str,
+) {
     let pb = make_progress_bar(
         mp,
         args.n_trials as u64,
@@ -169,13 +248,13 @@ pub fn run_pareto(
 
     while remaining > 0 {
         let this_batch = batch_size.min(remaining);
-        let configs = optimizer.suggest_batch(this_batch, &mut rng);
+        let configs = optimizer.suggest_batch(this_batch, rng);
         let base_global = lhs_total + completed;
 
         let outcomes = eval_or_reuse_batch(
             &configs,
             base_global,
-            &prior,
+            prior,
             evaluator,
             curvature_sign,
             args.n_seeds,
@@ -207,20 +286,18 @@ pub fn run_pareto(
                         spread.r_rms().unwrap_or(f64::NAN),
                     );
 
-                    let mut result = TrialResult::new(
+                    write_fresh_result(
                         config,
-                        dataset_name,
-                        args.n_samples,
-                        args.n_seeds,
+                        &all,
+                        &spread,
                         actual_curvature,
                         elapsed_ms,
-                    )
-                    .with_all_metrics(&all, &spread);
-                    result.geometry = Some(geometry.to_string());
-                    if optimize_curvature {
-                        result.curvature_magnitude = Some(config.curvature_magnitude.value());
-                    }
-                    write_result(&result, out_path);
+                        dataset_name,
+                        args,
+                        geometry,
+                        optimize_curvature,
+                        out_path,
+                    );
 
                     let front_size = optimizer.pareto_front_indices().len();
                     pb.set_prefix(format!("{front_size}"));
@@ -247,8 +324,42 @@ pub fn run_pareto(
     pb.finish_with_message(format!("{dataset_name} ({geometry}) done"));
 
     let front = optimizer.pareto_trials();
-    write_pareto_front(&front, &optimizer.metrics, args.n_samples, &front_path);
+    write_pareto_front(&front, &optimizer.metrics, args.n_samples, front_path);
     pb.println(format!("Pareto front written to {front_path}"));
+}
+
+/// Write a freshly-evaluated trial's JSONL record with the shared geometry /
+/// curvature-magnitude fields.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "writes the shared JSONL trial fields"
+)]
+fn write_fresh_result(
+    config: &TrialConfig,
+    all: &MetricValues,
+    spread: &SpreadDiagnostics,
+    actual_curvature: f64,
+    elapsed_ms: u64,
+    dataset_name: &str,
+    args: &Args,
+    geometry: &str,
+    optimize_curvature: bool,
+    out_path: &str,
+) {
+    let mut result = TrialResult::new(
+        config,
+        dataset_name,
+        args.n_samples,
+        args.n_seeds,
+        actual_curvature,
+        elapsed_ms,
+    )
+    .with_all_metrics(all, spread);
+    result.geometry = Some(geometry.to_string());
+    if optimize_curvature {
+        result.curvature_magnitude = Some(config.curvature_magnitude.value());
+    }
+    write_result(&result, out_path);
 }
 
 /// The objectives for --mode pareto: six metrics, all measured on the 2D

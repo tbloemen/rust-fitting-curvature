@@ -17,6 +17,10 @@ use crate::curvature_detection::gromov::quad_delta;
 /// # Panics
 ///
 /// Panics if any computed δ is NaN.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "a,b,c,d are the four conventional vertex indices of the Gromov four-point condition; n is NumRec matrix dimension"
+)]
 #[must_use]
 pub fn gromov_hyperbolicity(distances: &[f64], n: usize, n_samples: usize) -> f64 {
     if n < 4 {
