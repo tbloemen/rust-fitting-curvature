@@ -63,6 +63,21 @@ pub enum Error {
     /// A figure failed to render. plotters' error type is generic over the
     /// backend, so it is flattened to its message here, which keeps plotters
     /// out of the non-`plots` build.
+    /// A results file with no parseable row, so the objective space it was
+    /// written in cannot be read off it.
+    EmptyResults(PathBuf),
+
+    /// A table names an objective space this build does not know.
+    UnknownObjectiveSpace(String),
+
+    /// Two cells of one run were written in different objective spaces.
+    MixedObjectiveSpaces {
+        first: String,
+        first_space: &'static str,
+        second: String,
+        second_space: &'static str,
+    },
+
     Plot(String),
 }
 
@@ -128,6 +143,28 @@ impl fmt::Display for Error {
                 f,
                 "{first}.jsonl and {second}.jsonl are both {cell}; keep result sets \
                  in separate directories and select one with --results-dir"
+            ),
+            Error::EmptyResults(path) => write!(
+                f,
+                "{}: no parseable trial row, so the objective space it was written in \
+                 cannot be determined; pass --objectives to state it",
+                path.display()
+            ),
+            Error::UnknownObjectiveSpace(tag) => write!(
+                f,
+                "table was written in objective space `{tag}`, which this build does not know"
+            ),
+            Error::MixedObjectiveSpaces {
+                first,
+                first_space,
+                second,
+                second_space,
+            } => write!(
+                f,
+                "results were written in two objective spaces: `{first}` is {first_space} but \
+                 `{second}` is {second_space}. R2 in one is not comparable to R2 in the other, \
+                 so one run cannot table both — keep the sweeps in separate directories, or \
+                 pass --objectives to force one and accept that the other set is mis-scored"
             ),
             Error::Plot(msg) => write!(f, "rendering figure: {msg}"),
         }

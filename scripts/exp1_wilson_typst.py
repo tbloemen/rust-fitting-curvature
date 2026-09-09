@@ -32,6 +32,12 @@ from exp1_common import cell, ensure_parent, load_rows, prepare, render, sci
 
 GENERATOR = "exp1_wilson_typst.py"
 LABEL = "tab:wilson-fit"
+# The exp1 binary tags its output with the objective space the sweeps were
+# scored in (`obj10` for the legacy projected+manifold set under `results/`,
+# `obj6` for the projected-only re-runs). Point --input at the other one to
+# render the other set; the two are not comparable and are never one table.
+DEFAULT_INPUT = "results/exp1_geometry_match_obj10.jsonl"
+
 DEFAULT_OUTPUT = "tables/exp1_wilson_fit.typ"
 
 
@@ -115,7 +121,7 @@ def build(rows, n):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--input", default="results/exp1_geometry_match.jsonl")
+    ap.add_argument("--input", default=DEFAULT_INPUT)
     ap.add_argument("--output", default=DEFAULT_OUTPUT)
     ap.add_argument("--n", type=int, default=1000, help="sample size to tabulate")
     a = ap.parse_args()

@@ -34,10 +34,27 @@ use crate::stats;
 /// The setting every other setting is compared against.
 pub const BASELINE: &str = "all_off";
 
+/// The space a stage-1 row with no `space` field was written in.
+///
+/// Every table written before the two spaces were separated came from the
+/// 10-objective sweeps, so an untagged row is a legacy one. Serde only reaches
+/// this for files predating the field.
+fn legacy_tag() -> String {
+    crate::objectives::ObjectiveSpace::Legacy10
+        .tag()
+        .to_string()
+}
+
 /// One stage-1 per-cell record (one line of the `r2 stats` output).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CellRecord {
     pub stem: String,
+    /// The objective space this cell was scored in, as
+    /// `ObjectiveSpace::tag`. Carried so stage 2 cannot difference a legacy R2
+    /// against a current one, and so its outputs can be tagged without
+    /// re-reading the sweeps.
+    #[serde(default = "legacy_tag")]
+    pub space: String,
     pub setting: String,
     pub dataset: String,
     pub n: usize,

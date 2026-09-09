@@ -35,6 +35,7 @@
 use fitting_core::cast::count_to_f64;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use clap::{Parser, Subcommand};
 use serde::Serialize;
@@ -42,7 +43,7 @@ use serde::Serialize;
 use fitting_analysis::aggregate::{self, CellRecord};
 use fitting_analysis::cell::{discover_cells, CellFile};
 use fitting_analysis::indicators::epsilon_pair;
-use fitting_analysis::objectives::{oriented_matrix, OBJECTIVES};
+use fitting_analysis::objectives::{oriented_matrix, resolve_space, ObjectiveSpace};
 use fitting_analysis::r2::{cell_summary, oriented_objectives, Weights};
 use fitting_analysis::stats;
 use fitting_analysis::{
@@ -91,9 +92,14 @@ struct StatsArgs {
     #[arg(long, default_value = "results")]
     results_dir: PathBuf,
 
-    /// Output JSONL path (one line per cell).
-    #[arg(long, default_value = "results/r2_local.jsonl")]
-    out: PathBuf,
+    /// Output JSONL path (one line per cell). Defaults to
+    /// `results/r2_local_<space>.jsonl`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+
+    /// Force the objective space instead of reading it off the sweeps.
+    #[arg(long)]
+    objectives: Option<ObjectiveSpace>,
 }
 
 #[derive(Parser, Debug)]
@@ -103,8 +109,10 @@ struct AggregateArgs {
     tables: Vec<PathBuf>,
 
     /// Friedman + Holm results, one JSON object per (region, geometry) test.
-    #[arg(long, default_value = "results/r2_tests.jsonl")]
-    tests: PathBuf,
+    /// Defaults to `results/r2_tests_<space>.jsonl`, the space taken from the
+    /// stage-1 rows.
+    #[arg(long)]
+    tests: Option<PathBuf>,
 
     /// Optional path to write the per-dataset ΔR2 rows as JSONL. Absent means
     /// the table is not written; the pipeline's path is
@@ -135,6 +143,10 @@ struct CompareArgs {
     results_dir: PathBuf,
 
     /// Output JSONL path (one line per (dataset, geometry, N, setting)).
+    /// Force the objective space instead of reading it off the sweeps.
+    #[arg(long)]
+    objectives: Option<ObjectiveSpace>,
+
     #[arg(long, default_value = "results/r2_epsilon.jsonl")]
     out: PathBuf,
 
@@ -165,6 +177,10 @@ struct RecommendArgs {
     results_dir: PathBuf,
 
     /// Output JSONL path (one line per (cell, preference region)).
+    /// Force the objective space instead of reading it off the sweeps.
+    #[arg(long)]
+    objectives: Option<ObjectiveSpace>,
+
     #[arg(long, default_value = "results/recommendations.jsonl")]
     out: PathBuf,
 }
@@ -182,10 +198,23 @@ struct FrontArgs {
     /// Overwrite fronts the optimizer already wrote instead of skipping them.
     #[arg(long)]
     force: bool,
+
+    /// Force the objective space instead of reading it off the sweeps.
+    #[arg(long)]
+    objectives: Option<ObjectiveSpace>,
 }
 
 /// (N, geometry, dataset) — the block a set of comparable cells shares.
 type BlockKey = (usize, String, String);
+
+/// The default output path for *stem*, tagged with the objective space.
+///
+/// Every default carries the tag because a table scored in one space and a
+/// table scored in the other are not comparable, and an untagged default would
+/// let the second run silently overwrite the first. `--out` still overrides it.
+fn tagged(stem: &str, space: ObjectiveSpace) -> PathBuf {
+    PathBuf::from(format!("results/{stem}_{}.jsonl", space.tag()))
+}
 
 fn main() -> Result<()> {
     match Args::parse().command {
@@ -206,7 +235,8 @@ fn run_stats(args: StatsArgs) -> Result<()> {
         return Err(Error::NoCells(args.results_dir));
     }
 
-    let weights = Weights::new();
+    let space = resolve_space(&cells, args.objectives)?;
+    let weights = Weights::new(space);
 
     // Cells are visited in `discover_cells` order
     let mut rows = Vec::with_capacity(cells.len());
@@ -215,6 +245,7 @@ fn run_stats(args: StatsArgs) -> Result<()> {
         let summary = cell_summary(&records, &weights);
         rows.push(CellRecord {
             stem: cf.stem.clone(),
+            space: space.tag().to_string(),
             setting: cf.cell.setting.clone(),
             dataset: cf.cell.dataset.clone(),
             n: cf.cell.n,
@@ -224,10 +255,37 @@ fn run_stats(args: StatsArgs) -> Result<()> {
             r2: summary.r2.clone(),
         });
     }
-    write_jsonl(&args.out, &rows)
+    write_jsonl(args.out.unwrap_or_else(|| tagged("r2_local", space)), &rows)
 }
 
 // ─── Stage 2: ΔR2 + the rank test ─────────────────────────────────────────────
+
+/// The one objective space a stage-1 table was written in.
+///
+/// # Errors
+///
+/// Returns [`Error::MixedObjectiveSpaces`] if the rows disagree.
+fn space_of_table(table: &[CellRecord]) -> Result<ObjectiveSpace> {
+    let mut found: Option<&CellRecord> = None;
+    for row in table {
+        match found {
+            None => found = Some(row),
+            Some(first) if first.space != row.space => {
+                return Err(Error::MixedObjectiveSpaces {
+                    first: first.stem.clone(),
+                    first_space: ObjectiveSpace::from_str(&first.space)
+                        .map_or("unknown", ObjectiveSpace::tag),
+                    second: row.stem.clone(),
+                    second_space: ObjectiveSpace::from_str(&row.space)
+                        .map_or("unknown", ObjectiveSpace::tag),
+                })
+            }
+            Some(_) => {}
+        }
+    }
+    let tag = found.map_or(ObjectiveSpace::Legacy10.tag(), |r| r.space.as_str());
+    ObjectiveSpace::from_str(tag).map_err(|_| Error::UnknownObjectiveSpace(tag.to_string()))
+}
 
 fn run_aggregate(args: &AggregateArgs) -> Result<()> {
     let table: Vec<CellRecord> = aggregate::load_table(&args.tables)?;
@@ -235,6 +293,11 @@ fn run_aggregate(args: &AggregateArgs) -> Result<()> {
         let first = args.tables.first().cloned().unwrap_or_default();
         return Err(Error::NoCells(first));
     }
+    // Stage 2 differences R2 against a baseline cell, so every row it reads has
+    // to be in one space. Concatenating a legacy stage-1 table with a re-run one
+    // is the way that goes wrong, and it is caught here rather than producing a
+    // ΔR2 column in two units.
+    let space = space_of_table(&table)?;
     if let Some(region) = &args.region {
         let available = aggregate::regions(&table);
         if !available.iter().any(|r| r == region) {
@@ -265,7 +328,11 @@ fn run_aggregate(args: &AggregateArgs) -> Result<()> {
     // One JSON object per (region, geometry) test: `settings`, `mean_ranks` and
     // `holm_p` stay parallel arrays inside it, the shape `rank_tests` produces.
     let tests = aggregate::rank_tests(&rows, &settings);
-    write_jsonl(&args.tests, tests.iter().filter(|t| keep_region(&t.region)))?;
+    let tests_path = args
+        .tests
+        .clone()
+        .unwrap_or_else(|| tagged("r2_tests", space));
+    write_jsonl(&tests_path, tests.iter().filter(|t| keep_region(&t.region)))?;
 
     // Descriptive mean/median ΔR2 per (N, geometry, setting, region).
     if let Some(path) = &args.descriptive {
@@ -359,6 +426,7 @@ fn run_compare(args: CompareArgs) -> Result<()> {
         .filter(|s| *s != aggregate::BASELINE)
         .collect();
 
+    let space = resolve_space(&cells, args.objectives)?;
     let mut rows: Vec<EpsilonRow> = Vec::new();
     for ((n, geometry, dataset), by_setting) in &blocks {
         let present: Vec<&str> = wanted
@@ -378,11 +446,17 @@ fn run_compare(args: CompareArgs) -> Result<()> {
             });
         };
         // One cell of records at a time: the front is all that outlives the load.
-        let baseline = oriented_matrix(&pareto_front_records(&trial_records(&base_cf.path)?));
+        let baseline = oriented_matrix(
+            &pareto_front_records(&trial_records(&base_cf.path)?, space),
+            space,
+        );
 
         for setting in present {
             let cf = by_setting[setting];
-            let front = oriented_matrix(&pareto_front_records(&trial_records(&cf.path)?));
+            let front = oriented_matrix(
+                &pareto_front_records(&trial_records(&cf.path)?, space),
+                space,
+            );
             // An empty front means an empty cell; there is nothing to compare.
             let Some(eps) = epsilon_pair(&front, &baseline) else {
                 continue;
@@ -520,7 +594,8 @@ fn run_recommend(args: RecommendArgs) -> Result<()> {
         return Err(Error::NoCells(args.results_dir));
     }
 
-    let weights = Weights::new();
+    let space = resolve_space(&cells, args.objectives)?;
+    let weights = Weights::new(space);
 
     let mut rows: Vec<RecRow> = Vec::new();
     for cf in &cells {
@@ -531,7 +606,7 @@ fn run_recommend(args: RecommendArgs) -> Result<()> {
                 continue;
             };
             let record = &records[record_idx];
-            let objectives = oriented_objectives(record);
+            let objectives = oriented_objectives(record, space);
             rows.push(RecRow {
                 stem: cf.stem.clone(),
                 setting: cf.cell.setting.clone(),
@@ -541,7 +616,8 @@ fn run_recommend(args: RecommendArgs) -> Result<()> {
                 region: region.clone(),
                 share: rec.share,
                 params: PARAMS.iter().map(|p| (*p, record.param(p))).collect(),
-                objectives: OBJECTIVES
+                objectives: space
+                    .metrics()
                     .iter()
                     .map(|o| (o.name(), objectives.get(o.name()).copied().unwrap_or(0.0)))
                     .collect(),
@@ -583,9 +659,9 @@ struct FrontEntry {
     metrics: serde_json::Map<String, serde_json::Value>,
 }
 
-fn front_entry(r: &TrialRecord) -> FrontEntry {
+fn front_entry(r: &TrialRecord, space: ObjectiveSpace) -> FrontEntry {
     let mut metrics = serde_json::Map::new();
-    for metric in OBJECTIVES {
+    for metric in space.metrics() {
         let v = match r.metrics.get(*metric) {
             Some(x) => serde_json::Number::from_f64(x)
                 .map_or(serde_json::Value::Null, serde_json::Value::Number),
@@ -613,6 +689,7 @@ fn run_front(args: FrontArgs) -> Result<()> {
     let out_dir = args.out_dir.unwrap_or_else(|| args.results_dir.clone());
     std::fs::create_dir_all(&out_dir).at(&out_dir)?;
     let cells = discover_cells(&args.results_dir)?;
+    let space = resolve_space(&cells, args.objectives)?;
 
     for cf in &cells {
         // The optimizer names fronts `<stem>_pareto_<dataset>_<geometry>.json`;
@@ -628,8 +705,8 @@ fn run_front(args: FrontArgs) -> Result<()> {
         if records.is_empty() {
             continue;
         }
-        let front = pareto_front_records(&records);
-        let entries: Vec<FrontEntry> = front.iter().map(front_entry).collect();
+        let front = pareto_front_records(&records, space);
+        let entries: Vec<FrontEntry> = front.iter().map(|r| front_entry(r, space)).collect();
         let json = serde_json::to_string_pretty(&entries).map_err(Error::Serialize)?;
         std::fs::write(&front_path, json).at(&front_path)?;
     }
@@ -647,6 +724,10 @@ struct ReferenceArgs {
     /// Reference table written by `optimizer --mode reference`. A missing file
     /// is not an error: the attainment columns still render and the reference
     /// ones are null, the same rule `exp1 --kappa-data` follows.
+    /// Force the objective space instead of reading it off the sweeps.
+    #[arg(long)]
+    objectives: Option<ObjectiveSpace>,
+
     #[arg(long, default_value = "results/reference.jsonl")]
     reference: PathBuf,
 
@@ -704,6 +785,7 @@ fn run_reference(args: ReferenceArgs) -> Result<()> {
     if cells.is_empty() {
         return Err(Error::NoCells(args.results_dir));
     }
+    let space = resolve_space(&cells, args.objectives)?;
 
     // Reference rows keyed by (dataset, geometry). Absent file → no rows, which
     // renders as null reference columns rather than an error.
@@ -714,9 +796,10 @@ fn run_reference(args: ReferenceArgs) -> Result<()> {
                 .filter_map(|r| {
                     let dataset = r.dataset_name.clone()?;
                     let geometry = r.geometry.clone()?;
-                    let row: BTreeMap<&'static str, f64> = OBJECTIVES
+                    let row: BTreeMap<&'static str, f64> = space
+                        .metrics()
                         .iter()
-                        .zip(fitting_analysis::objectives::oriented_row(r))
+                        .zip(fitting_analysis::objectives::oriented_row(r, space))
                         .map(|(metric, v)| (metric.name(), v))
                         .collect();
                     Some(((dataset, geometry), row))
@@ -726,17 +809,17 @@ fn run_reference(args: ReferenceArgs) -> Result<()> {
             BTreeMap::new()
         };
 
-    let weights = Weights::new();
+    let weights = Weights::new(space);
     let mut rows: Vec<ReferenceRow> = Vec::new();
 
     for cf in &cells {
         let records = trial_records(&cf.path)?;
         let summary = cell_summary(&records, &weights);
 
-        let front: Vec<[f64; OBJECTIVES.len()]> = summary
+        let front: Vec<Vec<f64>> = summary
             .front
             .iter()
-            .map(|&i| fitting_analysis::objectives::oriented_row(&records[i]))
+            .map(|&i| fitting_analysis::objectives::oriented_row(&records[i], space))
             .collect();
         if front.is_empty() {
             continue;
@@ -744,7 +827,7 @@ fn run_reference(args: ReferenceArgs) -> Result<()> {
 
         let mut best = BTreeMap::new();
         let mut med = BTreeMap::new();
-        for (slot, metric) in OBJECTIVES.iter().enumerate() {
+        for (slot, metric) in space.metrics().iter().enumerate() {
             let column: Vec<f64> = front.iter().map(|row| row[slot]).collect();
             best.insert(
                 metric.name(),

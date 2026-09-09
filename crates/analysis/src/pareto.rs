@@ -1,6 +1,6 @@
 //! Pareto non-domination in the oriented objective space.
 
-use crate::objectives::{oriented_matrix, N_OBJECTIVES};
+use crate::objectives::{oriented_matrix, ObjectiveSpace, Row};
 use crate::records::TrialRecord;
 
 /// Boolean mask of Pareto-non-dominated rows of an oriented matrix *m*.
@@ -9,7 +9,7 @@ use crate::records::TrialRecord;
 /// strictly greater in at least one. Exact duplicates are all kept (no row
 /// strictly dominates an identical one).
 #[must_use]
-pub fn pareto_front_mask(m: &[[f64; N_OBJECTIVES]]) -> Vec<bool> {
+pub fn pareto_front_mask(m: &[Row]) -> Vec<bool> {
     let n = m.len();
     let mut keep = vec![true; n];
     for j in 0..n {
@@ -29,7 +29,11 @@ pub fn pareto_front_mask(m: &[[f64; N_OBJECTIVES]]) -> Vec<bool> {
 }
 
 /// Does `a` dominate `b`: weakly better in every objective, strictly in one.
-fn dominates(a: &[f64; N_OBJECTIVES], b: &[f64; N_OBJECTIVES]) -> bool {
+///
+/// Rows shorter than each other compare only over the overlap, which cannot
+/// happen within one [`ObjectiveSpace`] and is why every caller builds both
+/// sides from the same one.
+fn dominates(a: &[f64], b: &[f64]) -> bool {
     let mut strict = false;
     for (x, y) in a.iter().zip(b.iter()) {
         if y > x {
@@ -42,10 +46,10 @@ fn dominates(a: &[f64; N_OBJECTIVES], b: &[f64; N_OBJECTIVES]) -> bool {
     strict
 }
 
-/// The non-dominated subset of *records* (in the 10-objective space).
+/// The non-dominated subset of *records*, scored in *space*.
 #[must_use]
-pub fn pareto_front_records(records: &[TrialRecord]) -> Vec<TrialRecord> {
-    let m = oriented_matrix(records);
+pub fn pareto_front_records(records: &[TrialRecord], space: ObjectiveSpace) -> Vec<TrialRecord> {
+    let m = oriented_matrix(records, space);
     let keep = pareto_front_mask(&m);
     records
         .iter()

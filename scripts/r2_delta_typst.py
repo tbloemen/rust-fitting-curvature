@@ -379,7 +379,7 @@ def build(table, n, datasets, settings):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--input", default="results/r2_delta.jsonl")
+    ap.add_argument("--input", default="results/r2_delta_obj10.jsonl")
     ap.add_argument("--output", help="default: tables/r2_delta_<datasets>_n<N>.typ")
     ap.add_argument("--n", type=int, default=1000, help="sample size to tabulate")
     ap.add_argument(

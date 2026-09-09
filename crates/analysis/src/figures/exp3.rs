@@ -11,8 +11,8 @@ use plotters::style::text_anchor::{HPos, Pos, VPos};
 
 use super::{
     all_datasets, draw_legend, geometry_color, load_kappa_data, log_tick, median_front_kappa,
-    padded_log_range, padded_range, snap_to_decades, CellMap, Figure, KappaData, LegendEntry, Res,
-    CURVED, OK_BLACK, OK_BLUE, OK_ORANGE, REAL_DATASETS,
+    padded_log_range, padded_range, snap_to_decades, CellMap, Figure, KappaData, LegendEntry,
+    ObjectiveSpace, Res, CURVED, OK_BLACK, OK_BLUE, OK_ORANGE, REAL_DATASETS,
 };
 use crate::cell::Cell;
 use crate::error::Result;
@@ -26,6 +26,9 @@ pub struct KappaScatter<'a> {
     cells: &'a CellMap,
     kappa_data: BTreeMap<String, KappaData>,
     n: usize,
+    /// The space the cells' fronts are reduced in; κ is read off the front, so
+    /// it moves with the space.
+    space: ObjectiveSpace,
 }
 
 /// One plotted dataset: its intrinsic `κ_data`, its median front κ, and whether it
@@ -41,11 +44,17 @@ impl<'a> KappaScatter<'a> {
     /// # Errors
     ///
     /// Propagates errors from [`load_kappa_data`] (JSONL open/read/parse).
-    pub fn new(cells: &'a CellMap, results_dir: &std::path::Path, n: usize) -> Result<Self> {
+    pub fn new(
+        cells: &'a CellMap,
+        results_dir: &std::path::Path,
+        n: usize,
+        space: ObjectiveSpace,
+    ) -> Result<Self> {
         Ok(Self {
             cells,
             kappa_data: load_kappa_data(results_dir, n)?,
             n,
+            space,
         })
     }
 
@@ -65,8 +74,10 @@ impl<'a> KappaScatter<'a> {
             let Some(kd) = self.kappa_data.get(dataset) else {
                 continue;
             };
-            let (Some(mk), Some(kdata)) = (median_front_kappa(recs), kd.for_geometry(geometry))
-            else {
+            let (Some(mk), Some(kdata)) = (
+                median_front_kappa(recs, self.space),
+                kd.for_geometry(geometry),
+            ) else {
                 continue;
             };
             if !kdata.is_finite() || kdata <= 0.0 {
@@ -188,13 +199,15 @@ impl Figure for KappaScatter<'_> {
 pub struct RmsAnchored<'a> {
     cells: &'a CellMap,
     n: usize,
+    /// The space each cell is reduced to its front in.
+    space: ObjectiveSpace,
     dataset: String,
 }
 
 impl<'a> RmsAnchored<'a> {
     /// One figure per dataset that has hyperbolic runs at this N.
     #[must_use]
-    pub fn panels(cells: &'a CellMap, n: usize) -> Vec<Self> {
+    pub fn panels(cells: &'a CellMap, n: usize, space: ObjectiveSpace) -> Vec<Self> {
         all_datasets()
             .into_iter()
             .filter(|ds| {
@@ -205,6 +218,7 @@ impl<'a> RmsAnchored<'a> {
             .map(|ds| Self {
                 cells,
                 n,
+                space,
                 dataset: ds.to_string(),
             })
             .collect()
@@ -226,7 +240,7 @@ impl<'a> RmsAnchored<'a> {
             if key.dataset != self.dataset || key.n != self.n || key.geometry != "hyperbolic" {
                 continue;
             }
-            let ks = pareto_front_records(recs)
+            let ks = pareto_front_records(recs, self.space)
                 .iter()
                 .filter_map(super::super::records::TrialRecord::kappa)
                 .collect::<Vec<_>>();

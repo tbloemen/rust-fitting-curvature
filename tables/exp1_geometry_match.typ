@@ -22,7 +22,7 @@
     [euc], [$0.0539$], [---], [$0$], [$46$],
     [hyp], [$0.0519$], [$+0.0020$], [$0.202$], [$127$],
     table.hline(stroke: 0.5pt),
-    table.cell(rowspan: 3)[tree\ #text(size: 0.8em)[(hyperbolic)]], [sph], [$0.0786$], [$+0.0023$], [$2.47$], [$203$],
+    table.cell(rowspan: 3)[tree (layout)\ #text(size: 0.8em)[(hyperbolic)]], [sph], [$0.0786$], [$+0.0023$], [$2.47$], [$203$],
     [euc], [$0.0809$], [---], [$0$], [$146$],
     [*hyp*], [$0.0577$], [$+0.0232$], [$13.1$], [$524$],
     table.hline(stroke: 0.5pt),

@@ -44,7 +44,9 @@ use plotters::coord::Shift;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
 
-use super::{draw_legend, geometry_color, Figure, LegendEntry, Res, OK_BLACK, SYNTH_DATASETS};
+use super::{
+    draw_legend, geometry_color, Figure, LegendEntry, ObjectiveSpace, Res, OK_BLACK, SYNTH_DATASETS,
+};
 use crate::cell::truth_of;
 use crate::error::{Error, Result};
 use crate::records::load_jsonl;
@@ -124,9 +126,18 @@ pub struct Exp1Row {
     pub dataset: String,
     pub n: usize,
     pub setting: String,
+    /// The objective space the R2 values were computed in. Rows written before
+    /// the two spaces were separated are legacy ones.
+    #[serde(default = "legacy_tag")]
+    pub space: String,
     pub geometry: String,
     /// Preference region name → R2 indicator of that cell's front.
     pub r2: BTreeMap<String, f64>,
+}
+
+/// The space an untagged row was written in — see [`Exp1Row::space`].
+fn legacy_tag() -> String {
+    ObjectiveSpace::Legacy10.tag().to_string()
 }
 
 /// Load the rows written by the `exp1` binary.
@@ -171,6 +182,10 @@ pub struct MatchedGain {
     region: String,
     /// The loss-weight setting the rows came from, named in the title.
     setting: String,
+    /// The objective space the gains were computed in, named in the title. A
+    /// legacy gain and a current-space gain are different quantities, and the
+    /// figure has to say which it is showing.
+    space: String,
     groups: Vec<Group>,
 }
 
@@ -191,6 +206,12 @@ impl MatchedGain {
             .min()
             .unwrap_or_default()
             .to_string();
+        // One table is written in one space (`bin/exp1.rs` resolves it once per
+        // run), so taking the first row's is enough to name it.
+        let space = rows.iter().find(|r| r.n == n).map_or_else(
+            || ObjectiveSpace::Legacy10.tag().to_string(),
+            |r| r.space.clone(),
+        );
 
         // (dataset, geometry) → this region's R2.
         let mut r2: BTreeMap<(&str, &str), f64> = BTreeMap::new();
@@ -227,6 +248,7 @@ impl MatchedGain {
             n,
             region: region.to_string(),
             setting,
+            space,
             groups,
         }
     }
@@ -326,10 +348,17 @@ impl Figure for MatchedGain {
             "R2 gain of the matched geometry over each mismatched one",
             ("sans-serif", 18).into_font().color(&OK_BLACK),
         )?;
-        // let root = root.titled(
-        //     "bar = R2(mismatched) − R2(matched)",
-        //     ("sans-serif", 13).into_font().color(&RGBColor(90, 90, 90)),
-        // )?;
+        // What this figure is *of*, compactly: two runs over sweeps scored in
+        // different objective spaces produce two figures whose bars are not
+        // comparable, so the space has to be on the image and not only in the
+        // filename. Same for N, the region and the loss-weight setting.
+        let root = root.titled(
+            &format!(
+                "N={} · W_{} · {} · {}",
+                self.n, self.region, self.setting, self.space
+            ),
+            ("sans-serif", 12).into_font().color(&RGBColor(90, 90, 90)),
+        )?;
         let (legend, body) = root.split_vertically(30);
 
         let entries: Vec<LegendEntry> = self
@@ -493,6 +522,7 @@ mod tests {
             dataset: dataset.to_string(),
             n: 1000,
             setting: "all_off".to_string(),
+            space: ObjectiveSpace::Legacy10.tag().to_string(),
             geometry: geometry.to_string(),
             r2: [("all".to_string(), r2)].into_iter().collect(),
         }

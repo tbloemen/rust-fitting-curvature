@@ -2,24 +2,31 @@
 //! forces both directions, and the compliance property `Δε > 0` rests on.
 
 use fitting_analysis::indicators::{epsilon_additive, epsilon_pair};
-use fitting_analysis::objectives::N_OBJECTIVES;
+use fitting_analysis::objectives::{ObjectiveSpace, Row};
 use fitting_core::cast::count_to_f64;
 use std::cmp::Ordering;
 
 /// A front point that scores *v* on every objective.
-fn flat(v: f64) -> [f64; N_OBJECTIVES] {
-    [v; N_OBJECTIVES]
+/// The space these fixtures are built in. The ε-indicator is defined for any
+/// dimension, so one is enough — `epsilon_is_dimension_agnostic` covers the
+/// other.
+const SPACE: ObjectiveSpace = ObjectiveSpace::Current6;
+
+fn flat(v: f64) -> Row {
+    vec![v; SPACE.len()]
 }
 
 /// A front point whose objectives all differ, so a test cannot pass by symmetry.
 /// Derived from the arity rather than written out, so growing the objective set
 /// does not turn every literal row into a size mismatch.
-fn ramp(base: f64) -> [f64; N_OBJECTIVES] {
-    std::array::from_fn(|j| base + 0.03 * count_to_f64(j % 4))
+fn ramp(base: f64) -> Row {
+    (0..SPACE.len())
+        .map(|j| base + 0.03 * count_to_f64(j % 4))
+        .collect()
 }
 
 /// `epsilon_additive` on two non-empty fronts, unwrapped.
-fn eps(a: &[[f64; N_OBJECTIVES]], b: &[[f64; N_OBJECTIVES]]) -> f64 {
+fn eps(a: &[Row], b: &[Row]) -> f64 {
     epsilon_additive(a, b).expect("both fronts non-empty")
 }
 
@@ -115,11 +122,12 @@ fn the_indicator_is_pareto_compliant() {
     // objective can only improve the indicator in both directions. Unlike R2
     // this holds strictly, which is the reason for reporting it alongside.
     let worse = ramp(0.3);
-    let better = worse.map(|v| v + 0.1);
+    let better: Row = worse.iter().map(|v| v + 0.1).collect();
     let reference = [flat(0.55), flat(0.45)];
 
     // Against a fixed reference, the dominating front needs no more of a shift…
-    assert!(eps(&[better], &reference) <= eps(&[worse], &reference));
+    let (b1, w1) = ([better.clone()], [worse.clone()]);
+    assert!(eps(&b1, &reference) <= eps(&w1, &reference));
     // …and is harder for the reference to cover.
     assert!(eps(&reference, &[better]) >= eps(&reference, &[worse]));
 }
@@ -134,11 +142,11 @@ fn dominated_points_do_not_change_the_indicator() {
     let b = [flat(0.6), flat(0.5)];
 
     assert_eq!(
-        eps(&[front], &b).partial_cmp(&eps(&[front, inside], &b)),
+        eps(&[front.clone()], &b).partial_cmp(&eps(&[front.clone(), inside.clone()], &b)),
         Some(Ordering::Equal)
     );
     assert_eq!(
-        eps(&b, &[front]).partial_cmp(&eps(&b, &[front, inside])),
+        eps(&b, &[front.clone()]).partial_cmp(&eps(&b, &[front, inside])),
         Some(Ordering::Equal)
     );
 }
@@ -150,12 +158,14 @@ fn the_indicator_is_order_independent() {
     let mut b = flat(0.6);
     b[4] = 0.2;
     let reference = [flat(0.45)];
+    let ab = [a.clone(), b.clone()];
+    let ba = [b, a];
     assert_eq!(
-        eps(&[a, b], &reference).partial_cmp(&eps(&[b, a], &reference)),
+        eps(&ab, &reference).partial_cmp(&eps(&ba, &reference)),
         Some(Ordering::Equal)
     );
     assert_eq!(
-        eps(&reference, &[a, b]).partial_cmp(&eps(&reference, &[b, a])),
+        eps(&reference, &ab).partial_cmp(&eps(&reference, &ba)),
         Some(Ordering::Equal)
     );
 }

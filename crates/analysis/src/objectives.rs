@@ -1,9 +1,14 @@
 //! The qParEGO objectives and their orientation into `[0, 1]`-higher-is-better.
 
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
 use std::sync::LazyLock;
 
-use fitting_core::metrics::{Direction, Metric};
+use fitting_core::metrics::{Direction, Metric, DISTANCE_CONSISTENCY};
 
+use crate::cell::CellFile;
+use crate::error::{Error, IoContext, Result};
 use crate::records::TrialRecord;
 
 /// The qParEGO objectives, in the order the optimizer writes them.
@@ -44,12 +49,177 @@ use crate::records::TrialRecord;
 /// registry tests pins the contiguity.
 pub const OBJECTIVES: &[Metric] = fitting_core::metrics::OBJECTIVES;
 
-/// Number of objectives; the dimension of the oriented objective space.
+/// Number of objectives in the **current** space; the dimension
+/// [`ObjectiveSpace::Current6`] scores in.
 ///
-/// A `const`, because `r2.rs`, `indicators.rs` and `pareto.rs` all use it as an
-/// array length. `<[T]>::len` is const-evaluable, so this still derives from
-/// the registry rather than restating its size.
+/// No longer an array length — a row is a `Vec<f64>` sized by its
+/// [`ObjectiveSpace`], because two spaces now have to coexist in one process.
+/// It survives as the arity `FAMILIES` indexes into and as the figure of record
+/// for the current search.
 pub const N_OBJECTIVES: usize = OBJECTIVES.len();
+
+// ─── The two objective spaces ────────────────────────────────────────────────
+
+/// The ten objectives the sweeps under `results/` were searched and scored in:
+/// each of the five paired quality metrics, projected *and* manifold, in
+/// [`METRIC_PAIRS`] order with the manifold reading of a pair at the odd index.
+///
+/// Derived by interleaving [`METRIC_PAIRS`], which is exactly what the deleted
+/// `flatten_pairs()` did before commit c0bad38 — so this is the historical list
+/// reconstructed from the registry rather than transcribed from it.
+static LEGACY_OBJECTIVES: LazyLock<Vec<Metric>> = LazyLock::new(|| {
+    METRIC_PAIRS
+        .iter()
+        .flat_map(|&(projected, manifold)| [projected, manifold])
+        .collect()
+});
+
+/// Which objective space a set of results is scored in.
+///
+/// Two spaces have to coexist because the sweeps on disk were not all searched
+/// in the same one, and an indicator is only meaningful in the space its front
+/// was found in:
+///
+/// * Until commit c0bad38 (2026-09-08) the optimizer searched **ten**
+///   objectives — every quality metric twice, once on the embedding manifold
+///   and once after projection to 2D. Half the space therefore rewarded a
+///   curved embedding for fitting well *before* projection.
+/// * Since then the objectives are **projected only**, and 3597f7b
+///   (2026-09-09) added `distance_consistency` as the sixth.
+///
+/// Scoring a legacy sweep in the current space is not a rescaling: it drops the
+/// five axes the search actually optimised, shrinks the Pareto fronts (a curved
+/// trial could be non-dominated on a manifold axis alone), and adds a sixth
+/// objective that legacy trials never measured, so it orients to the worst case
+/// for every one of them and contributes a front-independent constant. That is
+/// why this is a choice the analysis makes per run rather than a constant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ObjectiveSpace {
+    /// Ten objectives: the five paired metrics, projected and manifold.
+    Legacy10,
+    /// Six projected objectives — what the optimizer searches today.
+    Current6,
+}
+
+impl ObjectiveSpace {
+    /// Both spaces, for exhaustive iteration in tests and CLI parsing.
+    pub const ALL: [Self; 2] = [Self::Legacy10, Self::Current6];
+
+    /// The objectives of this space, in scoring order.
+    #[must_use]
+    pub fn metrics(self) -> &'static [Metric] {
+        match self {
+            Self::Legacy10 => &LEGACY_OBJECTIVES,
+            Self::Current6 => OBJECTIVES,
+        }
+    }
+
+    /// The dimension of this space.
+    #[must_use]
+    pub fn len(self) -> usize {
+        self.metrics().len()
+    }
+
+    /// Never true — both spaces have objectives. Present because clippy asks
+    /// for it beside `len`.
+    #[must_use]
+    pub fn is_empty(self) -> bool {
+        self.metrics().is_empty()
+    }
+
+    /// The filename tag that keeps the two spaces' outputs apart.
+    ///
+    /// Every default output path carries it, because a table scored in one
+    /// space and a table scored in the other are not comparable and must never
+    /// overwrite each other.
+    #[must_use]
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::Legacy10 => "obj10",
+            Self::Current6 => "obj6",
+        }
+    }
+
+    /// A caption-ready description.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Legacy10 => "10 objectives (projected + manifold)",
+            Self::Current6 => "6 objectives (projected only)",
+        }
+    }
+
+    /// The space a tag names.
+    #[must_use]
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.tag() == tag)
+    }
+
+    /// Which space a results *line* was written in.
+    ///
+    /// `distance_consistency` entered the objective set in the same commit that
+    /// made the space projected-only, and nothing before it measured the metric
+    /// at all — so a row carrying the **column** is a post-change sweep and one
+    /// without it is a legacy sweep. That is the whole test: it needs no
+    /// filename convention and no flag, and it cannot drift out of step with
+    /// the data the way either would.
+    ///
+    /// The test is on the column's *presence*, not its value, which is why it
+    /// works on the raw JSON rather than on a [`TrialRecord`]: absent and
+    /// `null` both deserialise to absent, and a new sweep whose first trials
+    /// diverged writes the column as `null`. One line settles it either way.
+    #[must_use]
+    pub fn detect_in_line(line: &str) -> Option<Self> {
+        let row: serde_json::Value = serde_json::from_str(line).ok()?;
+        Some(if row.get(DISTANCE_CONSISTENCY.name()).is_some() {
+            Self::Current6
+        } else {
+            Self::Legacy10
+        })
+    }
+
+    /// Which space a results file was written in, from its first row.
+    ///
+    /// # Errors
+    ///
+    /// Propagates I/O errors, and returns [`Error::EmptyResults`] for a file
+    /// with no parseable row to read the answer off.
+    pub fn detect_in_file(path: &Path) -> Result<Self> {
+        let file = File::open(path).at(path)?;
+        for line in BufReader::new(file).lines() {
+            let line = line.at(path)?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Some(space) = Self::detect_in_line(&line) {
+                return Ok(space);
+            }
+        }
+        Err(Error::EmptyResults(path.to_path_buf()))
+    }
+}
+
+impl std::str::FromStr for ObjectiveSpace {
+    type Err = String;
+
+    /// Accepts the tag and the variant name, so `--objectives obj10` and
+    /// `--objectives legacy10` both work.
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "obj10" | "legacy10" | "legacy" | "10" => Ok(Self::Legacy10),
+            "obj6" | "current6" | "current" | "6" => Ok(Self::Current6),
+            other => Err(format!(
+                "unknown objective space `{other}`; expected obj10 (legacy10) or obj6 (current6)"
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for ObjectiveSpace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.tag())
+    }
+}
 
 /// The three preference families, as `(name, indices into [`OBJECTIVES`])`.
 ///
@@ -164,22 +334,72 @@ pub fn oriented_value(name: &str, v: Option<f64>) -> f64 {
     }
 }
 
-/// One record's oriented objective vector.
+/// One point of an oriented objective space: every objective in `[0, 1]` with
+/// higher = better, as long as its [`ObjectiveSpace`] is wide.
+///
+/// A `Vec` rather than the `[f64; N_OBJECTIVES]` it used to be, because the
+/// width is now a property of the run. Every function taking one takes a
+/// `&[f64]`, so a row and a weight vector of the same space line up under
+/// `zip` and a mismatched pair is short-circuited by it rather than being
+/// silently padded.
+pub type Row = Vec<f64>;
+
+/// One record's oriented objective vector, in *space*.
 #[must_use]
-pub fn oriented_row(r: &TrialRecord) -> [f64; N_OBJECTIVES] {
-    let mut row = [0.0; N_OBJECTIVES];
+pub fn oriented_row(r: &TrialRecord, space: ObjectiveSpace) -> Row {
     // Straight off the handle: no name is resolved here. This used to be
     // `oriented_value(metric.name(), r.objective(metric.name()))`, which cost
     // three linear registry scans per objective per record — `by_name` inside
     // `objective`, `index` inside `get`, and `by_name` again inside
     // `is_minimized` — for ~4.3M scans over the sweep set.
-    for (slot, metric) in row.iter_mut().zip(OBJECTIVES) {
-        *slot = oriented(*metric, r.metrics.get(*metric));
-    }
-    row
+    space
+        .metrics()
+        .iter()
+        .map(|metric| oriented(*metric, r.metrics.get(*metric)))
+        .collect()
 }
 
-/// The `(n, 6)` oriented-objective matrix for *records* (higher = better).
-pub fn oriented_matrix(records: &[TrialRecord]) -> Vec<[f64; N_OBJECTIVES]> {
-    records.iter().map(oriented_row).collect()
+/// The `(n, space.len())` oriented-objective matrix for *records*
+/// (higher = better).
+#[must_use]
+pub fn oriented_matrix(records: &[TrialRecord], space: ObjectiveSpace) -> Vec<Row> {
+    records.iter().map(|r| oriented_row(r, space)).collect()
+}
+
+/// The objective space every cell of a run is scored in.
+///
+/// *forced* short-circuits the scan (the `--objectives` flag). Otherwise every
+/// cell is peeked and the answer must be **unanimous**: a directory holding
+/// both legacy and re-run sweeps cannot produce one coherent table, because
+/// R2 in one space and R2 in the other are not comparable and every table this
+/// crate writes differences them (ΔR2 against a baseline cell, Experiment 1's
+/// matched-minus-mismatched gain, the ε-indicator pair). Failing here is the
+/// point: the alternative is a table whose rows are silently in two units.
+///
+/// # Errors
+///
+/// Returns [`Error::MixedObjectiveSpaces`] when the cells disagree, and
+/// propagates I/O errors from peeking them.
+pub fn resolve_space(cells: &[CellFile], forced: Option<ObjectiveSpace>) -> Result<ObjectiveSpace> {
+    if let Some(space) = forced {
+        return Ok(space);
+    }
+    let mut found: Option<(ObjectiveSpace, String)> = None;
+    for cf in cells {
+        let space = ObjectiveSpace::detect_in_file(&cf.path)?;
+        match &found {
+            None => found = Some((space, cf.stem.clone())),
+            Some((seen, first)) if *seen != space => {
+                return Err(Error::MixedObjectiveSpaces {
+                    first: first.clone(),
+                    first_space: seen.tag(),
+                    second: cf.stem.clone(),
+                    second_space: space.tag(),
+                })
+            }
+            Some(_) => {}
+        }
+    }
+    // No cells at all is the callers' `NoCells`, not ours; answer conservatively.
+    Ok(found.map_or(ObjectiveSpace::Legacy10, |(space, _)| space))
 }
