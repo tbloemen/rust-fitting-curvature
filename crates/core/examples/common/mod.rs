@@ -17,8 +17,9 @@ use fitting_core::data::{load_fashion_mnist, load_mnist, load_pbmc, load_wordnet
 use fitting_core::matrices::compute_euclidean_distance_matrix;
 use fitting_core::synthetic_data::{
     generate_hd_antipodal_clusters, generate_hd_hyperbolic_shells, generate_hd_sphere,
-    generate_hd_tree, generate_hd_uniform_grid, generate_tree_structured, generate_uniform_grid,
-    generate_uniform_hyperbolic, generate_uniform_sphere, DataPoints,
+    generate_hd_tree, generate_hd_uniform_grid, generate_matched_ball, generate_tree_graph,
+    generate_tree_structured, generate_uniform_grid, generate_uniform_hyperbolic,
+    generate_uniform_sphere, DataPoints, MATCHED_BALL_EXTENT,
 };
 
 /// Target dimension of the fitted model manifold: the two-dimensional
@@ -170,6 +171,66 @@ pub fn thesis(n: usize, seed: u64, data_root: &str) -> Vec<Fixture> {
     let mut out = synthetic(n, seed);
     out.extend(real(n, data_root));
     out
+}
+
+/// The datasets added for the geometry-matching redesign: a real tree metric
+/// and the matched geodesic balls.
+///
+/// Reported separately from [`synthetic`] because they answer a different
+/// question. Within a tier the three balls share a sampling scheme, a radius
+/// and a label vector and differ only in curvature, so the three residual rows
+/// are directly comparable — which the original suite's rows are not, since
+/// there the distribution changes along with the geometry.
+///
+/// Expect the 9-D tier to fit badly on every arm: uniform directions in 9-D
+/// concentrate the pairwise distances (see `MATCHED_BALL_EXTENT`), and the
+/// detector reads the flat ball as hyperbolic. That is the point of putting the
+/// two tiers in one table.
+pub fn matched(n: usize, seed: u64) -> Vec<Fixture> {
+    vec![
+        fixture(
+            "tree metric",
+            "hyperbolic",
+            (127, 127, 127),
+            &generate_tree_graph(n, 2, 3),
+        ),
+        fixture(
+            "ball E2",
+            "euclidean",
+            (148, 103, 189),
+            &generate_matched_ball(n, 2, 0.0, MATCHED_BALL_EXTENT, seed),
+        ),
+        fixture(
+            "ball S2",
+            "spherical",
+            (44, 160, 44),
+            &generate_matched_ball(n, 2, 1.0, MATCHED_BALL_EXTENT, seed),
+        ),
+        fixture(
+            "ball H2",
+            "hyperbolic",
+            (214, 39, 40),
+            &generate_matched_ball(n, 2, -1.0, MATCHED_BALL_EXTENT, seed),
+        ),
+        fixture(
+            "ball E9",
+            "euclidean",
+            (197, 176, 213),
+            &generate_matched_ball(n, 9, 0.0, MATCHED_BALL_EXTENT, seed),
+        ),
+        fixture(
+            "ball S9",
+            "spherical",
+            (152, 223, 138),
+            &generate_matched_ball(n, 9, 1.0, MATCHED_BALL_EXTENT, seed),
+        ),
+        fixture(
+            "ball H9",
+            "hyperbolic",
+            (255, 152, 150),
+            &generate_matched_ball(n, 9, -1.0, MATCHED_BALL_EXTENT, seed),
+        ),
+    ]
 }
 
 /// Extra fixtures that are not in the thesis table.

@@ -41,12 +41,25 @@ def _ensure_parent(path: str) -> None:
     if parent:
         os.makedirs(parent, exist_ok=True)
 
-# The five synthetic generators of known intrinsic geometry, flat-first and then
+# The synthetic generators of known intrinsic geometry, flat-first and then
 # grouped by curvature sign, and the four real datasets of Experiment 2.  Rows
 # absent from the JSONL are skipped; rows present but not listed are appended at
 # the end, so a partial run still produces output.
 DATASET_GROUPS = {
-    "synthetic": ["grid", "sphere", "antipodal_clusters", "tree", "hyperbolic_shells"],
+    "synthetic": [
+        "grid",
+        "sphere",
+        "antipodal_clusters",
+        "tree",
+        "hyperbolic_shells",
+        "tree_graph",
+        "ball2_euclidean",
+        "ball2_spherical",
+        "ball2_hyperbolic",
+        "ball9_euclidean",
+        "ball9_spherical",
+        "ball9_hyperbolic",
+    ],
     "real": ["mnist", "fashion_mnist", "pbmc", "wordnet_mammals"],
 }
 
@@ -54,8 +67,15 @@ DATASET_LABEL = {
     "grid": "grid",
     "sphere": "sphere",
     "antipodal_clusters": "antipodal",
-    "tree": "tree",
+    "tree": "tree (layout)",
     "hyperbolic_shells": "hyp. shells",
+    "tree_graph": "tree (metric)",
+    "ball2_euclidean": "ball E²",
+    "ball2_spherical": "ball S²",
+    "ball2_hyperbolic": "ball H²",
+    "ball9_euclidean": "ball E⁹",
+    "ball9_spherical": "ball S⁹",
+    "ball9_hyperbolic": "ball H⁹",
     "mnist": "MNIST",
     "fashion_mnist": "F-MNIST",
     "pbmc": "PBMC",

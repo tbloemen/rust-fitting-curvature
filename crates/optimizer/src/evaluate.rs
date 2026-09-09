@@ -121,24 +121,64 @@ impl Evaluator {
         (state, training_config.curvature)
     }
 
-    /// The scoring context for a fitted state.
+    /// The scoring context for an arbitrary configuration on the manifold of
+    /// `curvature`.
     ///
     /// `k = min(30, 0.1n)` and `AzimuthalEquidistant` are this crate's scoring
-    /// convention, and differ from the interactive viewer's. Both callers here
-    /// go through this one function so they cannot drift apart, which is what
-    /// the seam `metrics_from_embedding` documents was always for.
-    fn context<'a>(&'a self, state: &'a EmbeddingState, curvature: f64) -> EmbeddingContext<'a> {
+    /// convention, and differ from the interactive viewer's. Every caller goes
+    /// through this one function so they cannot drift apart, which is what the
+    /// seam `metrics_from_embedding` documents was always for.
+    fn context_for<'a>(
+        &'a self,
+        points: &'a [f64],
+        ambient_dim: usize,
+        curvature: f64,
+    ) -> EmbeddingContext<'a> {
         EmbeddingContext::new(
             &self.high_dim_dist,
-            &state.points,
+            points,
             Some(&self.dataset.labels),
             self.n_samples,
-            state.ambient_dim,
+            ambient_dim,
             curvature,
             scoring_k(self.n_samples),
             SphericalProjection::AzimuthalEquidistant,
         )
-        .with_manifold_dist(state.embedded_distances())
+    }
+
+    /// The scoring context for a fitted state — [`Self::context_for`] plus the
+    /// manifold distances the state already computed.
+    fn context<'a>(&'a self, state: &'a EmbeddingState, curvature: f64) -> EmbeddingContext<'a> {
+        self.context_for(&state.points, state.ambient_dim, curvature)
+            .with_manifold_dist(state.embedded_distances())
+    }
+
+    /// Score a configuration this evaluator did not fit — for `--mode
+    /// reference`, which scores a dataset's own ground-truth coordinates.
+    ///
+    /// `points` must be flat `n × ambient_dim` and lie on the manifold of
+    /// `curvature`. Unlike [`Self::context`] this does not pre-set the manifold
+    /// distances: the context then derives them with
+    /// `create_manifold(curvature).pairwise_distances`, which is exactly what
+    /// `EmbeddingState::embedded_distances` computes, so the two paths cannot
+    /// drift. (`with_manifold_dist` also panics if set twice.)
+    pub fn score_points(
+        &self,
+        points: &[f64],
+        ambient_dim: usize,
+        curvature: f64,
+    ) -> (MetricValues, SpreadDiagnostics) {
+        let ctx = self.context_for(points, ambient_dim, curvature);
+        (
+            MetricValues::compute(&ctx),
+            SpreadDiagnostics::compute(&ctx),
+        )
+    }
+
+    /// The dataset's own coordinates and their ambient dimension. Empty for
+    /// graph datasets, which have no feature representation.
+    pub fn source_points(&self) -> (&[f64], usize) {
+        (&self.dataset.x, self.dataset.n_features)
     }
 }
 

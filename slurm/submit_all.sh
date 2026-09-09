@@ -11,7 +11,8 @@
 
 set -eu
 
-DATASETS="mnist fashion_mnist pbmc wordnet_mammals sphere antipodal_clusters tree hyperbolic_shells"
+. ./slurm/datasets.sh
+DATASETS="${DATASETS:-$DATASETS_ALL}"
 EXPERIMENTS="centering_only global_only norm_only all_free"
 
 for ds in $DATASETS; do

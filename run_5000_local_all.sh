@@ -5,7 +5,7 @@
 # experiments across the hyperbolic + euclidean geometries, for each dataset:
 #
 #   {centering_only, global_only, norm_only, all_free}
-#       × {hyperbolic, euclidean} × 8 datasets = 64 runs.
+#       × {hyperbolic, euclidean} × every dataset in slurm/datasets.sh.
 #
 # (The all_off baseline + spherical geometry live in run_5000_local_main.sh.)
 #
@@ -35,7 +35,8 @@ set -eu
 
 cd "$(dirname "$0")"
 
-DATASETS="${DATASETS:-mnist fashion_mnist pbmc wordnet_mammals sphere antipodal_clusters tree hyperbolic_shells}"
+. ./slurm/datasets.sh
+DATASETS="${DATASETS:-$DATASETS_ALL}"
 EXPERIMENTS="${EXPERIMENTS:-centering_only global_only norm_only all_free}"
 LOSS_GEOMETRIES="${LOSS_GEOMETRIES:-hyperbolic euclidean}"
 N_SAMPLES=5000

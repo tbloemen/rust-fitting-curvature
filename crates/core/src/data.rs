@@ -4,9 +4,6 @@
 //! are only compiled for native targets.
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::cast::count_to_f64;
-
-#[cfg(not(target_arch = "wasm32"))]
 use crate::synthetic_data::DataPoints;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -176,7 +173,7 @@ pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<DataPoints, 
     }
 
     // --- BFS from every node to compute all-pairs distances ---
-    let dist_matrix = compute_all_pairs_bfs_distances(&compact_adj, n);
+    let dist_matrix = crate::graph::all_pairs_bfs_distances(&compact_adj, n);
 
     // --- Labels ---
     let labels = load_or_derive_labels(path, &bfs_order, &compact_adj, n);
@@ -222,36 +219,6 @@ fn parse_edge_list(path: &str) -> Result<(Vec<(usize, usize)>, usize), String> {
         edges.push((parent, child));
     }
     Ok((edges, max_id + 1))
-}
-
-/// Compute all-pairs BFS distances on the compact adjacency list. Returns a
-/// flat `n × n` distance matrix (row-major). Unreachable nodes get a large
-/// but finite distance.
-#[cfg(not(target_arch = "wasm32"))]
-fn compute_all_pairs_bfs_distances(compact_adj: &[Vec<usize>], n: usize) -> Vec<f64> {
-    use std::collections::VecDeque;
-
-    let mut dist_matrix = vec![f64::INFINITY; n * n];
-    for src in 0..n {
-        dist_matrix[src * n + src] = 0.0;
-        let mut queue: VecDeque<usize> = VecDeque::new();
-        queue.push_back(src);
-        while let Some(u) = queue.pop_front() {
-            let d_u = dist_matrix[src * n + u];
-            for &v in &compact_adj[u] {
-                if dist_matrix[src * n + v] == f64::INFINITY {
-                    dist_matrix[src * n + v] = d_u + 1.0;
-                    queue.push_back(v);
-                }
-            }
-        }
-        for j in 0..n {
-            if dist_matrix[src * n + j] == f64::INFINITY {
-                dist_matrix[src * n + j] = count_to_f64(n) * 2.0;
-            }
-        }
-    }
-    dist_matrix
 }
 
 /// Load labels from the labels TSV if present, otherwise derive them from the

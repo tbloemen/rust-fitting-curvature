@@ -4,7 +4,7 @@
 # Local (non-SLURM) counterpart of slurm/submit_main_5000.sh: the all_off
 # baseline across all three geometries, for each dataset:
 #
-#   all_off × {hyperbolic, euclidean, spherical} × 8 datasets = 24 runs.
+#   all_off × {hyperbolic, euclidean, spherical} × every dataset in slurm/datasets.sh.
 #
 # There is no 24h wall-clock cap locally, so there is no chunking: each run goes
 # straight to completion. Every run still passes --resume against a stable output
@@ -31,7 +31,8 @@ set -eu
 
 cd "$(dirname "$0")"
 
-DATASETS="${DATASETS:-mnist fashion_mnist pbmc wordnet_mammals sphere antipodal_clusters tree hyperbolic_shells}"
+. ./slurm/datasets.sh
+DATASETS="${DATASETS:-$DATASETS_ALL}"
 MAIN_GEOMETRIES="${MAIN_GEOMETRIES:-hyperbolic euclidean spherical}"
 N_SAMPLES=5000
 DATA_PATH="${DATA_PATH:-./www/public/data}"

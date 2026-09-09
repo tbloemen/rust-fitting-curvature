@@ -29,11 +29,22 @@ import os
 # Rows absent from the JSONL are skipped; rows present but not listed here are
 # appended at the end, so a partial run still produces output.
 ROW_ORDER = [
+    # The original suite: flat first, then grouped by intended geometry.
     "grid",
     "sphere",
     "antipodal_clusters",
     "tree",
     "hyperbolic_shells",
+    # The hierarchy benchmark.
+    "tree_graph",
+    # The matched geodesic balls, kept as two contiguous tiers so the three
+    # geometries of a tier read against each other.
+    "ball2_euclidean",
+    "ball2_spherical",
+    "ball2_hyperbolic",
+    "ball9_euclidean",
+    "ball9_spherical",
+    "ball9_hyperbolic",
 ]
 
 # Curvature-sign order, so the flat arm sits between the two curved ones.
@@ -48,8 +59,15 @@ DATASET_LABEL = {
     "grid": "grid",
     "sphere": "sphere",
     "antipodal_clusters": "antipodal",
-    "tree": "tree",
+    "tree": "tree (layout)",
     "hyperbolic_shells": "hyp. shells",
+    "tree_graph": "tree (metric)",
+    "ball2_euclidean": "ball E²",
+    "ball2_spherical": "ball S²",
+    "ball2_hyperbolic": "ball H²",
+    "ball9_euclidean": "ball E⁹",
+    "ball9_spherical": "ball S⁹",
+    "ball9_hyperbolic": "ball H⁹",
 }
 
 GEOMETRY_LABEL = {"spherical": "sph", "euclidean": "euc", "hyperbolic": "hyp"}

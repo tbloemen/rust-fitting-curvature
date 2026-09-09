@@ -24,6 +24,7 @@ mod gp;
 mod metrics;
 mod pareto;
 mod random;
+mod reference;
 mod resume;
 mod scan;
 mod search_space;
@@ -31,25 +32,46 @@ mod trial_result;
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
+/// The four real datasets, in thesis-table order.
+const REAL_DATASETS: [&str; 4] = ["mnist", "fashion_mnist", "pbmc", "wordnet_mammals"];
+
+/// Every synthetic dataset `Dataset::load_synthetic` accepts.
+///
+/// The first five are the original suite and are unchanged, so the results
+/// already under `results/` remain valid for them. `tree_graph` and the
+/// `ball*` family were added for the geometry-matching redesign: the balls are
+/// one sampling scheme mapped into three geometries, so within a tier they
+/// differ in curvature and nothing else.
+///
+/// `crates/analysis/src/cell.rs::SYNTH_TRUTH` must carry a truth for every name
+/// here, or Experiment 1 silently drops the dataset; a test there pins it.
+const SYNTHETIC_DATASETS: [&str; 12] = [
+    "sphere",
+    "antipodal_clusters",
+    "tree",
+    "hyperbolic_shells",
+    "grid",
+    "tree_graph",
+    "ball2_euclidean",
+    "ball2_spherical",
+    "ball2_hyperbolic",
+    "ball9_euclidean",
+    "ball9_spherical",
+    "ball9_hyperbolic",
+];
+
 fn get_dataset_names(dataset_arg: Option<&str>) -> Vec<String> {
     match dataset_arg {
-        Some("all") => vec![
-            "mnist".to_string(),
-            "fashion_mnist".to_string(),
-            "pbmc".to_string(),
-            "wordnet_mammals".to_string(),
-            "sphere".to_string(),
-            "antipodal_clusters".to_string(),
-            "tree".to_string(),
-            "hyperbolic_shells".to_string(),
-            "grid".to_string(),
-        ],
-        Some("real") => vec![
-            "mnist".to_string(),
-            "fashion_mnist".to_string(),
-            "pbmc".to_string(),
-            "wordnet_mammals".to_string(),
-        ],
+        Some("all") => REAL_DATASETS
+            .iter()
+            .chain(SYNTHETIC_DATASETS.iter())
+            .map(|s| (*s).to_string())
+            .collect(),
+        Some("real") => REAL_DATASETS.iter().map(|s| (*s).to_string()).collect(),
+        Some("synthetic") => SYNTHETIC_DATASETS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
         Some(name) => vec![name.to_string()],
         None => vec!["mnist".to_string()],
     }
@@ -88,13 +110,17 @@ fn print_mode_banner(args: &Args, dataset_names: &[String]) {
             args.geometry.as_deref().unwrap_or("auto-detect"),
             args.n_seeds
         ),
+        "reference" => println!(
+            "Scoring the ground-truth source configuration of {} dataset(s) through the trial metric pipeline (no embedding is fitted)",
+            dataset_names.len()
+        ),
         "detect" => println!(
             "Starting curvature detection: {} datasets, exporting κ_data diagnostics (no embedding fit).",
             dataset_names.len(),
         ),
         other => {
             eprintln!(
-                "Unknown --mode '{other}'. Use 'random', 'scan', 'bayes', 'pareto', or 'detect'."
+                "Unknown --mode '{other}'. Use 'random', 'scan', 'bayes', 'pareto', 'detect', or 'reference'."
             );
             std::process::exit(1);
         }
@@ -190,6 +216,9 @@ fn spawn_workers(args: &Args, mp: &Arc<MultiProgress>, work: VecDeque<(String, A
                     "bayes" => run_bayes(&dataset_name, &args, &evaluator, &mp, n_threads),
                     "pareto" => run_pareto(&dataset_name, &args, &evaluator, &mp, n_threads),
                     "detect" => run_detect(&dataset_name, &args, &evaluator),
+                    "reference" => {
+                        crate::reference::run_reference(&dataset_name, &args, &evaluator);
+                    }
                     _ => run_random(&dataset_name, &args, &evaluator, &mp),
                 },
             }
