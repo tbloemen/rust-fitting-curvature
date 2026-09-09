@@ -1,3 +1,4 @@
+use crate::cast::count_to_f64;
 use crate::config::ScalingLossType;
 
 /// Compute the radial scaling loss for hyperbolic embeddings.
@@ -37,14 +38,14 @@ pub fn compute(
 
                 if excess > 0.0 {
                     let dg_dx0 = 1.0 / (arg * arg - 1.0).max(1e-12).sqrt();
-                    grad[i * ambient_dim] = 2.0 * excess * dg_dx0 / n_points as f64;
+                    grad[i * ambient_dim] = 2.0 * excess * dg_dx0 / count_to_f64(n_points);
                 }
             }
-            loss /= n_points as f64;
+            loss /= count_to_f64(n_points);
             (loss, grad)
         }
         ScalingLossType::MeanDistance => {
-            let n = n_points as f64;
+            let n = count_to_f64(n_points);
             let mut loss = 0.0;
             for i in 0..n_points {
                 let x0 = points[i * ambient_dim];
@@ -59,7 +60,7 @@ pub fn compute(
             (loss, grad)
         }
         ScalingLossType::Rms => {
-            let n = n_points as f64;
+            let n = count_to_f64(n_points);
             let mut sum_sq = 0.0;
             let mut geo_dists = Vec::with_capacity(n_points);
             let mut dg_dx0s = Vec::with_capacity(n_points);
@@ -82,7 +83,7 @@ pub fn compute(
             (loss, grad)
         }
         ScalingLossType::SoftplusBarrier => {
-            let n = n_points as f64;
+            let n = count_to_f64(n_points);
             let d_max = 3.0 * r;
             let mut loss = 0.0;
             for i in 0..n_points {

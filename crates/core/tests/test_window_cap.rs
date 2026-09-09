@@ -13,6 +13,7 @@ use fitting_core::synthetic_data::{
     generate_hd_hyperbolic_shells, generate_hd_tree, generate_uniform_grid,
     generate_uniform_hyperbolic,
 };
+use std::cmp::Ordering;
 
 const DIM: usize = 2;
 
@@ -109,7 +110,7 @@ fn the_window_cap_is_deterministic() {
     let d = grid_distances(n, 3);
     let a = fit_hyperbolic(&d, n, DIM);
     let b = fit_hyperbolic(&d, n, DIM);
-    assert_eq!(a.radius, b.radius);
-    assert_eq!(a.residual, b.residual);
+    assert_eq!(a.radius.partial_cmp(&b.radius), Some(Ordering::Equal));
+    assert_eq!(a.residual.partial_cmp(&b.residual), Some(Ordering::Equal));
     assert_eq!(a.at_upper_bound, b.at_upper_bound);
 }

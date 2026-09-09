@@ -1,6 +1,7 @@
 //! Experiment 3 — median Pareto-front κ against the data-intrinsic `κ_data`, and
 //! the unanchored-vs-`rms_anchored` κ overlay.
 
+use fitting_core::cast::count_to_f64;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
@@ -313,7 +314,7 @@ pub struct Bin {
 #[must_use]
 pub fn histogram(values: &[f64], lo: f64, hi: f64, n_bins: usize) -> Vec<Bin> {
     let edges: Vec<f64> = (0..=n_bins)
-        .map(|i| lo + (hi - lo) * i as f64 / n_bins as f64)
+        .map(|i| lo + (hi - lo) * count_to_f64(i) / count_to_f64(n_bins))
         .collect();
     bin_by_edges(values, &edges)
 }
@@ -323,7 +324,7 @@ pub fn histogram(values: &[f64], lo: f64, hi: f64, n_bins: usize) -> Vec<Bin> {
 pub fn log_histogram(values: &[f64], lo: f64, hi: f64, n_bins: usize) -> Vec<Bin> {
     let (a, b) = (lo.log10(), hi.log10());
     let edges: Vec<f64> = (0..=n_bins)
-        .map(|i| 10f64.powf(a + (b - a) * i as f64 / n_bins as f64))
+        .map(|i| 10f64.powf(a + (b - a) * count_to_f64(i) / count_to_f64(n_bins)))
         .collect();
     bin_by_edges(values, &edges)
 }
@@ -357,7 +358,7 @@ fn bin_by_edges(values: &[f64], edges: &[f64]) -> Vec<Bin> {
             lo: w[0],
             hi: w[1],
             density: if w[1] > w[0] {
-                c as f64 / (n as f64 * (w[1] - w[0]))
+                count_to_f64(c) / (count_to_f64(n) * (w[1] - w[0]))
             } else {
                 0.0
             },

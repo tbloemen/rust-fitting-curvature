@@ -3,6 +3,7 @@
 
 use super::quality::{Direction, Family, QualityMetric, Space};
 use super::values::MetricValue;
+use crate::cast::count_to_f64;
 use crate::context::EmbeddingContext;
 
 /// Cluster Density Measure (`ClDM`) from Albuquerque et al. (2010).
@@ -35,8 +36,8 @@ pub fn cluster_density_measure(pts_2d: &[f64], labels: &[u32], n: usize) -> f64 
     }
     for ci in 0..k {
         if counts[ci] > 0 {
-            centroids[ci].0 /= counts[ci] as f64;
-            centroids[ci].1 /= counts[ci] as f64;
+            centroids[ci].0 /= count_to_f64(counts[ci]);
+            centroids[ci].1 /= count_to_f64(counts[ci]);
         }
     }
 
@@ -49,7 +50,7 @@ pub fn cluster_density_measure(pts_2d: &[f64], labels: &[u32], n: usize) -> f64 
     }
     for ci in 0..k {
         radii[ci] = if counts[ci] > 0 {
-            (radii[ci] / counts[ci] as f64).max(1e-12)
+            (radii[ci] / count_to_f64(counts[ci])).max(1e-12)
         } else {
             1e-12
         };
@@ -64,7 +65,7 @@ pub fn cluster_density_measure(pts_2d: &[f64], labels: &[u32], n: usize) -> f64 
             cldm += d_sq / (radii[ki] * radii[kj]);
         }
     }
-    cldm / k as f64
+    cldm / count_to_f64(k)
 }
 
 /// Cluster Density Measure (Albuquerque et al. 2010).

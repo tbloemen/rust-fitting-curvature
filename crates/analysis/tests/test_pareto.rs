@@ -7,6 +7,7 @@ use fitting_analysis::{
     Variant,
 };
 use fitting_core::metrics::{Direction, MetricValue, MetricValues};
+use std::cmp::Ordering;
 
 /// The manifold columns are populated too. They are no longer objectives, so
 /// `oriented_row` ignores them — which is part of what the row test checks.
@@ -117,8 +118,14 @@ fn rejects_front_files_and_junk() {
 
 #[test]
 fn orientation_flips_minimised_objectives() {
-    assert_eq!(oriented_value("trustworthiness", Some(0.8)), 0.8);
-    assert_eq!(oriented_value("normalized_stress", Some(0.3)), 0.7);
+    assert_eq!(
+        oriented_value("trustworthiness", Some(0.8)).partial_cmp(&0.8),
+        Some(Ordering::Equal)
+    );
+    assert_eq!(
+        oriented_value("normalized_stress", Some(0.3)).partial_cmp(&0.7),
+        Some(Ordering::Equal)
+    );
 
     // The manifold reading of a minimised metric is minimised too, and is now
     // flipped alongside its twin. It used to be left alone, because `MINIMIZE`
@@ -129,38 +136,71 @@ fn orientation_flips_minimised_objectives() {
     // so an embedding whose two readings agreed at 0.1 plotted a gap of −0.8
     // instead of ~0. Orientation is a property of the metric, not of whether it
     // happens to be searched.
-    assert_eq!(oriented_value("normalized_stress_manifold", Some(0.3)), 0.7);
+    assert_eq!(
+        oriented_value("normalized_stress_manifold", Some(0.3)).partial_cmp(&0.7),
+        Some(Ordering::Equal)
+    );
 
     // A name that is not a metric at all is not flipped — nothing to consult.
-    assert_eq!(oriented_value("not_a_metric", Some(0.3)), 0.3);
+    assert_eq!(
+        oriented_value("not_a_metric", Some(0.3)).partial_cmp(&0.3),
+        Some(Ordering::Equal)
+    );
 }
 
 #[test]
 fn missing_and_non_finite_values_score_worst() {
     // Matches the optimizer's metrics_to_vec substitution: a diverged trial is
     // scored as bad rather than dropped.
-    assert_eq!(oriented_value("trustworthiness", None), 0.0);
-    assert_eq!(oriented_value("trustworthiness", Some(f64::NAN)), 0.0);
-    assert_eq!(oriented_value("trustworthiness", Some(f64::INFINITY)), 0.0);
-    assert_eq!(oriented_value("normalized_stress", None), 0.0);
-    assert_eq!(oriented_value("normalized_stress", Some(f64::NAN)), 0.0);
+    assert_eq!(
+        oriented_value("trustworthiness", None).partial_cmp(&0.0),
+        Some(Ordering::Equal)
+    );
+    assert_eq!(
+        oriented_value("trustworthiness", Some(f64::NAN)).partial_cmp(&0.0),
+        Some(Ordering::Equal)
+    );
+    assert_eq!(
+        oriented_value("trustworthiness", Some(f64::INFINITY)).partial_cmp(&0.0),
+        Some(Ordering::Equal)
+    );
+    assert_eq!(
+        oriented_value("normalized_stress", None).partial_cmp(&0.0),
+        Some(Ordering::Equal)
+    );
+    assert_eq!(
+        oriented_value("normalized_stress", Some(f64::NAN)).partial_cmp(&0.0),
+        Some(Ordering::Equal)
+    );
 }
 
 #[test]
 fn orientation_clamps_out_of_range_values() {
-    assert_eq!(oriented_value("trustworthiness", Some(1.4)), 1.0);
-    assert_eq!(oriented_value("trustworthiness", Some(-0.2)), 0.0);
+    assert_eq!(
+        oriented_value("trustworthiness", Some(1.4)).partial_cmp(&1.0),
+        Some(Ordering::Equal)
+    );
+    assert_eq!(
+        oriented_value("trustworthiness", Some(-0.2)).partial_cmp(&0.0),
+        Some(Ordering::Equal)
+    );
     // Stress above 1 orients below 0 and clamps up.
-    assert_eq!(oriented_value("normalized_stress", Some(2.0)), 0.0);
+    assert_eq!(
+        oriented_value("normalized_stress", Some(2.0)).partial_cmp(&0.0),
+        Some(Ordering::Equal)
+    );
 }
 
 #[test]
 fn oriented_row_covers_all_six_objectives_in_order() {
     assert_eq!(OBJECTIVES.len(), N_OBJECTIVES);
     let row = oriented_row(&record_at(0.6));
-    assert_eq!(row, [0.6; N_OBJECTIVES]);
+    assert_eq!(row.partial_cmp(&[0.6; N_OBJECTIVES]), Some(Ordering::Equal));
     // An empty record is the all-zeros worst case.
-    assert_eq!(oriented_row(&TrialRecord::default()), [0.0; N_OBJECTIVES]);
+    assert_eq!(
+        oriented_row(&TrialRecord::default()).partial_cmp(&[0.0; N_OBJECTIVES]),
+        Some(Ordering::Equal)
+    );
 }
 
 // ─── Non-domination ───────────────────────────────────────────────────────────

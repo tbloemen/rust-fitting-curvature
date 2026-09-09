@@ -12,6 +12,7 @@
 
 #![allow(dead_code)]
 
+use fitting_core::cast::count_to_f64;
 use fitting_core::data::{load_fashion_mnist, load_mnist, load_pbmc, load_wordnet_mammals};
 use fitting_core::matrices::compute_euclidean_distance_matrix;
 use fitting_core::synthetic_data::{
@@ -62,7 +63,7 @@ pub fn d_max_of(d: &[f64]) -> f64 {
 /// implies (see `Reconstruction::kappa`).
 pub fn d_rms_of(d: &[f64], n: usize) -> f64 {
     let s: f64 = d.iter().map(|x| x * x).sum();
-    (s / (n as f64 * (n as f64 - 1.0))).sqrt()
+    (s / (count_to_f64(n) * (count_to_f64(n) - 1.0))).sqrt()
 }
 
 fn fixture(

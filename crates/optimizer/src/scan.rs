@@ -4,6 +4,7 @@ use crate::common::{eval_single_metric, make_progress_bar, parse_experiment};
 use crate::evaluate::Evaluator;
 use crate::search_space::TrialConfig;
 use crate::trial_result::{write_result, TrialResult};
+use fitting_core::cast::count_to_f64;
 use indicatif::{MultiProgress, ProgressBar};
 
 fn load_best_config_from_jsonl(
@@ -28,9 +29,9 @@ fn load_best_config_from_jsonl(
         let metric = v["metric_mean"].as_f64().unwrap_or(f64::NEG_INFINITY);
         if metric > best_val {
             best_val = metric;
-            let perp_ratio = v["perplexity_ratio"]
-                .as_f64()
-                .unwrap_or_else(|| v["perplexity"].as_f64().unwrap_or(15.0) / n_points as f64);
+            let perp_ratio = v["perplexity_ratio"].as_f64().unwrap_or_else(|| {
+                v["perplexity"].as_f64().unwrap_or(15.0) / count_to_f64(n_points)
+            });
             let mut hp = TrialConfig::all_free();
             hp.learning_rate = ParamSpec::Fixed(v["learning_rate"].as_f64().unwrap_or(10.0));
             hp.perplexity_ratio = ParamSpec::Fixed(perp_ratio);
@@ -53,7 +54,7 @@ fn sweep_values(lo: f64, hi: f64, n: usize, log: bool) -> Vec<f64> {
     (0..n)
         .map(|i| {
             let t = if n > 1 {
-                i as f64 / (n - 1) as f64
+                count_to_f64(i) / count_to_f64(n - 1)
             } else {
                 0.0
             };
@@ -188,7 +189,8 @@ pub fn run_scan(dataset_name: &str, args: &Args, evaluator: &Evaluator, mp: &Mul
                 trial_idx,
                 &pb_iters,
             );
-            let elapsed = start.elapsed().as_millis() as u64;
+            let elapsed =
+                u64::try_from(start.elapsed().as_millis()).expect("elapsed millis fit in u64");
 
             let mut result = TrialResult::new(
                 &config,

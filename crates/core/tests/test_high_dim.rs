@@ -13,7 +13,9 @@ fn create_mnist_like_data(n_points: usize, n_features: usize, seed: u64) -> (Vec
     let data: Vec<f64> = (0..n_points * n_features).map(|_| rng.uniform()).collect();
 
     // Labels 0-9
-    let labels: Vec<u32> = (0..n_points).map(|i| (i % 10) as u32).collect();
+    let labels: Vec<u32> = (0..n_points)
+        .map(|i| u32::try_from(i % 10).expect("i < n_points"))
+        .collect();
 
     (data, labels)
 }
@@ -32,7 +34,7 @@ fn create_clustered_data(
 
     for i in 0..n_points {
         let class = i % n_classes;
-        labels[i] = class as u32;
+        labels[i] = u32::try_from(class).expect("class index is a small count");
         for f in 0..n_features {
             // Each class has a different mean offset in each feature
             let class_mean = if f % n_classes == class { 0.8 } else { 0.2 };

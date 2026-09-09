@@ -8,13 +8,15 @@
 //! comparing several methods over several datasets, and is what `aggregate.rs`
 //! uses on the ΔR2 table.
 
+use fitting_core::cast::{count_to_f64, to_usize};
+
 /// Mean of a slice; `None` when empty.
 #[must_use]
 pub fn mean(xs: &[f64]) -> Option<f64> {
     if xs.is_empty() {
         return None;
     }
-    Some(xs.iter().sum::<f64>() / xs.len() as f64)
+    Some(xs.iter().sum::<f64>() / count_to_f64(xs.len()))
 }
 
 /// Median of a slice (average of the two middle values for even length).
@@ -46,10 +48,10 @@ pub fn quantile(xs: &[f64], q: f64) -> Option<f64> {
     let mut v = xs.to_vec();
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     // Virtual index into the sorted values, then interpolate its neighbours.
-    let pos = q * (v.len() - 1) as f64;
-    let lo = pos.floor() as usize;
-    let hi = pos.ceil() as usize;
-    Some(v[lo] + (v[hi] - v[lo]) * (pos - lo as f64))
+    let pos = q * count_to_f64(v.len() - 1);
+    let lo = to_usize(pos.floor());
+    let hi = to_usize(pos.ceil());
+    Some(v[lo] + (v[hi] - v[lo]) * (pos - count_to_f64(lo)))
 }
 
 /// Fractional ranks with ties averaged (scipy's `rankdata(method="average")`).
@@ -68,10 +70,10 @@ pub fn rankdata(xs: &[f64]) -> Vec<f64> {
     while i < n {
         // Extend over the run of equal values and give them all the mean rank.
         let mut j = i + 1;
-        while j < n && xs[idx[j]] == xs[idx[i]] {
+        while j < n && xs[idx[j]].partial_cmp(&xs[idx[i]]) == Some(std::cmp::Ordering::Equal) {
             j += 1;
         }
-        let avg = ((i + 1 + j) as f64) / 2.0; // mean of ranks i+1 .. j (1-based)
+        let avg = count_to_f64(i + 1 + j) / 2.0; // mean of ranks i+1 .. j (1-based)
         for &k in &idx[i..j] {
             ranks[k] = avg;
         }
@@ -118,7 +120,7 @@ pub fn spearman(x: &[f64], y: &[f64]) -> Option<(f64, f64)> {
         return None;
     }
     let rho = pearson(&rankdata(x), &rankdata(y))?;
-    let dof = (n - 2) as f64;
+    let dof = count_to_f64(n - 2);
     // ρ = ±1 makes t infinite and p exactly 0.
     let denom = (1.0 + rho) * (1.0 - rho);
     let p = if denom <= 0.0 {
@@ -138,7 +140,7 @@ fn tie_group_sizes(xs: &[f64]) -> Vec<usize> {
     let mut i = 0;
     while i < v.len() {
         let mut j = i + 1;
-        while j < v.len() && v[j] == v[i] {
+        while j < v.len() && v[j].partial_cmp(&v[i]) == Some(std::cmp::Ordering::Equal) {
             j += 1;
         }
         out.push(j - i);
@@ -232,7 +234,7 @@ fn betacf(a: f64, b: f64, x: f64) -> f64 {
     d = 1.0 / d;
     let mut h = d;
     for m in 1..=MAXIT {
-        let m_f = m as f64;
+        let m_f = count_to_f64(m);
         let m2 = 2.0 * m_f;
         // Even step.
         let aa = m_f * (b - m_f) * x / ((qam + m2) * (a + m2));
@@ -282,7 +284,7 @@ fn ln_gamma(x: f64) -> f64 {
     ];
     let mut acc = C[0];
     for (i, &c) in C.iter().enumerate().skip(1) {
-        acc += c / (x + i as f64 - 1.0);
+        acc += c / (x + count_to_f64(i) - 1.0);
     }
     let t = x + G - 0.5;
     0.5 * (2.0 * std::f64::consts::PI).ln() + (x - 0.5) * t.ln() - t + acc.ln()
@@ -342,13 +344,13 @@ pub fn friedman(blocks: &[Vec<f64>]) -> Option<Friedman> {
             *sum += r;
         }
         for t in tie_group_sizes(&flipped) {
-            let t = t as f64;
+            let t = count_to_f64(t);
             tie_term += t * (t * t - 1.0);
         }
     }
 
-    let kf = k as f64;
-    let nf = n as f64;
+    let kf = count_to_f64(k);
+    let nf = count_to_f64(n);
     let c = 1.0 - tie_term / (kf * (kf * kf - 1.0) * nf);
     if c <= 0.0 {
         return None;
@@ -382,7 +384,7 @@ pub fn holm_against_control(f: &Friedman, control: usize) -> Vec<Option<f64>> {
     if control >= k {
         return vec![None; k];
     }
-    let se = ((k * (k + 1)) as f64 / (6.0 * n as f64)).sqrt();
+    let se = (count_to_f64(k * (k + 1)) / (6.0 * count_to_f64(n))).sqrt();
 
     let mut raw: Vec<(usize, f64)> = (0..k)
         .filter(|&i| i != control)
@@ -399,7 +401,7 @@ pub fn holm_against_control(f: &Friedman, control: usize) -> Vec<Option<f64>> {
     let mut running = 0.0f64;
     let mut out = vec![None; k];
     for (j, (i, p)) in raw.into_iter().enumerate() {
-        let adjusted = ((m - j) as f64 * p).min(1.0).max(running);
+        let adjusted = (count_to_f64(m - j) * p).min(1.0).max(running);
         running = adjusted;
         out[i] = Some(adjusted);
     }
@@ -460,7 +462,7 @@ fn gamma_cf(a: f64, x: f64) -> f64 {
     let mut d = 1.0 / b;
     let mut h = d;
     for i in 1..=MAXIT {
-        let an = -(i as f64) * (i as f64 - a);
+        let an = -count_to_f64(i) * (count_to_f64(i) - a);
         b += 2.0;
         d = an * d + b;
         if d.abs() < FPMIN {

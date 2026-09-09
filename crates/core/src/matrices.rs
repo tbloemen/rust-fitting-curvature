@@ -2,6 +2,7 @@
 //!
 //! Ported from Python `src/matrices.py`.
 
+use crate::cast::{count_to_f64, to_usize};
 use crate::synthetic_data::Rng;
 
 /// Normalize data so that mean pairwise distance equals 1.
@@ -15,10 +16,10 @@ pub fn normalize_data(data: &mut [f64], n_points: usize, n_features: usize, seed
     let mut total_dist = 0.0;
 
     for _ in 0..n_samples {
-        let i = (rng.uniform() * n_points as f64) as usize % n_points;
-        let mut j = (rng.uniform() * n_points as f64) as usize % n_points;
+        let i = to_usize(rng.uniform() * count_to_f64(n_points)) % n_points;
+        let mut j = to_usize(rng.uniform() * count_to_f64(n_points)) % n_points;
         while j == i {
-            j = (rng.uniform() * n_points as f64) as usize % n_points;
+            j = to_usize(rng.uniform() * count_to_f64(n_points)) % n_points;
         }
 
         let mut sq = 0.0;
@@ -29,7 +30,7 @@ pub fn normalize_data(data: &mut [f64], n_points: usize, n_features: usize, seed
         total_dist += sq.sqrt();
     }
 
-    let mean_dist = total_dist / n_samples as f64;
+    let mean_dist = total_dist / count_to_f64(n_samples);
     if mean_dist > 1e-12 {
         for val in data.iter_mut() {
             *val /= mean_dist;
@@ -46,7 +47,7 @@ pub fn normalize_data(data: &mut [f64], n_points: usize, n_features: usize, seed
 /// so σ = 1 / sqrt(2d) gives E[||x-y||] = 1.
 #[must_use]
 pub fn get_default_init_scale(embed_dim: usize) -> f64 {
-    1.0 / (2.0 * embed_dim as f64).sqrt()
+    1.0 / (2.0 * count_to_f64(embed_dim)).sqrt()
 }
 
 /// PCA via power iteration with deflation.
@@ -65,7 +66,8 @@ pub fn pca(
     // Center the data column-wise.
     let mut centered = data.to_vec();
     for f in 0..n_features {
-        let mean = (0..n_points).map(|i| data[i * n_features + f]).sum::<f64>() / n_points as f64;
+        let mean =
+            (0..n_points).map(|i| data[i * n_features + f]).sum::<f64>() / count_to_f64(n_points);
         for i in 0..n_points {
             centered[i * n_features + f] -= mean;
         }
@@ -159,9 +161,9 @@ pub fn pca_from_distances(
     // Step 2: double-center → Gram matrix B.
     // B[i,j] = -½ (d²[i,j] - row_mean[i] - col_mean[j] + grand_mean)
     let row_means: Vec<f64> = (0..n_points)
-        .map(|i| (0..n_points).map(|j| d2[i * n_points + j]).sum::<f64>() / n_points as f64)
+        .map(|i| (0..n_points).map(|j| d2[i * n_points + j]).sum::<f64>() / count_to_f64(n_points))
         .collect();
-    let grand_mean = row_means.iter().sum::<f64>() / n_points as f64;
+    let grand_mean = row_means.iter().sum::<f64>() / count_to_f64(n_points);
 
     let mut b = vec![0.0f64; n_points * n_points];
     for i in 0..n_points {

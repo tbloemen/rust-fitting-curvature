@@ -98,6 +98,7 @@
 //! because `fitting-core` carries no dependencies.  Cost is `O(n³)`
 //! (dominated by the `(2/3)n³` tridiagonalisation) per candidate radius.
 
+use crate::cast::count_to_f64;
 use std::f64::consts::PI;
 
 use super::gromov_ball_curve::detect_hyperbolic;
@@ -437,9 +438,9 @@ pub(crate) fn build_z_euclidean(d: &[f64], n: usize) -> Vec<f64> {
         }
     }
     let row_means: Vec<f64> = (0..n)
-        .map(|i| (0..n).map(|j| d2[i * n + j]).sum::<f64>() / n as f64)
+        .map(|i| (0..n).map(|j| d2[i * n + j]).sum::<f64>() / count_to_f64(n))
         .collect();
-    let grand_mean = row_means.iter().sum::<f64>() / n as f64;
+    let grand_mean = row_means.iter().sum::<f64>() / count_to_f64(n);
 
     let mut b = vec![0.0; n * n];
     for i in 0..n {
@@ -549,7 +550,7 @@ pub struct WilsonFit {
 /// and reporting an infinite misfit makes every threshold comparison reject
 /// — the safe direction.
 fn normalise_residual(residual: f64, n: usize, d_max: f64) -> f64 {
-    let scale = n as f64 * d_max * d_max;
+    let scale = count_to_f64(n) * d_max * d_max;
     if scale > 0.0 {
         residual / scale
     } else {
@@ -612,9 +613,9 @@ fn minimise_log_spaced(
 ) -> (f64, f64, bool) {
     let log_lo = lo.ln();
     let log_hi = hi.ln();
-    let step = (log_hi - log_lo) / (n_grid - 1) as f64;
+    let step = (log_hi - log_lo) / count_to_f64(n_grid - 1);
     let grid_r: Vec<f64> = (0..n_grid)
-        .map(|i| (log_lo + i as f64 * step).exp())
+        .map(|i| (log_lo + count_to_f64(i) * step).exp())
         .collect();
     let grid_res: Vec<f64> = grid_r.iter().map(|&r| f(r)).collect();
 
@@ -729,7 +730,7 @@ fn rms_distance(distances: &[f64], n: usize) -> f64 {
         return 0.0;
     }
     let sum_sq: f64 = distances.iter().map(|d| d * d).sum();
-    (sum_sq / (n as f64 * (n as f64 - 1.0))).sqrt()
+    (sum_sq / (count_to_f64(n) * (count_to_f64(n) - 1.0))).sqrt()
 }
 
 /// Iterations allowed for the window-cap fixed point before falling back.

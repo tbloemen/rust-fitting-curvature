@@ -29,6 +29,7 @@ pub mod exp4;
 pub mod exp5;
 pub mod r2_bars;
 
+use fitting_core::cast::{count_to_f64, to_i32};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -258,10 +259,11 @@ where
     let (w, h) = area.dim_in_pixel();
     let font = ("sans-serif", 15).into_font().color(&OK_BLACK);
     // Lay the entries out in equal slots: swatch, then text.
-    let slot = w as i32 / entries.len() as i32;
-    let y = h as i32 / 2;
+    let slot =
+        i32::try_from(w).unwrap_or(i32::MAX) / i32::try_from(entries.len()).unwrap_or(i32::MAX);
+    let y = i32::try_from(h).unwrap_or(i32::MAX) / 2;
     for (i, e) in entries.iter().enumerate() {
-        let x0 = i as i32 * slot + 12;
+        let x0 = i32::try_from(i).expect("legend has fewer than 2^31 entries") * slot + 12;
         match e.dash {
             // Tile the pattern across the swatch, clipped to its width.
             Some((dash, gap)) if dash > 0 && gap > 0 => {
@@ -405,11 +407,11 @@ pub fn binned_median(
     let x_max = x.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let (lo, hi) = (x_min.log10(), x_max.log10());
     if hi <= lo {
-        let mean = x.iter().sum::<f64>() / x.len() as f64;
+        let mean = x.iter().sum::<f64>() / count_to_f64(x.len());
         return (vec![mean], median(y).into_iter().collect());
     }
     let edges: Vec<f64> = (0..=n_bins)
-        .map(|i| 10f64.powf(lo + (hi - lo) * i as f64 / n_bins as f64))
+        .map(|i| 10f64.powf(lo + (hi - lo) * count_to_f64(i) / count_to_f64(n_bins)))
         .collect();
     let mut centres = Vec::new();
     let mut meds = Vec::new();
@@ -553,10 +555,11 @@ pub fn log_tick(v: &f64) -> String {
     let exp = v.log10();
     let rounded = exp.round();
     if (exp - rounded).abs() < 0.01 {
-        let k = rounded as i32;
+        let k = to_i32(rounded);
         return if (-4..=5).contains(&k) {
             // Plain decimals read better than exponents in the common range.
-            let decimals = (-k).max(0) as usize;
+            let decimals =
+                usize::try_from((-k).max(0)).expect("a rounded log10 exponent is a small integer");
             format!("{:.*}", decimals, 10f64.powi(k))
         } else {
             format!("1e{k}")

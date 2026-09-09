@@ -52,7 +52,8 @@ pub(crate) fn run_random(
             trial_idx,
             &pb_iters,
         );
-        let elapsed = start.elapsed().as_millis() as u64;
+        let elapsed =
+            u64::try_from(start.elapsed().as_millis()).expect("elapsed millis fit in u64");
 
         let result = TrialResult::new(
             &config,

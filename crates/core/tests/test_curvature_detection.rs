@@ -2,6 +2,7 @@
 //! method on the same fixtures as the histogram-based detector, for a
 //! head-to-head comparison.
 
+use fitting_core::cast::count_to_f64;
 use fitting_core::curvature_detection::{
     detect_geometry, eigenvalues_symmetric, fit_hyperbolic, fit_spherical, hyperbolic_residual_at,
     spherical_residual_at, WilsonFit, SPHERICAL_RESIDUAL_MAX,
@@ -39,9 +40,9 @@ fn eigenvalues_symmetric_matches_known_spectrum() {
     }
     let top = lam[K - 1];
     assert!(
-        (top - (K as f64 + C)).abs() < 1e-10,
+        (top - (count_to_f64(K) + C)).abs() < 1e-10,
         "expected {}, got {top}",
-        K as f64 + C
+        count_to_f64(K) + C
     );
 }
 
@@ -56,7 +57,8 @@ fn eigenvalues_symmetric_preserves_trace_and_frobenius() {
     for i in 0..K {
         for j in 0..=i {
             // Deterministic, well-mixed, and indefinite.
-            let v = ((i * 7 + j * 13 + 1) as f64).sin() * 3.0 + (i as f64 - j as f64) * 0.1;
+            let v = (count_to_f64(i * 7 + j * 13 + 1)).sin() * 3.0
+                + (count_to_f64(i) - count_to_f64(j)) * 0.1;
             a[i * K + j] = v;
             a[j * K + i] = v;
         }
@@ -94,7 +96,7 @@ fn spherical_residual_vanishes_at_true_radius() {
     let res = spherical_residual_at(&data.distances, M, DIM, 1.0);
     // Same `n · d_max²` gauge `WilsonFit::residual_normalised` uses, so the
     // tolerance means the same thing here as at the detection threshold.
-    let normalised = res / (M as f64 * d_max * d_max);
+    let normalised = res / (count_to_f64(M) * d_max * d_max);
     assert!(
         normalised < 1e-12,
         "S² at r=1: normalised residual {normalised:.3e} should be ~0"

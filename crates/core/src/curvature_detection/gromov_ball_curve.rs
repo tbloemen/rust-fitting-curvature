@@ -1,3 +1,4 @@
+use crate::cast::count_to_f64;
 use crate::curvature_detection::gromov::four_distinct;
 use crate::curvature_detection::gromov::median_pairwise_distance;
 use crate::curvature_detection::gromov::quad_delta;
@@ -150,7 +151,11 @@ pub fn gromov_delta_curve(
             cnt += 1;
         }
 
-        let mean = if cnt > 0 { sum_delta / cnt as f64 } else { 0.0 };
+        let mean = if cnt > 0 {
+            sum_delta / count_to_f64(cnt)
+        } else {
+            0.0
+        };
         points.push(GromovBallPoint {
             k,
             delta_mean: mean,
@@ -174,7 +179,7 @@ impl GromovBallCurve {
         let len = self.points.len();
         let num_tail_points = len.div_ceil(3);
         let tail = &self.points[len - num_tail_points..];
-        tail.iter().map(f).sum::<f64>() / tail.len() as f64
+        tail.iter().map(f).sum::<f64>() / count_to_f64(tail.len())
     }
 
     /// Saturated raw δ of the underlying space (tail-averaged `delta_mean`).
@@ -225,7 +230,7 @@ impl GromovBallCurve {
             if point.k == 0 || point.delta_mean <= 0.0 {
                 continue;
             }
-            let ln_k = (point.k as f64).ln();
+            let ln_k = count_to_f64(point.k).ln();
             let ln_delta = point.delta_mean.ln();
             sum_ln_k += ln_k;
             sum_ln_delta += ln_delta;

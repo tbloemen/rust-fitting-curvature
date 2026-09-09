@@ -17,11 +17,6 @@ codegen-units = 1
 pedantic = { level = "warn", priority = -1 }
 
 # --- ratchet: still to fix -------------------------------------------------
-cast_precision_loss = "allow"
-cast_possible_truncation = "allow"
-cast_sign_loss = "allow"
-cast_possible_wrap = "allow"
-float_cmp = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 many_single_char_names = "allow"

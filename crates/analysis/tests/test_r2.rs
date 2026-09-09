@@ -8,7 +8,9 @@ use fitting_analysis::r2::{
     cell_summary, front_utilities, r2, recommendation, Weights, REGION_ALL,
 };
 use fitting_analysis::TrialRecord;
+use fitting_core::cast::count_to_f64;
 use fitting_core::metrics::{Direction, MetricValue, MetricValues, CONTINUITY, TRUSTWORTHINESS};
+use std::cmp::Ordering;
 
 /// A front point that scores *v* on every objective.
 fn flat(v: f64) -> [f64; N_OBJECTIVES] {
@@ -21,7 +23,7 @@ fn flat(v: f64) -> [f64; N_OBJECTIVES] {
 /// place the objective set has to be edited when it grows, and the compiler
 /// reports it as a size mismatch a long way from the reason.
 fn ramp(base: f64) -> [f64; N_OBJECTIVES] {
-    std::array::from_fn(|j| base + 0.03 * (j % 4) as f64)
+    std::array::from_fn(|j| base + 0.03 * count_to_f64(j % 4))
 }
 
 /// `n` choose `k`, exactly, for the region combinatorics below.
@@ -70,7 +72,11 @@ fn simplex_has_the_expected_size_and_every_vector_sums_to_one() {
 
     for (counts, lambda) in w.counts.iter().zip(&w.vectors) {
         let total: u32 = counts.iter().map(|&c| u32::from(c)).sum();
-        assert_eq!(total, w.s as u32, "counts {counts:?} must sum to s");
+        assert_eq!(
+            total,
+            u32::try_from(w.s).expect("s is a small resolution"),
+            "counts {counts:?} must sum to s"
+        );
         let sum: f64 = lambda.iter().sum();
         assert!((sum - 1.0).abs() < 1e-9, "λ {lambda:?} sums to {sum}");
     }
@@ -191,7 +197,7 @@ fn families_partition_the_objectives() {
 #[test]
 fn a_family_region_puts_at_least_half_its_mass_on_its_own_objectives() {
     let w = Weights::new();
-    let half = w.s.div_ceil(2) as u8;
+    let half = u8::try_from(w.s.div_ceil(2)).expect("s is at most 255");
     for (family, members) in FAMILIES {
         for &i in &w.region(family).unwrap().indices {
             let c = &w.counts[i];
@@ -240,13 +246,16 @@ fn a_family_region_penalises_its_own_objectives_hardest() {
 #[test]
 fn the_ideal_point_scores_zero_and_the_nadir_scores_worst() {
     let w = Weights::new();
-    assert_eq!(score(&[flat(1.0)], &w, REGION_ALL), 0.0);
+    assert_eq!(
+        score(&[flat(1.0)], &w, REGION_ALL).partial_cmp(&0.0),
+        Some(Ordering::Equal)
+    );
 
     // A front at the origin gives max_j λ_j per weight vector, which is what an
     // empty front is defined to score too.
     let nadir = score(&[flat(0.0)], &w, REGION_ALL);
     let empty = score(&[], &w, REGION_ALL);
-    assert_eq!(nadir, empty);
+    assert_eq!(nadir.partial_cmp(&empty), Some(Ordering::Equal));
     assert!(nadir > 0.0);
 }
 
@@ -275,8 +284,8 @@ fn dominated_points_do_not_change_the_indicator() {
     front[0] = 0.9;
     let inside = flat(0.4);
     assert_eq!(
-        score(&[front], &w, REGION_ALL),
-        score(&[front, inside], &w, REGION_ALL)
+        score(&[front], &w, REGION_ALL).partial_cmp(&score(&[front, inside], &w, REGION_ALL)),
+        Some(Ordering::Equal)
     );
 }
 
@@ -300,8 +309,8 @@ fn the_indicator_is_order_independent() {
     let mut b = flat(0.6);
     b[4] = 0.2;
     assert_eq!(
-        score(&[a, b], &w, REGION_ALL),
-        score(&[b, a], &w, REGION_ALL)
+        score(&[a, b], &w, REGION_ALL).partial_cmp(&score(&[b, a], &w, REGION_ALL)),
+        Some(Ordering::Equal)
     );
 }
 
@@ -334,7 +343,7 @@ fn recommendation_ties_resolve_to_the_lowest_front_index() {
     let u = front_utilities(&front, &w.vectors);
     let rec = recommendation(&u, w.region(REGION_ALL).unwrap()).unwrap();
     assert_eq!(rec.front_index, 0);
-    assert_eq!(rec.share, 1.0);
+    assert_eq!(rec.share.partial_cmp(&1.0), Some(Ordering::Equal));
 }
 
 // ─── Cell summary ────────────────────────────────────────────────────────────

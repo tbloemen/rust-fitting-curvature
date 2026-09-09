@@ -1,6 +1,7 @@
 //! Tests for synthetic dataset generators.
 //! Ported from Python `test/test_synthetic.py`
 
+use fitting_core::cast::count_to_f64;
 use fitting_core::synthetic_data::*;
 
 // ---------------------------------------------------------------------------
@@ -486,7 +487,7 @@ fn test_hd_hyperbolic_shells_radial_ordering() {
             .filter(|&i| data.labels[i] == shell)
             .map(|i| data.x[i * dim].acosh())
             .collect();
-        pts.iter().sum::<f64>() / pts.len() as f64
+        pts.iter().sum::<f64>() / count_to_f64(pts.len())
     };
     let d0 = mean_dist(0);
     let d1 = mean_dist(1);

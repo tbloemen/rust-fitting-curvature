@@ -4,6 +4,7 @@
 //! Supports stereographic, azimuthal equidistant, and orthographic projections
 //! for spherical data, Poincaré disk for hyperbolic, and direct coordinates for Euclidean.
 
+use crate::cast::count_to_f64;
 use std::f64::consts::PI;
 
 /// Projection method for spherical embeddings.
@@ -166,7 +167,7 @@ fn align_sphere_to_centroid(points: &[f64], n_points: usize, ambient_dim: usize)
         }
     }
     for d in centroid.iter_mut().take(ambient_dim) {
-        *d /= n_points as f64;
+        *d /= count_to_f64(n_points);
     }
 
     let centroid_norm: f64 = centroid.iter().map(|&c| c * c).sum::<f64>().sqrt();

@@ -1,3 +1,4 @@
+use crate::cast::{count_to_f64, to_usize};
 use crate::curvature_detection::gromov::four_distinct;
 use crate::curvature_detection::gromov::median_pairwise_distance;
 use crate::curvature_detection::gromov::quad_delta;
@@ -31,7 +32,7 @@ pub fn gromov_hyperbolicity(distances: &[f64], n: usize, n_samples: usize) -> f6
     deltas.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
     // 90th percentile δ.
-    let p90_idx = (deltas.len() as f64 * 0.90) as usize;
+    let p90_idx = to_usize(count_to_f64(deltas.len()) * 0.90);
     let delta_90 = deltas[p90_idx.min(deltas.len() - 1)];
 
     let median_d = median_pairwise_distance(distances, n);

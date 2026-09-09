@@ -17,6 +17,7 @@ use fitting_core::kernels::compute_q_matrix_with_distances;
 use fitting_core::kl_divergence::{kl_gradient, kl_loss};
 use fitting_core::manifolds::{self, Manifold};
 use fitting_core::synthetic_data::Rng;
+use std::cmp::Ordering;
 use std::time::{Duration, Instant};
 
 // ───────────────────────── naive reference implementations ─────────────────
@@ -202,7 +203,8 @@ fn optimized_gradient_matches_naive_all_geometries() {
         // The symmetric rewrite reorders nothing that the original didn't also
         // compute, so the result is bit-for-bit identical.
         assert_eq!(
-            diff, 0.0,
+            diff.partial_cmp(&0.0),
+            Some(Ordering::Equal),
             "k={k}: optimized gradient differs from naive by {diff:e}"
         );
     }
@@ -236,15 +238,15 @@ fn loss_tracking_toggle_does_not_change_trajectory() {
         with_loss.step();
         no_loss.step();
         assert_eq!(
-            max_abs_diff(&with_loss.points, &no_loss.points),
-            0.0,
+            max_abs_diff(&with_loss.points, &no_loss.points).partial_cmp(&0.0),
+            Some(Ordering::Equal),
             "trajectory diverged at iteration {} after toggling loss tracking",
             with_loss.iteration
         );
     }
     // The tracked run actually populated a finite loss; the other left it at 0.
     assert!(with_loss.loss.is_finite() && with_loss.loss != 0.0);
-    assert_eq!(no_loss.loss, 0.0);
+    assert_eq!(no_loss.loss.partial_cmp(&0.0), Some(Ordering::Equal));
 }
 
 // ───────────────────────────── speedup checks ──────────────────────────────

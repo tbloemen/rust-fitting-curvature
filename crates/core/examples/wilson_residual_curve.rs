@@ -61,6 +61,7 @@
 //!
 //! Writes two SVGs to `plots/` (spherical + hyperbolic).
 
+use fitting_core::cast::count_to_f64;
 use std::error::Error;
 
 mod common;
@@ -150,7 +151,7 @@ fn hyperbolic_bounds_x() -> (f64, f64) {
 /// the dataset, not of `r`, so this is a fixed vertical shift that leaves the
 /// paper's objective, and hence `r*`, untouched.
 fn abs_log(absolute: f64, n: usize, d_max: f64) -> f64 {
-    (absolute / (n as f64 * d_max * d_max))
+    (absolute / (count_to_f64(n) * d_max * d_max))
         .max(10f64.powf(ABS_LOG_FLOOR))
         .log10()
 }
@@ -184,13 +185,13 @@ fn build_case(fx: &Fixture) -> Case {
     // cross appears to float below the line that is supposed to pass through it.
     let log_lo = R_LO_FRAC.ln();
     let log_hi = R_HI_FRAC.ln();
-    let step = (log_hi - log_lo) / (N_GRID - 1) as f64;
+    let step = (log_hi - log_lo) / count_to_f64(N_GRID - 1);
     let mut rs: Vec<f64> = (0..N_GRID)
-        .map(|i| (log_lo + i as f64 * step).exp() * d_max)
+        .map(|i| (log_lo + count_to_f64(i) * step).exp() * d_max)
         .collect();
     for r_star in [fit_s.radius, fit_h.radius] {
         for i in 0..DENSE_BAND {
-            let t = i as f64 / (DENSE_BAND - 1) as f64;
+            let t = count_to_f64(i) / count_to_f64(DENSE_BAND - 1);
             rs.push(r_star * DENSE_BAND_SPAN.powf(2.0 * t - 1.0));
         }
     }

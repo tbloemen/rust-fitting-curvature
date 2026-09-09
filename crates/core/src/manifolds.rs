@@ -1,3 +1,4 @@
+use crate::cast::count_to_f64;
 use crate::synthetic_data::Rng;
 
 /// A point stored as a flat Vec<f64> of length `n_points` * `ambient_dim` (row-major).
@@ -128,7 +129,7 @@ impl Manifold for Euclidean {
             let mean: f64 = (0..n_points)
                 .map(|i| points[i * ambient_dim + d])
                 .sum::<f64>()
-                / n_points as f64;
+                / count_to_f64(n_points);
             for i in 0..n_points {
                 points[i * ambient_dim + d] -= mean;
             }
@@ -311,7 +312,7 @@ impl Manifold for Hyperboloid {
             }
         }
         for d in mean.iter_mut().take(ambient_dim) {
-            *d /= n_points as f64;
+            *d /= count_to_f64(n_points);
         }
 
         // Normalize to hyperboloid

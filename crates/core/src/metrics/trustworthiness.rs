@@ -3,6 +3,7 @@
 use super::helpers::{compute_ranks, knn_index_sets};
 use super::quality::{Direction, Family, QualityMetric, Space};
 use super::values::MetricValue;
+use crate::cast::count_to_f64;
 use crate::context::EmbeddingContext;
 
 /// Trustworthiness (Venna & Kaski 2006).
@@ -25,7 +26,8 @@ pub fn trustworthiness(
     let ranks_high = compute_ranks(high_dim_distances, n);
     let embed_knn = knn_index_sets(embedded_distances, n, k);
 
-    let denom = n as f64 * k as f64 * (2.0 * n as f64 - 3.0 * k as f64 - 1.0);
+    let denom =
+        count_to_f64(n) * count_to_f64(k) * (2.0 * count_to_f64(n) - 3.0 * count_to_f64(k) - 1.0);
     if denom < 1e-12 {
         return 1.0;
     }
@@ -37,7 +39,7 @@ pub fn trustworthiness(
             // j is NOT among i's k nearest in high-dim space
             let r = ranks_high[i * n + j];
             if r > k {
-                penalty += (r - k) as f64;
+                penalty += count_to_f64(r - k);
             }
         }
     }

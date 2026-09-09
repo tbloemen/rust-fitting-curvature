@@ -10,6 +10,7 @@
 //   §4.1  — Expected Improvement acquisition function (Eq. 7–8)
 //   Alg.1 — Basic BayesOpt loop with initial space-filling design
 
+use fitting_core::cast::{count_to_f64, to_usize};
 use std::collections::VecDeque;
 use std::f64::consts::PI;
 
@@ -75,8 +76,8 @@ impl GpOptimizer {
         let mut scored: Vec<(f64, TrialConfig)> = (0..self.n_ei_candidates)
             .map(|_| {
                 let candidate = if rng.uniform() < 0.3 {
-                    let idx =
-                        (rng.uniform() * self.trials.len() as f64) as usize % self.trials.len();
+                    let idx = to_usize(rng.uniform() * count_to_f64(self.trials.len()))
+                        % self.trials.len();
                     self.mutate_config(&self.trials[idx].config, rng)
                 } else {
                     self.random_config(rng)
@@ -278,8 +279,8 @@ impl GpModel {
         // Standardise outputs to zero mean, unit variance so that the RBF prior
         // variance k(x,x) = 1 matches the data scale (avoids a separate signal-
         // variance hyperparameter while still fitting the constant mean via MLE).
-        let y_mean = ys.iter().sum::<f64>() / ys.len() as f64;
-        let y_var = ys.iter().map(|&y| (y - y_mean).powi(2)).sum::<f64>() / ys.len() as f64;
+        let y_mean = ys.iter().sum::<f64>() / count_to_f64(ys.len());
+        let y_var = ys.iter().map(|&y| (y - y_mean).powi(2)).sum::<f64>() / count_to_f64(ys.len());
         let y_std = y_var.sqrt().max(1e-8);
         let ys_norm: Vec<f64> = ys.iter().map(|&y| (y - y_mean) / y_std).collect();
 
@@ -393,7 +394,7 @@ fn mle_length_scale(xs_norm: &[Vec<f64>], ys_norm: &[f64]) -> f64 {
 
     (0..N_GRID)
         .map(|i| {
-            let t = i as f64 / (N_GRID - 1) as f64;
+            let t = count_to_f64(i) / count_to_f64(N_GRID - 1);
             let l = (L_MIN.ln() + t * (L_MAX.ln() - L_MIN.ln())).exp();
             let lml = log_marginal_likelihood(xs_norm, ys_norm, l);
             (l, lml)
@@ -421,7 +422,7 @@ fn log_marginal_likelihood(xs_norm: &[Vec<f64>], ys_norm: &[f64], length_scale: 
     // Complexity penalty: log|K| = 2 Σᵢ log Lᵢᵢ.
     let log_det: f64 = (0..n).map(|i| l[i * n + i].max(1e-300).ln()).sum::<f64>() * 2.0;
 
-    -0.5 * data_fit - 0.5 * log_det - 0.5 * n as f64 * (2.0 * PI).ln()
+    -0.5 * data_fit - 0.5 * log_det - 0.5 * count_to_f64(n) * (2.0 * PI).ln()
 }
 
 // ─── Input encoding ───────────────────────────────────────────────────────────
@@ -519,7 +520,7 @@ fn gp_param_names(spec: &TrialConfig) -> (Vec<String>, Vec<String>) {
 
 fn compute_normalization(xs: &[Vec<f64>]) -> (Vec<f64>, Vec<f64>) {
     let dim = xs[0].len();
-    let n = xs.len() as f64;
+    let n = count_to_f64(xs.len());
     let mut means = vec![0.0; dim];
     for x in xs {
         for (d, &v) in x.iter().enumerate() {
@@ -838,8 +839,8 @@ impl ParEgoOptimizer {
 
         let mut evals_used = POP_SIZE;
         while evals_used < N_EVALS {
-            let i = (rng.uniform() * POP_SIZE as f64) as usize % POP_SIZE;
-            let mut j = (rng.uniform() * (POP_SIZE - 1) as f64) as usize % (POP_SIZE - 1);
+            let i = to_usize(rng.uniform() * count_to_f64(POP_SIZE)) % POP_SIZE;
+            let mut j = to_usize(rng.uniform() * count_to_f64(POP_SIZE - 1)) % (POP_SIZE - 1);
             if j >= i {
                 j += 1;
             }
@@ -920,7 +921,7 @@ impl ParEgoOptimizer {
             // Random half without replacement from the remaining indices.
             let mut remaining: Vec<usize> = scalar_vals[half..].iter().map(|&(i, _)| i).collect();
             for i in (1..remaining.len()).rev() {
-                let j = (rng.uniform() * (i + 1) as f64) as usize % (i + 1);
+                let j = to_usize(rng.uniform() * count_to_f64(i + 1)) % (i + 1);
                 remaining.swap(i, j);
             }
             chosen.extend_from_slice(&remaining[..half.min(remaining.len())]);
@@ -991,7 +992,7 @@ fn sample_discrete_simplex(dim: usize, s: usize, rng: &mut Rng) -> Vec<f64> {
     let mut pool: Vec<usize> = (0..total).collect();
     for i in 0..(dim - 1) {
         let remaining = total - i;
-        let j = i + (rng.uniform() * remaining as f64) as usize % remaining;
+        let j = i + to_usize(rng.uniform() * count_to_f64(remaining)) % remaining;
         pool.swap(i, j);
     }
     let mut positions = pool[..(dim - 1)].to_vec();
@@ -1000,10 +1001,10 @@ fn sample_discrete_simplex(dim: usize, s: usize, rng: &mut Rng) -> Vec<f64> {
     let mut result = Vec::with_capacity(dim);
     let mut prev = 0usize;
     for &pos in &positions {
-        result.push((pos - prev) as f64 / s as f64);
+        result.push(count_to_f64(pos - prev) / count_to_f64(s));
         prev = pos + 1;
     }
-    result.push((total - prev) as f64 / s as f64);
+    result.push(count_to_f64(total - prev) / count_to_f64(s));
     result
 }
 
@@ -1018,11 +1019,11 @@ pub fn latin_hypercube_sample(n: usize, spec: &TrialConfig, rng: &mut Rng) -> Ve
         .map(|_| {
             let mut perm: Vec<usize> = (0..n).collect();
             for i in (1..n).rev() {
-                let j = (rng.uniform() * (i + 1) as f64) as usize % (i + 1);
+                let j = to_usize(rng.uniform() * count_to_f64(i + 1)) % (i + 1);
                 perm.swap(i, j);
             }
             perm.iter()
-                .map(|&k| (k as f64 + rng.uniform()) / n as f64)
+                .map(|&k| (count_to_f64(k) + rng.uniform()) / count_to_f64(n))
                 .collect()
         })
         .collect();
@@ -1223,7 +1224,7 @@ pub fn evolalg_mutate(
     spec: &TrialConfig,
     rng: &mut Rng,
 ) -> TrialConfig {
-    let p = 1.0 / dim as f64;
+    let p = 1.0 / count_to_f64(dim);
 
     macro_rules! mutate {
         ($field:expr, $v:expr) => {
@@ -1328,6 +1329,7 @@ fn dominates(a: &[f64], b: &[f64]) -> bool {
 mod tests {
     use super::*;
     use fitting_core::synthetic_data::Rng;
+    use std::cmp::Ordering;
 
     fn maximize_space() -> SearchSpace {
         SearchSpace {
@@ -1426,8 +1428,14 @@ mod tests {
     #[test]
     fn test_ei_zero_sigma_below_best() {
         // σ=0, µ < f*: improvement is impossible → EI = 0.
-        assert_eq!(expected_improvement(-1.0, 0.0, 0.0), 0.0);
-        assert_eq!(expected_improvement(-1.0, 1e-11, 0.0), 0.0);
+        assert_eq!(
+            expected_improvement(-1.0, 0.0, 0.0).partial_cmp(&0.0),
+            Some(Ordering::Equal)
+        );
+        assert_eq!(
+            expected_improvement(-1.0, 1e-11, 0.0).partial_cmp(&0.0),
+            Some(Ordering::Equal)
+        );
     }
 
     #[test]
@@ -1777,7 +1785,10 @@ mod tests {
     #[test]
     fn test_optimizer_best_trial_empty() {
         let opt = GpOptimizer::new(maximize_space());
-        assert_eq!(opt.best_trial(), f64::MIN);
+        assert_eq!(
+            opt.best_trial().partial_cmp(&f64::MIN),
+            Some(Ordering::Equal)
+        );
     }
 
     #[test]
@@ -1804,7 +1815,10 @@ mod tests {
         let cfg = opt.suggest_batch(1, &mut rng).remove(0);
         assert!(cfg.learning_rate.value() > 0.0);
         assert!(cfg.perplexity_ratio.value() >= 0.0004);
-        assert_eq!(cfg.momentum_main.value(), 0.8);
+        assert_eq!(
+            cfg.momentum_main.value().partial_cmp(&0.8),
+            Some(Ordering::Equal)
+        );
     }
 
     #[test]
@@ -1917,7 +1931,7 @@ mod tests {
             let mut bins = vec![false; n];
             for v in values {
                 let t = (v - lo) / (hi - lo);
-                let b = ((t * n as f64) as usize).min(n - 1);
+                let b = to_usize(t * count_to_f64(n)).min(n - 1);
                 assert!(!bins[b], "{name}: bin {b} occupied twice");
                 bins[b] = true;
             }
@@ -1964,8 +1978,8 @@ mod tests {
         let pts = latin_hypercube_sample(20, &TrialConfig::all_free(), &mut rng);
         for cfg in &pts {
             assert_eq!(
-                cfg.curvature_magnitude.value(),
-                0.0,
+                cfg.curvature_magnitude.value().partial_cmp(&0.0),
+                Some(Ordering::Equal),
                 "curvature should be 0 when Fixed(0)"
             );
         }
@@ -2036,7 +2050,7 @@ mod tests {
         for _ in 0..100 {
             let w = sample_discrete_simplex(10, s, &mut rng);
             for &wi in &w {
-                let scaled = wi * s as f64;
+                let scaled = wi * count_to_f64(s);
                 assert!(
                     (scaled - scaled.round()).abs() < 1e-10,
                     "w*s={scaled} not integer"
@@ -2072,10 +2086,10 @@ mod tests {
         for _ in 0..2000 {
             let w = sample_discrete_simplex(5, 5, &mut rng);
             for &wi in &w {
-                if wi == 1.0 {
+                if wi.partial_cmp(&1.0) == Some(Ordering::Equal) {
                     saw_one = true;
                 }
-                if wi == 0.0 {
+                if wi.partial_cmp(&0.0) == Some(Ordering::Equal) {
                     saw_zero = true;
                 }
             }

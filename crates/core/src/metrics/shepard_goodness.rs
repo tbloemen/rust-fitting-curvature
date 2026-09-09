@@ -2,6 +2,7 @@
 
 use super::quality::{Direction, Family, QualityMetric, Space};
 use super::values::MetricValue;
+use crate::cast::count_to_f64;
 use crate::context::EmbeddingContext;
 
 /// The rank variable `R[X]` of `values`, using **fractional ranks**: identical
@@ -18,10 +19,13 @@ fn fractional_rank_vector(values: &[f64]) -> Vec<f64> {
     let mut start = 0;
     while start < indices.len() {
         let mut end = start;
-        while end + 1 < indices.len() && values[indices[end + 1]] == values[indices[start]] {
+        while end + 1 < indices.len()
+            && values[indices[end + 1]].partial_cmp(&values[indices[start]])
+                == Some(std::cmp::Ordering::Equal)
+        {
             end += 1;
         }
-        let fractional_rank = (start + end) as f64 / 2.0;
+        let fractional_rank = count_to_f64(start + end) / 2.0;
         for &idx in &indices[start..=end] {
             ranks[idx] = fractional_rank;
         }
@@ -95,7 +99,7 @@ pub fn shepard_goodness(high_dim_distances: &[f64], embedded_distances: &[f64], 
     // Both mean ranks are (m-1)/2 whatever the tie pattern, since fractional
     // ranks redistribute 0..m-1 without changing their sum; the σ do change
     // — ties shrink them — which is exactly what the shortcut cannot see.
-    let mean_rank = (m - 1) as f64 / 2.0;
+    let mean_rank = count_to_f64(m - 1) / 2.0;
     let mut cov = 0.0;
     let mut var_x = 0.0;
     let mut var_y = 0.0;

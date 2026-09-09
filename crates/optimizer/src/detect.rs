@@ -26,6 +26,7 @@
 //! the spherical or hyperbolic hypothesis, or inspect why a verdict was reached,
 //! without re-running Rust.
 
+use fitting_core::cast::count_to_f64;
 use std::fs::OpenOptions;
 use std::io::Write;
 
@@ -152,7 +153,7 @@ fn rms_pairwise(distances: &[f64], n: usize) -> f64 {
         return 0.0;
     }
     let sum_sq: f64 = distances.iter().map(|d| d * d).sum();
-    (sum_sq / ((n as f64) * (n as f64 - 1.0))).sqrt()
+    (sum_sq / (count_to_f64(n) * (count_to_f64(n) - 1.0))).sqrt()
 }
 
 pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {

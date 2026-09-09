@@ -41,6 +41,7 @@
 //! radius search.
 
 use super::signature::{build_z_euclidean, build_z_hyperbolic, build_z_spherical, eigen_symmetric};
+use crate::cast::count_to_f64;
 use crate::manifolds::create_manifold;
 
 /// A configuration recovered from a fitted constant-curvature model.
@@ -93,7 +94,7 @@ impl Reconstruction {
             return 0.0;
         }
         let sum_sq: f64 = origin.iter().map(|d| d * d).sum();
-        (sum_sq / origin.len() as f64).sqrt()
+        (sum_sq / count_to_f64(origin.len())).sqrt()
     }
 
     /// `κ = |K| · R_rms²` — the dimensionless curvature of this configuration

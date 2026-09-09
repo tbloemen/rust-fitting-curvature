@@ -1,3 +1,4 @@
+use fitting_core::cast::{count_to_f64, to_i32, to_i64};
 use plotters::prelude::*;
 use plotters_canvas::CanvasBackend;
 use wasm_bindgen::JsValue;
@@ -372,7 +373,7 @@ fn poincare_geodesic_arc(a: f64, vertical: bool) -> Vec<(f64, f64)> {
     let n_seg = 64;
     let mut pts = Vec::with_capacity(n_seg + 1);
     for i in 0..=n_seg {
-        let t = i as f64 / n_seg as f64;
+        let t = count_to_f64(i) / count_to_f64(n_seg);
         let ang = -theta + t * 2.0 * theta;
 
         let (px, py) = if vertical {
@@ -448,7 +449,7 @@ where
             .draw_series(LineSeries::new(circ, GRID_COLOR))
             .map_err(map_err)?;
 
-        let label = format!("{}\u{b0}", theta_deg as i32);
+        let label = format!("{}\u{b0}", to_i32(theta_deg));
         chart
             .draw_series(std::iter::once(Text::new(
                 label,
@@ -578,7 +579,7 @@ where
 fn circle_points(cx: f64, cy: f64, r: f64, n: usize) -> Vec<(f64, f64)> {
     (0..=n)
         .map(|i| {
-            let ang = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+            let ang = 2.0 * std::f64::consts::PI * count_to_f64(i) / count_to_f64(n);
             (cx + r * ang.cos(), cy + r * ang.sin())
         })
         .collect()
@@ -588,7 +589,7 @@ fn circle_points(cx: f64, cy: f64, r: f64, n: usize) -> Vec<(f64, f64)> {
 fn format_tick(v: f64) -> String {
     let rounded = v.round();
     if (v - rounded).abs() < 1e-9 {
-        format!("{}", rounded as i64)
+        format!("{}", to_i64(rounded))
     } else {
         format!("{v:.1}")
     }

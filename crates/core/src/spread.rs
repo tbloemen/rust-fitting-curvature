@@ -11,6 +11,7 @@
 //! projected-or-manifold binary and `Family` hold only real preference
 //! families.
 
+use crate::cast::count_to_f64;
 use crate::context::EmbeddingContext;
 use crate::metrics::{values_mean_of, MetricValue};
 
@@ -63,7 +64,7 @@ impl SpreadDiagnostics {
         } else {
             (
                 origin.iter().copied().fold(0.0_f64, f64::max),
-                (origin.iter().map(|d| d * d).sum::<f64>() / origin.len() as f64).sqrt(),
+                (origin.iter().map(|d| d * d).sum::<f64>() / count_to_f64(origin.len())).sqrt(),
             )
         };
         Self {
@@ -78,7 +79,7 @@ impl SpreadDiagnostics {
     /// diverged shows in the aggregate rather than being averaged away.
     #[must_use]
     pub fn mean(samples: &[SpreadDiagnostics]) -> SpreadDiagnostics {
-        let n = samples.len() as f64;
+        let n = count_to_f64(samples.len());
         let avg =
             |f: fn(&SpreadDiagnostics) -> MetricValue| values_mean_of(samples.iter().map(f), n);
         Self {
@@ -141,7 +142,7 @@ pub fn gyration_radius(dist: &[f64], n: usize) -> f64 {
         return 0.0;
     }
     let sum_sq: f64 = dist.iter().map(|d| d * d).sum();
-    (sum_sq / (2.0 * (n * n) as f64)).sqrt()
+    (sum_sq / (2.0 * count_to_f64(n * n))).sqrt()
 }
 
 // ─── Wire format ─────────────────────────────────────────────────────────────
@@ -231,6 +232,7 @@ mod wire {
 mod tests {
     use super::*;
     use crate::matrices::compute_euclidean_distance_matrix;
+    use std::cmp::Ordering;
 
     /// The flat-space identity the `2n²` divisor exists for: in Euclidean space
     /// the gyration radius *is* the RMS distance to the centroid. A wrong
@@ -246,7 +248,7 @@ mod tests {
         let mut points = vec![0.0f64; N * D];
         for i in 0..N {
             for d in 0..D {
-                let t = (i * D + d) as f64;
+                let t = count_to_f64(i * D + d);
                 points[i * D + d] = (t * 0.7).sin() * (1.0 + t * 0.31);
             }
         }
@@ -262,7 +264,7 @@ mod tests {
             }
         }
         for c in &mut centroid {
-            *c /= N as f64;
+            *c /= count_to_f64(N);
         }
         let want = {
             let sum_sq: f64 = (0..N)
@@ -272,7 +274,7 @@ mod tests {
                         .sum::<f64>()
                 })
                 .sum();
-            (sum_sq / N as f64).sqrt()
+            (sum_sq / count_to_f64(N)).sqrt()
         };
 
         assert!(
@@ -287,6 +289,9 @@ mod tests {
     #[test]
     fn test_gyration_of_collapsed_configuration_is_zero() {
         let dist = vec![0.0; 16 * 16];
-        assert_eq!(gyration_radius(&dist, 16), 0.0);
+        assert_eq!(
+            gyration_radius(&dist, 16).partial_cmp(&0.0),
+            Some(Ordering::Equal)
+        );
     }
 }

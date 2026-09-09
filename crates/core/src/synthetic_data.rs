@@ -5,6 +5,7 @@
 //! - `labels`: integer labels (length n)
 //! - `distances`: precomputed intrinsic distance matrix (flat n × n)
 
+use crate::cast::{count_to_f64, to_u32, to_usize};
 use std::f64::consts::PI;
 
 pub use crate::rng::Rng;
@@ -105,7 +106,7 @@ fn sample_unit_sphere(rng: &mut Rng, dim: usize) -> Vec<f64> {
 /// Generate a tree structure in the 2D Poincaré disk.
 /// Returns (`poincaré_coords` [n×2], labels [n]).
 fn poincare_tree_2d(n_samples: usize, rng: &mut Rng) -> (Vec<f64>, Vec<u32>) {
-    let max_depth = (n_samples as f64).log2().ceil() as usize;
+    let max_depth = to_usize(count_to_f64(n_samples).log2().ceil());
     let max_depth = max_depth.max(2);
 
     let mut poincare = Vec::new();
@@ -118,12 +119,12 @@ fn poincare_tree_2d(n_samples: usize, rng: &mut Rng) -> (Vec<f64>, Vec<u32>) {
 
     'outer: for depth in 1..=max_depth {
         let n_at_depth = 1 << depth; // 2^depth
-        let r = (depth as f64 * 0.8 / 2.0).tanh();
+        let r = (count_to_f64(depth) * 0.8 / 2.0).tanh();
         for i in 0..n_at_depth {
-            let angle = 2.0 * PI * f64::from(i) / f64::from(n_at_depth) + depth as f64 * 0.3;
+            let angle = 2.0 * PI * f64::from(i) / f64::from(n_at_depth) + count_to_f64(depth) * 0.3;
             poincare.push(r * angle.cos());
             poincare.push(r * angle.sin());
-            labels.push((depth as u32).min(4));
+            labels.push(u32::try_from(depth.min(4)).expect("depth is a log2 of n_samples"));
             if labels.len() >= n_samples {
                 break 'outer;
             }
@@ -131,12 +132,12 @@ fn poincare_tree_2d(n_samples: usize, rng: &mut Rng) -> (Vec<f64>, Vec<u32>) {
     }
 
     while labels.len() < n_samples {
-        let depth = (rng.uniform() * max_depth as f64) as usize + 1;
-        let r = (depth as f64 * 0.8 / 2.0).tanh();
+        let depth = to_usize(rng.uniform() * count_to_f64(max_depth)) + 1;
+        let r = (count_to_f64(depth) * 0.8 / 2.0).tanh();
         let angle = rng.uniform() * 2.0 * PI;
         poincare.push(r * angle.cos());
         poincare.push(r * angle.sin());
-        labels.push((depth as u32).min(4));
+        labels.push(u32::try_from(depth.min(4)).expect("depth is a log2 of n_samples"));
     }
 
     poincare.truncate(n_samples * 2);
@@ -422,7 +423,7 @@ pub fn generate_uniform_hyperbolic(n_samples: usize, seed: u64, max_rho: f64) ->
         poincare.push(poincare_r * angle.cos());
         poincare.push(poincare_r * angle.sin());
 
-        let label = ((rho / max_rho * 3.0) as u32).min(2);
+        let label = to_u32(rho / max_rho * 3.0).min(2);
         labels.push(label);
     }
 
@@ -476,7 +477,7 @@ pub fn generate_hyperbolic_shells(n_samples: usize, seed: u64) -> DataPoints {
             let angle = rng.uniform() * 2.0 * PI;
             poincare.push(r * angle.cos());
             poincare.push(r * angle.sin());
-            labels.push(shell_idx as u32);
+            labels.push(u32::try_from(shell_idx).expect("the number of shells is a small count"));
         }
     }
 
@@ -659,7 +660,7 @@ pub fn generate_hd_hyperbolic_shells(n_samples: usize, dim: usize, seed: u64) ->
             for dir_k in dir.iter().take(poincare_dim) {
                 poincare.push(r * dir_k);
             }
-            labels.push(shell_idx as u32);
+            labels.push(u32::try_from(shell_idx).expect("the number of shells is a small count"));
         }
     }
 

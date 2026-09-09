@@ -7,6 +7,7 @@
 //! file knows that.
 
 use super::quality::{Metric, ALL};
+use crate::cast::count_to_f64;
 use crate::context::EmbeddingContext;
 
 /// One metric's reading for one embedding.
@@ -144,7 +145,7 @@ impl MetricValues {
     /// was the job NaN propagation did before, stated explicitly.
     #[must_use]
     pub fn mean(samples: &[MetricValues]) -> MetricValues {
-        let n = samples.len() as f64;
+        let n = count_to_f64(samples.len());
         let mut out = Self::MISSING;
         for (j, slot) in out.0.iter_mut().enumerate() {
             *slot = mean_of(samples.iter().map(|s| s.0[j]), n);

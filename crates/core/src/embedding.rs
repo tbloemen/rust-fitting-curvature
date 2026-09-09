@@ -1,6 +1,7 @@
 use crate::affinities::{
     compute_perplexity_affinities, compute_perplexity_affinities_from_distances,
 };
+use crate::cast::{count_to_f64, to_usize};
 use crate::config::{InitMethod, TrainingConfig};
 use crate::context::EmbeddingContext;
 use crate::kernels::compute_q_matrix_with_distances;
@@ -303,7 +304,7 @@ impl EmbeddingState {
     #[must_use]
     pub fn compute_metrics(&self) -> (MetricValues, SpreadDiagnostics) {
         let n = self.n_points;
-        let k = (self.config.perplexity as usize)
+        let k = to_usize(self.config.perplexity)
             .min(n.saturating_sub(2))
             .max(1);
         let high_dim = self.high_dim_distances();
@@ -441,7 +442,7 @@ impl EmbeddingState {
                 grad[k] += contrib;
                 sumsq += contrib * contrib;
             }
-            self.last_norm_grad_rms = (sumsq / grad.len() as f64).sqrt();
+            self.last_norm_grad_rms = (sumsq / count_to_f64(grad.len())).sqrt();
             self.loss += self.config.norm_loss_weight * depth_loss;
         }
 
@@ -466,14 +467,14 @@ impl EmbeddingState {
                 grad[k] += contrib;
                 sumsq += contrib * contrib;
             }
-            self.last_norm_grad_rms = (sumsq / grad.len() as f64).sqrt();
+            self.last_norm_grad_rms = (sumsq / count_to_f64(grad.len())).sqrt();
             self.loss += self.config.norm_loss_weight * norm_loss;
         }
 
         // Diagnostic: RMS of the full gradient (for comparison with the norm-loss
         // contribution captured above).
         let total_sumsq: f64 = grad.iter().map(|g| g * g).sum();
-        self.last_total_grad_rms = (total_sumsq / grad.len() as f64).sqrt();
+        self.last_total_grad_rms = (total_sumsq / count_to_f64(grad.len())).sqrt();
 
         // Optimizer step
         self.optimizer.step(
@@ -568,7 +569,9 @@ impl EmbeddingState {
 /// phase (zero iterations, or a factor of exactly 1.0 which leaves `p_base`
 /// unchanged). Lets `step` reuse this instead of re-scaling every iteration.
 fn make_p_early(p_base: &[f64], config: &TrainingConfig) -> Vec<f64> {
-    if config.early_exaggeration_iterations > 0 && config.early_exaggeration_factor != 1.0 {
+    if config.early_exaggeration_iterations > 0
+        && config.early_exaggeration_factor.partial_cmp(&1.0) != Some(std::cmp::Ordering::Equal)
+    {
         let factor = config.early_exaggeration_factor;
         p_base.iter().map(|&x| x * factor).collect()
     } else {

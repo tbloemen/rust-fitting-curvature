@@ -1,12 +1,14 @@
 //! Tests for embedding quality metrics.
 //! Ported from Python `test/test_metrics.py`
 
+use fitting_core::cast::count_to_f64;
 use fitting_core::context::EmbeddingContext;
 use fitting_core::metrics::*;
 use fitting_core::metrics::{Metric, MetricValue, MetricValues};
 use fitting_core::spread::SpreadDiagnostics;
 use fitting_core::synthetic_data::Rng;
 use fitting_core::visualisation::SphericalProjection;
+use std::cmp::Ordering;
 
 // ---------------------------------------------------------------------------
 // Helpers shared by multiple tests
@@ -25,12 +27,12 @@ fn make_clustered_2d(
     let mut pts = vec![0.0f64; n * 2];
     let mut labels = vec![0u32; n];
     for c in 0..n_clusters {
-        let cx = (c as f64) * 20.0;
+        let cx = count_to_f64(c) * 20.0;
         for i in 0..per_cluster {
             let idx = c * per_cluster + i;
             pts[idx * 2] = cx + rng.normal() * spread;
             pts[idx * 2 + 1] = rng.normal() * spread;
-            labels[idx] = c as u32;
+            labels[idx] = u32::try_from(c).expect("n_clusters is a small count");
         }
     }
     (pts, labels)
@@ -101,7 +103,7 @@ fn test_dunn_index_well_separated() {
     let mut rng = Rng::new(42);
     for c in 0..3 {
         for i in 0..20 {
-            labels[c * 20 + i] = c as u32;
+            labels[c * 20 + i] = u32::try_from(c).expect("three clusters");
             for j in (i + 1)..20 {
                 let dist = 0.1 + rng.uniform() * 0.4;
                 d[(c * 20 + i) * n + (c * 20 + j)] = dist;
@@ -188,7 +190,9 @@ fn test_neighborhood_hit_random_labels() {
     let n = 120;
     let num_classes = 3usize;
     let pts: Vec<f64> = (0..n * 2).map(|_| rng.normal()).collect();
-    let labels: Vec<u32> = (0..n).map(|i| (i % num_classes) as u32).collect();
+    let labels: Vec<u32> = (0..n)
+        .map(|i| u32::try_from(i % num_classes).expect("i < 120"))
+        .collect();
     let d = euclidean_dist_2d(&pts, n);
     let nh = neighborhood_hit(&d, &labels, n, 7);
     // With random points + balanced labels, expected NH ≈ 1/3
@@ -228,7 +232,9 @@ fn test_distance_consistency_random_labels() {
     let mut rng = Rng::new(42);
     let n = 120;
     let pts: Vec<f64> = (0..n * 2).map(|_| rng.normal()).collect();
-    let labels: Vec<u32> = (0..n).map(|i| (i % 3) as u32).collect();
+    let labels: Vec<u32> = (0..n)
+        .map(|i| u32::try_from(i % 3).expect("i < 120"))
+        .collect();
     let dsc = distance_consistency(&pts, &labels, n);
     assert!(dsc < 0.6, "random labels should give low DSC, got {dsc}");
 }
@@ -252,12 +258,12 @@ fn test_distance_consistency_is_global_where_neighborhood_hit_is_local() {
     let mut pts = vec![0.0f64; n * 2];
     let mut labels = vec![0u32; n];
     for i in 0..n_per {
-        let theta = std::f64::consts::TAU * i as f64 / n_per as f64;
+        let theta = std::f64::consts::TAU * count_to_f64(i) / count_to_f64(n_per);
         for (ring, r) in [(0usize, 1.0f64), (1, 4.0)] {
             let idx = ring * n_per + i;
             pts[idx * 2] = r * theta.cos();
             pts[idx * 2 + 1] = r * theta.sin();
-            labels[idx] = ring as u32;
+            labels[idx] = u32::try_from(ring).expect("a small number of rings");
         }
     }
 
@@ -282,7 +288,10 @@ fn test_distance_consistency_single_class_is_one() {
     let (pts, _) = make_clustered_2d(2, 10, 1.0, 3);
     let n = pts.len() / 2;
     let labels = vec![0u32; n];
-    assert_eq!(distance_consistency(&pts, &labels, n), 1.0);
+    assert_eq!(
+        distance_consistency(&pts, &labels, n).partial_cmp(&1.0),
+        Some(Ordering::Equal)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -367,8 +376,8 @@ fn test_shepard_goodness_ties_match_reference_spearman() {
     let mut d2 = vec![0.0f64; n * n];
     for i in 0..n {
         for j in (i + 1)..n {
-            let a = ((i + j) % 4) as f64 + 1.0;
-            let b = ((i * j) % 3) as f64 + 1.0;
+            let a = count_to_f64((i + j) % 4) + 1.0;
+            let b = count_to_f64((i * j) % 3) + 1.0;
             d1[i * n + j] = a;
             d1[j * n + i] = a;
             d2[i * n + j] = b;
@@ -401,8 +410,8 @@ fn test_shepard_goodness_tie_order_is_irrelevant() {
     let mut d2 = vec![0.0f64; n * n];
     for i in 0..n {
         for j in (i + 1)..n {
-            let a = ((i + j) % 3) as f64;
-            let b = ((i + 2 * j) % 5) as f64;
+            let a = count_to_f64((i + j) % 3);
+            let b = count_to_f64((i + 2 * j) % 5);
             d1[i * n + j] = a;
             d1[j * n + i] = a;
             d2[i * n + j] = b;
@@ -439,10 +448,12 @@ fn pearson_on_fractional_ranks(a: &[f64], b: &[f64]) -> f64 {
         let mut i = 0;
         while i < idx.len() {
             let mut j = i;
-            while j + 1 < idx.len() && v[idx[j + 1]] == v[idx[i]] {
+            while j + 1 < idx.len()
+                && v[idx[j + 1]].partial_cmp(&v[idx[i]]) == Some(std::cmp::Ordering::Equal)
+            {
                 j += 1;
             }
-            let avg = (i + j) as f64 / 2.0;
+            let avg = count_to_f64(i + j) / 2.0;
             for &k in &idx[i..=j] {
                 r[k] = avg;
             }
@@ -451,7 +462,7 @@ fn pearson_on_fractional_ranks(a: &[f64], b: &[f64]) -> f64 {
         r
     }
     let (ra, rb) = (fractional_ranks(a), fractional_ranks(b));
-    let m = ra.len() as f64;
+    let m = count_to_f64(ra.len());
     let ma = ra.iter().sum::<f64>() / m;
     let mb = rb.iter().sum::<f64>() / m;
     let mut cov = 0.0;
@@ -534,7 +545,7 @@ fn test_davies_bouldin_separated() {
 
     for c in 0..2 {
         for i in 0..20 {
-            labels[c * 20 + i] = c as u32;
+            labels[c * 20 + i] = u32::try_from(c).expect("three clusters");
             for j in (i + 1)..20 {
                 let dist = 0.1 + rng.uniform() * 0.3;
                 d[(c * 20 + i) * n + (c * 20 + j)] = dist;

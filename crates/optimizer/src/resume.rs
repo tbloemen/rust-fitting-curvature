@@ -137,7 +137,8 @@ pub(crate) fn eval_or_reuse_batch(
                         trial_idx,
                         &pb_iters,
                     );
-                    let elapsed = start.elapsed().as_millis() as u64;
+                    let elapsed = u64::try_from(start.elapsed().as_millis())
+                        .expect("elapsed millis fit in u64");
                     (actual_curvature, all, spread, elapsed)
                 })
             })
@@ -172,6 +173,8 @@ mod tests {
     use super::*;
     use crate::metrics::Direction;
     use crate::pareto::default_pareto_metrics;
+    use fitting_core::cast::count_to_f64;
+    use std::cmp::Ordering;
 
     /// Every objective the optimizer searches must survive a round trip
     /// through the JSONL, or `--resume` replays it as the worst-case
@@ -189,7 +192,9 @@ mod tests {
 
         // Distinct, in-range, and never equal to a worst-case substitute
         // (0.0 for maximised objectives, 1.0 for minimised ones).
-        let values: Vec<f64> = (0..metrics.len()).map(|i| 0.11 + 0.07 * i as f64).collect();
+        let values: Vec<f64> = (0..metrics.len())
+            .map(|i| 0.11 + 0.07 * count_to_f64(i))
+            .collect();
 
         let fields: Vec<String> = metrics
             .iter()
@@ -214,8 +219,8 @@ mod tests {
                 metric.name()
             );
         }
-        assert_eq!(prior[0].r_max, 1.0);
-        assert_eq!(prior[0].r_rms, 2.0);
+        assert_eq!(prior[0].r_max.partial_cmp(&1.0), Some(Ordering::Equal));
+        assert_eq!(prior[0].r_rms.partial_cmp(&2.0), Some(Ordering::Equal));
     }
 
     /// A line from `results/` as it is actually shaped: retired metric columns
@@ -265,8 +270,13 @@ mod tests {
                     },
                     |&(_, v)| v,
                 );
-            assert_eq!(got, want, "{} replayed as {got}", metric.name());
+            assert_eq!(
+                got.partial_cmp(&want),
+                Some(Ordering::Equal),
+                "{} replayed as {got}",
+                metric.name()
+            );
         }
-        assert_eq!(prior[0].r_max, 1.0);
+        assert_eq!(prior[0].r_max.partial_cmp(&1.0), Some(Ordering::Equal));
     }
 }

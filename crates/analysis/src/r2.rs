@@ -20,6 +20,7 @@
 //! binary, so `0.2 + 0.4 > 0.6` and a naive `λ_a + λ_b >= 0.5` would be a coin
 //! flip).
 
+use fitting_core::cast::count_to_f64;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -91,10 +92,11 @@ impl Weights {
             (1..=usize::from(u8::MAX)).contains(&s),
             "simplex resolution {s} must be in 1..=255"
         );
-        let counts = enumerate_simplex(s as u8);
+        let counts =
+            enumerate_simplex(u8::try_from(s).expect("resolution is asserted 1..=255 above"));
         let vectors: Vec<[f64; N_OBJECTIVES]> = counts
             .iter()
-            .map(|c| c.map(|l| f64::from(l) / s as f64))
+            .map(|c| c.map(|l| f64::from(l) / count_to_f64(s)))
             .collect();
         let regions = build_regions(&counts, s);
         Self {
@@ -159,7 +161,7 @@ fn fill(
 /// only two objectives, so that rule would admit 6 vectors — too thin for a mean
 /// to say anything. The surface regions could afford it at five objectives each.
 fn build_regions(counts: &[[u8; N_OBJECTIVES]], s: usize) -> Vec<Region> {
-    let half = s.div_ceil(2) as u8; // 3 of 5: "at least half the mass"
+    let half = u8::try_from(s.div_ceil(2)).expect("s is at most 255, so half is at most 128"); // 3 of 5: "at least half the mass"
     let mut regions = vec![Region {
         name: REGION_ALL.to_string(),
         indices: (0..counts.len()).collect(),
@@ -259,7 +261,7 @@ pub fn r2(u: &[FrontUtility], region: &Region) -> f64 {
         return f64::NAN;
     }
     let sum: f64 = region.indices.iter().map(|&i| u[i].utility).sum();
-    sum / region.indices.len() as f64
+    sum / count_to_f64(region.indices.len())
 }
 
 /// The configuration a preference region recommends.
@@ -296,7 +298,7 @@ pub fn recommendation(u: &[FrontUtility], region: &Region) -> Option<Recommendat
     }
     Some(Recommendation {
         front_index: best,
-        share: count as f64 / region.indices.len() as f64,
+        share: count_to_f64(count) / count_to_f64(region.indices.len()),
     })
 }
 

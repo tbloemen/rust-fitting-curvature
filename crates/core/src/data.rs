@@ -4,6 +4,9 @@
 //! are only compiled for native targets.
 
 #[cfg(not(target_arch = "wasm32"))]
+use crate::cast::count_to_f64;
+
+#[cfg(not(target_arch = "wasm32"))]
 use crate::synthetic_data::DataPoints;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -202,7 +205,7 @@ pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<DataPoints, 
         // Unreachable nodes: use a large but finite distance.
         for j in 0..n {
             if dist_matrix[src * n + j] == f64::INFINITY {
-                dist_matrix[src * n + j] = (n as f64) * 2.0;
+                dist_matrix[src * n + j] = count_to_f64(n) * 2.0;
             }
         }
     }

@@ -26,6 +26,7 @@
 //! * **`front`** — recompute a cell's Pareto front in the optimizer's
 //!   `*_pareto_*.json` schema, for the cells whose sweep predates front writing.
 
+use fitting_core::cast::count_to_f64;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -478,7 +479,8 @@ fn agreement_row(region: &str, geometry: &str, pairs: &[(f64, f64)]) -> Agreemen
         geometry: geometry.to_string(),
         n_pairs: pairs.len(),
         n_signed: signed.len(),
-        sign_concordance: (!signed.is_empty()).then(|| concordant as f64 / signed.len() as f64),
+        sign_concordance: (!signed.is_empty())
+            .then(|| count_to_f64(concordant) / count_to_f64(signed.len())),
         spearman_rho: spearman.map(|(rho, _)| rho),
         spearman_p: spearman.map(|(_, p)| p),
     }

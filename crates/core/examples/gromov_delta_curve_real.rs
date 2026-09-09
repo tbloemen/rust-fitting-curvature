@@ -22,6 +22,7 @@
 //! `plots/gromov_delta_curve_real_raw.png` (raw δ), and prints the per-k
 //! table plus the saturated δ / curvature estimate for each dataset.
 
+use fitting_core::cast::count_to_f64;
 use std::error::Error;
 
 use fitting_core::curvature_detection::{
@@ -172,12 +173,14 @@ fn plot(
     let root = BitMapBackend::new(path, (960, 640)).into_drawing_area();
     root.fill(&WHITE)?;
 
-    let x_max = cases
-        .iter()
-        .flat_map(|c| c.curve.points.iter())
-        .map(|p| p.k)
-        .max()
-        .unwrap_or(1) as f64;
+    let x_max = count_to_f64(
+        cases
+            .iter()
+            .flat_map(|c| c.curve.points.iter())
+            .map(|p| p.k)
+            .max()
+            .unwrap_or(1),
+    );
     let y_max = cases
         .iter()
         .flat_map(|c| c.curve.points.iter())
@@ -205,7 +208,7 @@ fn plot(
             .curve
             .points
             .iter()
-            .map(|p| (p.k as f64, value(p)))
+            .map(|p| (count_to_f64(p.k), value(p)))
             .collect();
         chart
             .draw_series(LineSeries::new(series.clone(), case.color.stroke_width(2)))?

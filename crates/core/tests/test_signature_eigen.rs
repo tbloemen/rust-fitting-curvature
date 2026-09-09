@@ -6,6 +6,7 @@
 //! uses the full one, so the two must not drift. They share `tridiagonalise`
 //! and `ql_implicit`, and this pins that they keep agreeing.
 
+use fitting_core::cast::u64_to_f64;
 use fitting_core::curvature_detection::{eigen_symmetric, eigenvalues_symmetric, Eigen};
 use fitting_core::synthetic_data::{generate_uniform_hyperbolic, generate_uniform_sphere};
 
@@ -15,7 +16,7 @@ fn lcg(seed: &mut u64) -> f64 {
     *seed = seed
         .wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407);
-    ((*seed >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+    (u64_to_f64(*seed >> 11) / u64_to_f64(1u64 << 53)) * 2.0 - 1.0
 }
 
 fn random_symmetric(n: usize, seed: u64) -> Vec<f64> {

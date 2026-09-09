@@ -3,6 +3,7 @@
 use super::helpers::knn_index_sets;
 use super::quality::{Direction, Family, QualityMetric, Space};
 use super::values::MetricValue;
+use crate::cast::count_to_f64;
 use crate::context::EmbeddingContext;
 
 /// Neighborhood hit (van der Maaten 2009).
@@ -27,9 +28,9 @@ pub fn neighborhood_hit(embedded_distances: &[f64], labels: &[u32], n: usize, k:
     let mut total = 0.0;
     for i in 0..n {
         let same = knn[i].iter().filter(|&&j| labels[j] == labels[i]).count();
-        total += same as f64 / k as f64;
+        total += count_to_f64(same) / count_to_f64(k);
     }
-    total / n as f64
+    total / count_to_f64(n)
 }
 
 /// Neighborhood hit on the 2-D projection.

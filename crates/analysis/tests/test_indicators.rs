@@ -3,6 +3,8 @@
 
 use fitting_analysis::indicators::{epsilon_additive, epsilon_pair};
 use fitting_analysis::objectives::N_OBJECTIVES;
+use fitting_core::cast::count_to_f64;
+use std::cmp::Ordering;
 
 /// A front point that scores *v* on every objective.
 fn flat(v: f64) -> [f64; N_OBJECTIVES] {
@@ -13,7 +15,7 @@ fn flat(v: f64) -> [f64; N_OBJECTIVES] {
 /// Derived from the arity rather than written out, so growing the objective set
 /// does not turn every literal row into a size mismatch.
 fn ramp(base: f64) -> [f64; N_OBJECTIVES] {
-    std::array::from_fn(|j| base + 0.03 * (j % 4) as f64)
+    std::array::from_fn(|j| base + 0.03 * count_to_f64(j % 4))
 }
 
 /// `epsilon_additive` on two non-empty fronts, unwrapped.
@@ -68,9 +70,15 @@ fn crossing_fronts_are_covered_by_neither_side() {
 fn identical_fronts_score_zero_in_both_directions() {
     let a = [flat(0.7), flat(0.4)];
     let pair = epsilon_pair(&a, &a).unwrap();
-    assert_eq!(pair.setting_vs_baseline, 0.0);
-    assert_eq!(pair.baseline_vs_setting, 0.0);
-    assert_eq!(pair.delta, 0.0);
+    assert_eq!(
+        pair.setting_vs_baseline.partial_cmp(&0.0),
+        Some(Ordering::Equal)
+    );
+    assert_eq!(
+        pair.baseline_vs_setting.partial_cmp(&0.0),
+        Some(Ordering::Equal)
+    );
+    assert_eq!(pair.delta.partial_cmp(&0.0), Some(Ordering::Equal));
     // Weak coverage both ways is the correct reading of a tie.
     assert!(pair.setting_covers_baseline());
     assert!(pair.baseline_covers_setting());
@@ -86,7 +94,7 @@ fn the_indicator_is_asymmetric() {
     a1[0] = 0.95;
     let a = [a1];
     let b = [flat(0.5)];
-    assert_ne!(eps(&a, &b), eps(&b, &a));
+    assert_ne!(eps(&a, &b).partial_cmp(&eps(&b, &a)), Some(Ordering::Equal));
 }
 
 #[test]
@@ -125,8 +133,14 @@ fn dominated_points_do_not_change_the_indicator() {
     let inside = flat(0.4);
     let b = [flat(0.6), flat(0.5)];
 
-    assert_eq!(eps(&[front], &b), eps(&[front, inside], &b));
-    assert_eq!(eps(&b, &[front]), eps(&b, &[front, inside]));
+    assert_eq!(
+        eps(&[front], &b).partial_cmp(&eps(&[front, inside], &b)),
+        Some(Ordering::Equal)
+    );
+    assert_eq!(
+        eps(&b, &[front]).partial_cmp(&eps(&b, &[front, inside])),
+        Some(Ordering::Equal)
+    );
 }
 
 #[test]
@@ -136,8 +150,14 @@ fn the_indicator_is_order_independent() {
     let mut b = flat(0.6);
     b[4] = 0.2;
     let reference = [flat(0.45)];
-    assert_eq!(eps(&[a, b], &reference), eps(&[b, a], &reference));
-    assert_eq!(eps(&reference, &[a, b]), eps(&reference, &[b, a]));
+    assert_eq!(
+        eps(&[a, b], &reference).partial_cmp(&eps(&[b, a], &reference)),
+        Some(Ordering::Equal)
+    );
+    assert_eq!(
+        eps(&reference, &[a, b]).partial_cmp(&eps(&reference, &[b, a])),
+        Some(Ordering::Equal)
+    );
 }
 
 #[test]

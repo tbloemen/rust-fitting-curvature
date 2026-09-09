@@ -1,3 +1,4 @@
+use fitting_core::cast::count_to_f64;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
@@ -485,7 +486,7 @@ pub fn get_default_config() -> Result<JsValue, JsValue> {
     let obj = js_sys::Object::new();
     set_prop(&obj, "curvature", cfg.curvature)?;
     set_prop(&obj, "perplexity", cfg.perplexity)?;
-    set_prop(&obj, "n_iterations", cfg.n_iterations as f64)?;
+    set_prop(&obj, "n_iterations", count_to_f64(cfg.n_iterations))?;
     set_prop(&obj, "learning_rate", cfg.learning_rate)?;
     set_prop(
         &obj,
@@ -495,7 +496,7 @@ pub fn get_default_config() -> Result<JsValue, JsValue> {
     set_prop(
         &obj,
         "early_exaggeration_iterations",
-        cfg.early_exaggeration_iterations as f64,
+        count_to_f64(cfg.early_exaggeration_iterations),
     )?;
     set_prop(&obj, "centering_weight", cfg.centering_weight)?;
     set_prop(&obj, "global_loss_weight", cfg.global_loss_weight)?;
