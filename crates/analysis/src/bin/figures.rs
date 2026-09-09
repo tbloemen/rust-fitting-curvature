@@ -1,4 +1,4 @@
-//! Thesis results figures (Experiments 2–5) from the qParEGO sweeps.
+//! Thesis results figures (Experiments 1–5) from the qParEGO sweeps.
 //!
 //! Rust port of `analyze_experiments.py`. Local-only: this is the one part of
 //! the analysis that needs plotters (and therefore a system font stack), which
@@ -9,13 +9,15 @@
 //! cargo run --release -p fitting-analysis --features plots --bin figures
 //! cargo run --release -p fitting-analysis --features plots --bin figures -- --n 1000
 //! cargo run --release -p fitting-analysis --features plots --bin figures -- --exp 4
+//! cargo run --release -p fitting-analysis --features plots --bin figures -- \
+//!     --exp 1 --exp1-region all structure
 //! ```
 
 use std::path::PathBuf;
 
 use clap::Parser;
 
-use fitting_analysis::figures::{self, exp2, exp3, exp4, exp5, r2_bars, save};
+use fitting_analysis::figures::{self, exp1, exp2, exp3, exp4, exp5, r2_bars, save};
 use fitting_analysis::Result;
 
 #[derive(Parser, Debug)]
@@ -37,8 +39,20 @@ struct Args {
     n: Vec<usize>,
 
     /// Which experiments to render.
-    #[arg(long, num_args = 1.., default_values_t = [2usize, 3, 4, 5])]
+    #[arg(long, num_args = 1.., default_values_t = [1usize, 2, 3, 4, 5])]
     exp: Vec<usize>,
+
+    /// The Experiment 1 table written by the `exp1` binary, plotted as the
+    /// matched-minus-mismatched gain chart. Absent is not an error — it is a
+    /// separate `exp1` run — and the chart is then simply not written.
+    #[arg(long, default_value = "results/exp1_geometry_match.jsonl")]
+    exp1: PathBuf,
+
+    /// Preference regions to draw Experiment 1's gain chart for, one figure
+    /// each. The same choice `scripts/exp1_r2_typst.py --region` makes for the
+    /// table, and the same default.
+    #[arg(long, num_args = 1.., default_values_t = ["all".to_string()])]
+    exp1_region: Vec<String>,
 
     /// Lowest κ in Exp 4's zoomed gap figure, which is written alongside the
     /// full one. Set to 0 to skip the zoom.
@@ -61,6 +75,22 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     let cells = figures::load_all_cells(&args.results_dir)?;
+
+    // Exp 1 is the one figure built from the stage-2 table rather than from
+    // `cells`: it plots the numbers `@tab:geometry-match-r2` carries, so the
+    // two cannot disagree. A region the table does not carry, like a missing
+    // table, leaves the figure unwritten rather than failing.
+    if args.exp.contains(&1) {
+        let rows = exp1::load_rows(&args.exp1)?;
+        for n in &args.n {
+            for region in &args.exp1_region {
+                let fig = exp1::MatchedGain::new(&rows, *n, region);
+                if fig.has_data() {
+                    save(&fig, &args.out_dir)?;
+                }
+            }
+        }
+    }
 
     if args.exp.contains(&2) {
         for n in &args.n {

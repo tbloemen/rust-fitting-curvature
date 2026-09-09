@@ -1,8 +1,13 @@
-//! Thesis results figures (Experiments 2–5) from the qParEGO sweeps.
+//! Thesis results figures (Experiments 1–5) from the qParEGO sweeps.
 //!
 //! Port of `analyze_experiments.py`. Produces the figures the results chapter
 //! marks with `// TODO: figure:` in `docs/thesis/sections/5results.typ`:
 //!
+//! * **Exp 1** (`geometry-match`) — the matched-minus-mismatched R2 gain, one
+//!   group per synthetic dataset, one bar per mismatched embedding geometry.
+//!   The figure companion to `@tab:geometry-match-r2`, read back from the same
+//!   JSONL. Unlike the others this one comes from the stage-2 table rather than
+//!   from `cells`, so it and the thesis table cannot disagree.
 //! * **Exp 2** (`ablation-results`) — stacked Pareto fronts, one panel per
 //!   (dataset, geometry), one curve per loss-weight setting.
 //! * **Exp 3** (`curvature-magnitude-results`) — median Pareto-front
@@ -23,6 +28,7 @@
 //!
 //! κ uses **`R_rms`** (`r_rms`), not `R_max` — the thesis definition.
 
+pub mod exp1;
 pub mod exp2;
 pub mod exp3;
 pub mod exp4;
