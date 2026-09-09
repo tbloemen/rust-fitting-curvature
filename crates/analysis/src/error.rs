@@ -160,7 +160,16 @@ impl std::error::Error for Error {
 
 /// Attach the path to an [`std::io::Result`]: `File::open(p).at(p)?`. A bare
 /// `No such file or directory` is useless when a run touches a few hundred files.
+///
+/// # Errors
+///
+/// Wraps an `std::io::Error` into [`Error::Io`] with the path context.
 pub trait IoContext<T> {
+    /// Wraps an `std::io::Error` into [`Error::Io`] with the path context.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(Error::Io { .. })` when the underlying I/O operation fails.
     fn at(self, path: impl Into<PathBuf>) -> Result<T>;
 }
 

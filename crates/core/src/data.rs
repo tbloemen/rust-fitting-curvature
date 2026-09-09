@@ -20,6 +20,10 @@ use std::{
 /// `path` is the directory containing `train-images-idx3-ubyte` and
 /// `train-labels-idx1-ubyte`. Returns a `DataPoints` with pixel values
 /// normalised to [0, 1] and `distances` left empty (not precomputed).
+///
+/// # Errors
+///
+/// Returns `Err` if the IDX files are missing, have an invalid magic number, or cannot be read.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_mnist(path: &str, n_samples: usize) -> Result<DataPoints, String> {
     let images_path = format!("{path}/train-images-idx3-ubyte");
@@ -97,6 +101,10 @@ fn read_u32(reader: &mut impl Read) -> Result<u32, String> {
 /// Fashion-MNIST uses the exact same file format and filenames as MNIST.
 /// `path` is the directory containing `train-images-idx3-ubyte` and
 /// `train-labels-idx1-ubyte`.
+///
+/// # Errors
+///
+/// Returns `Err` if the IDX files are missing, have an invalid magic number, or cannot be read.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_fashion_mnist(path: &str, n_samples: usize) -> Result<DataPoints, String> {
     load_mnist(path, n_samples)
@@ -111,6 +119,10 @@ pub fn load_fashion_mnist(path: &str, n_samples: usize) -> Result<DataPoints, St
 ///
 /// Returns a `DataPoints` where `distances` holds the all-pairs BFS shortest-path
 /// distance matrix (flat n × n), suitable for use with `EmbeddingState::from_distances`.
+///
+/// # Errors
+///
+/// Returns `Err` if edge/label files are missing, contain non-numeric IDs, or have structural mismatches.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<DataPoints, String> {
     use std::collections::VecDeque;
@@ -274,6 +286,10 @@ pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<DataPoints, 
 ///
 /// Labels are mapped from strings to integers (sorted for reproducibility).
 /// Returns up to `n_samples` rows. `distances` is left empty.
+///
+/// # Errors
+///
+/// Returns `Err` if `pbmc_pca.tsv` is missing, empty, or has non-numeric features.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_pbmc(path: &str, n_samples: usize) -> Result<DataPoints, String> {
     use std::collections::BTreeMap;

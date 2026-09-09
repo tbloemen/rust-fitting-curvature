@@ -197,6 +197,10 @@ pub struct CellFile {
 ///
 /// Front files (`*_pareto_*.json`) and anything whose stem doesn't parse as a
 /// cell are skipped. Sorted by stem so the output order is stable.
+///
+/// # Errors
+///
+/// Returns `Err` if `read_dir` fails or a directory entry cannot be read.
 pub fn discover_cells(results_dir: &Path) -> Result<Vec<CellFile>> {
     let mut out: Vec<CellFile> = Vec::new();
     for entry in std::fs::read_dir(results_dir).at(results_dir)? {

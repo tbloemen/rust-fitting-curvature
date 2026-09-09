@@ -73,6 +73,11 @@ const HEAD_ROOM: f64 = 0.16;
 /// An **absent** table is not an error: it is a separate `r2` run, and the bar
 /// charts are skipped without it exactly as Exp 3 skips its scatter without a
 /// `κ_data` export. A table that is there and will not parse still fails.
+///
+/// # Errors
+///
+/// Returns `Err` if the file is present but malformed. A missing file returns
+/// an empty `Vec`.
 pub fn load_deltas(path: &Path) -> Result<Vec<DeltaRow>> {
     match load_jsonl(path) {
         Ok(rows) => Ok(rows),

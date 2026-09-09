@@ -189,6 +189,10 @@ pub fn generate_uniform_grid(n_samples: usize, seed: u64) -> DataPoints {
 }
 
 /// N(0, I) in R^2, labels by median radius (0=inner, 1=outer).
+///
+/// # Panics
+///
+/// Panics if `n_samples == 0` or if any radius is NaN.
 #[must_use]
 pub fn generate_gaussian_blob(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
@@ -304,6 +308,10 @@ pub fn generate_uniform_sphere(n_samples: usize, seed: u64) -> DataPoints {
 }
 
 /// Von Mises-Fisher distribution (kappa=10) around north pole.
+///
+/// # Panics
+///
+/// Panics if `n_samples == 0` or if any distance is NaN.
 #[must_use]
 pub fn generate_von_mises_fisher(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
@@ -458,6 +466,10 @@ pub fn generate_tree_structured(n_samples: usize, seed: u64) -> DataPoints {
 }
 
 /// Concentric rings at fixed hyperbolic radii, labels by shell (0, 1, 2).
+///
+/// # Panics
+///
+/// Panics if `shell_idx` exceeds u32 range.
 #[must_use]
 pub fn generate_hyperbolic_shells(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
@@ -505,6 +517,10 @@ pub fn generate_hyperbolic_shells(n_samples: usize, seed: u64) -> DataPoints {
 /// Labels by quadrant of the first two coordinates (0-3), matching the 2D
 /// generator: using all 2^dim orthants would give one label per handful of
 /// points at dim=10 and make the label-based metrics meaningless.
+///
+/// # Panics
+///
+/// Panics if `dim < 2`.
 #[must_use]
 pub fn generate_hd_uniform_grid(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 2, "dim must be at least 2");
@@ -531,6 +547,10 @@ pub fn generate_hd_uniform_grid(n_samples: usize, dim: usize, seed: u64) -> Data
 
 /// Uniform on S^(dim-1): sample dim normals and normalize.
 /// Labels by sign of first coordinate (two hemispheres).
+///
+/// # Panics
+///
+/// Panics if `dim < 2`.
 #[must_use]
 pub fn generate_hd_sphere(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 2, "dim must be at least 2");
@@ -557,6 +577,10 @@ pub fn generate_hd_sphere(n_samples: usize, dim: usize, seed: u64) -> DataPoints
 /// Two concentrated clusters at antipodal poles on S^(dim-1).
 /// Uses shift-and-normalize: add κ * `pole_direction` to a random normal, then normalize.
 /// Labels by cluster (0=north, 1=south).
+///
+/// # Panics
+///
+/// Panics if `dim < 2`.
 #[must_use]
 pub fn generate_hd_antipodal_clusters(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 2, "dim must be at least 2");
@@ -592,6 +616,10 @@ pub fn generate_hd_antipodal_clusters(n_samples: usize, dim: usize, seed: u64) -
 /// The tree structure is generated in a 2D Poincaré disk; extra Poincaré dimensions
 /// receive small noise so the data is non-degenerate in all ambient dimensions.
 /// Labels by depth (0-4).
+///
+/// # Panics
+///
+/// Panics if `dim < 3`.
 #[must_use]
 pub fn generate_hd_tree(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 3, "dim must be at least 3 for hd_tree");
@@ -637,6 +665,10 @@ pub fn generate_hd_tree(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
 /// Concentric hyperbolic shells in H^(dim-1) embedded in R^dim.
 /// Each shell is a (dim-2)-sphere in the Poincaré ball at a fixed hyperbolic radius.
 /// Labels by shell (0, 1, 2).
+///
+/// # Panics
+///
+/// Panics if `dim < 3` or `shell_idx` exceeds u32.
 #[must_use]
 pub fn generate_hd_hyperbolic_shells(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 3, "dim must be at least 3 for hd_hyperbolic_shells");
@@ -882,6 +914,10 @@ pub const DATASET_NAMES: &[&str] = &[
 ];
 
 /// Load a synthetic dataset by name (2D/3D frontend generators).
+///
+/// # Errors
+///
+/// Returns `Err` for unknown dataset name.
 pub fn load_synthetic(name: &str, n_samples: usize, seed: u64) -> Result<DataPoints, String> {
     match name {
         "uniform_grid" => Ok(generate_uniform_grid(n_samples, seed)),

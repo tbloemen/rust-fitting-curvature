@@ -84,6 +84,10 @@ pub struct ShellProfile {
 /// * `distances`    — flat row-major n×n distance matrix.
 /// * `n_points`     — n.
 /// * `n_bins`       — histogram resolution (30–50 recommended).
+///
+/// # Panics
+///
+/// Panics if any `mean_dist` value is NaN.
 #[must_use]
 pub fn shell_density_profile(distances: &[f64], n_points: usize, n_bins: usize) -> ShellProfile {
     if n_points < 3 {
@@ -400,6 +404,10 @@ pub fn fit_geometries(distances: &[f64], n_points: usize, n_bins: usize) -> Geom
 /// * `distances`    — flat row-major n×n distance matrix.
 /// * `n_points`     — n.
 /// * `n_bins`       — histogram resolution (30–50 works well).
+///
+/// # Panics
+///
+/// Panics if `candidates` is empty.
 #[must_use]
 pub fn detect_geometry(distances: &[f64], n_points: usize, n_bins: usize) -> GeometryVerdict {
     let fits = fit_geometries(distances, n_points, n_bins);

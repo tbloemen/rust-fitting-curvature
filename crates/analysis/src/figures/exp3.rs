@@ -38,6 +38,9 @@ struct Point {
 }
 
 impl<'a> KappaScatter<'a> {
+    /// # Errors
+    ///
+    /// Propagates errors from [`load_kappa_data`] (JSONL open/read/parse).
     pub fn new(cells: &'a CellMap, results_dir: &std::path::Path, n: usize) -> Result<Self> {
         Ok(Self {
             cells,
@@ -367,6 +370,10 @@ fn bin_by_edges(values: &[f64], edges: &[f64]) -> Vec<Bin> {
 }
 
 /// Draw filled, semi-transparent bars so overlaid histograms stay readable.
+///
+/// # Errors
+///
+/// Returns plotting backend errors.
 pub fn draw_histogram<DB, X, Y>(
     chart: &mut ChartContext<DB, Cartesian2d<X, Y>>,
     bins: &[Bin],

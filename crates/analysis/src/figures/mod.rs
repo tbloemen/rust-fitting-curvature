@@ -151,12 +151,19 @@ pub const Y_LABEL: &str = "normalised stress (lower is better)";
 pub trait Figure {
     fn name(&self) -> String;
     fn size(&self) -> (u32, u32);
+    /// # Errors
+    ///
+    /// Returns drawing backend errors.
     fn draw<DB: DrawingBackend>(&self, root: &DrawingArea<DB, Shift>) -> Res
     where
         DB::ErrorType: 'static;
 }
 
 /// Render *fig* to `<out_dir>/<name>.svg` and `.png`.
+///
+/// # Errors
+///
+/// Returns errors from directory creation, backend creation, or drawing.
 pub fn save<F: Figure>(fig: &F, out_dir: &Path) -> Result<()> {
     std::fs::create_dir_all(out_dir).at(out_dir)?;
     let name = fig.name();
@@ -244,6 +251,14 @@ impl LegendEntry {
 }
 
 /// Draw a horizontal legend strip: a swatch plus a label per entry.
+///
+/// # Panics
+///
+/// Panics if the legend has more than `i32::MAX` entries.
+///
+/// # Errors
+///
+/// Returns drawing backend errors.
 pub fn draw_legend<DB: DrawingBackend>(
     area: &DrawingArea<DB, Shift>,
     entries: &[LegendEntry],
@@ -299,6 +314,10 @@ where
 // ─── Loading & shared data helpers ────────────────────────────────────────────
 
 /// Map every (setting, dataset, n, geometry) to its list of trial records.
+///
+/// # Errors
+///
+/// Propagates errors from [`discover_cells`] and [`trial_records`].
 pub fn load_all_cells(results_dir: &Path) -> Result<CellMap> {
     let mut cells = CellMap::new();
     for cf in discover_cells(results_dir)? {
@@ -337,6 +356,10 @@ impl KappaData {
 /// only for the N it was actually run at. An **absent** table is not an error —
 /// the `κ_data` export is a separate optimizer run, and Exp 3 skips its scatter
 /// when it has not been done — but a table that is there and will not parse is.
+///
+/// # Errors
+///
+/// Propagates errors from [`load_jsonl`] (file I/O or deserialization).
 pub fn load_kappa_data(results_dir: &Path, n: usize) -> Result<BTreeMap<String, KappaData>> {
     for name in [format!("kappa_data_n{n}.jsonl"), "kappa_data.jsonl".into()] {
         let rows: Vec<KappaData> = match load_jsonl(results_dir.join(&name)) {
@@ -547,6 +570,10 @@ pub fn snap_to_decades((lo, hi): (f64, f64)) -> (f64, f64) {
 /// plotters accumulates float error while walking decades, handing the default
 /// formatter values like 9.999999999e-5; anything within a fraction of a percent
 /// of a power of ten is printed as that power.
+///
+/// # Panics
+///
+/// Panics if the rounded exponent fails to convert to `usize`.
 #[must_use]
 pub fn log_tick(v: &f64) -> String {
     if *v <= 0.0 || !v.is_finite() {

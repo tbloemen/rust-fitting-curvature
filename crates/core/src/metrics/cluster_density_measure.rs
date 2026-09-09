@@ -13,6 +13,10 @@ use crate::context::EmbeddingContext;
 ///
 /// Measures how well-separated and compact the clusters are.
 /// Higher values = better separated clusters.
+///
+/// # Panics
+///
+/// Panics if `labels[i]` is not found in the deduplicated label set.
 #[must_use]
 pub fn cluster_density_measure(pts_2d: &[f64], labels: &[u32], n: usize) -> f64 {
     let mut unique_labels: Vec<u32> = labels.to_vec();

@@ -275,6 +275,10 @@ impl Metric {
     /// A linear scan of sixteen `&str` pointers, against a metric evaluation
     /// that is `O(n²)` at minimum. `ALL_INDEXED` in the tests pins the
     /// round-trip.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the metric is not found in `ALL`.
     #[must_use]
     pub fn index(self) -> usize {
         ALL.iter()

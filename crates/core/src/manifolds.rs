@@ -148,6 +148,11 @@ pub struct Hyperboloid {
 }
 
 impl Hyperboloid {
+    /// Creates a new hyperboloid with the given curvature.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `curvature >= 0.0`.
     #[must_use]
     pub fn new(curvature: f64) -> Self {
         assert!(curvature < 0.0, "Hyperboloid requires negative curvature");
@@ -385,6 +390,11 @@ pub struct Sphere {
 }
 
 impl Sphere {
+    /// Creates a new sphere with the given curvature.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `curvature <= 0.0`.
     #[must_use]
     pub fn new(curvature: f64) -> Self {
         assert!(curvature > 0.0, "Sphere requires positive curvature");

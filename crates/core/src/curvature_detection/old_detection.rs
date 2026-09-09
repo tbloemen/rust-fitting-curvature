@@ -13,6 +13,10 @@ use crate::curvature_detection::gromov::quad_delta;
 /// Hyperbolic spaces have small normalised δ (bounded by log(2)/R for
 /// curvature −1 and typical distance R), while Euclidean/spherical
 /// spaces produce larger values.
+///
+/// # Panics
+///
+/// Panics if any computed δ is NaN.
 #[must_use]
 pub fn gromov_hyperbolicity(distances: &[f64], n: usize, n_samples: usize) -> f64 {
     if n < 4 {

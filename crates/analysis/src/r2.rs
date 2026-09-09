@@ -86,6 +86,10 @@ impl Weights {
     ///
     /// Panics unless `1 <= s <= 255`: counts are `u8`, so a larger `s` would
     /// wrap silently in release.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `s` is outside `1..=255`.
     #[must_use]
     pub fn with_resolution(s: usize) -> Self {
         assert!(

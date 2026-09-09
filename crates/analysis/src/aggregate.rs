@@ -82,6 +82,10 @@ pub struct GroupSummary {
 ///
 /// A later file wins on a duplicate `stem`, so re-running a few cells at a
 /// different setting and concatenating keeps the newer values.
+///
+/// # Errors
+///
+/// Propagates errors from [`load_jsonl`] (file I/O or deserialization).
 pub fn load_table(paths: &[impl AsRef<Path>]) -> Result<Vec<CellRecord>> {
     let mut by_stem: BTreeMap<String, CellRecord> = BTreeMap::new();
     for path in paths {

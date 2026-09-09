@@ -29,6 +29,10 @@ use crate::context::EmbeddingContext;
 /// Ties count as a miss — the comparison is strict, as in the definition — and
 /// a single-class input scores 1.0, the minimum over an empty set of rival
 /// centroids being infinite.
+///
+/// # Panics
+///
+/// Panics if a label is missing from the sorted label array or if `pts_2d` has fewer than `2*n` elements.
 #[must_use]
 pub fn distance_consistency(pts_2d: &[f64], labels: &[u32], n: usize) -> f64 {
     let mut unique_labels: Vec<u32> = labels.to_vec();

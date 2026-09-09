@@ -55,6 +55,10 @@ pub struct EmbeddingRunner {
 #[wasm_bindgen]
 impl EmbeddingRunner {
     /// Create a runner from a named synthetic dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JsValue)` if the dataset name is unknown or the canvas element cannot be found.
     #[allow(clippy::too_many_arguments)]
     pub fn from_synthetic(
         canvas_id: &str,
@@ -108,6 +112,10 @@ impl EmbeddingRunner {
     }
 
     /// Create a runner from external data with labels (e.g., MNIST).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JsValue)` if the canvas element cannot be found.
     #[allow(clippy::too_many_arguments)]
     pub fn from_data_with_labels(
         canvas_id: &str,
@@ -161,6 +169,10 @@ impl EmbeddingRunner {
     ///
     /// `distances` is a flat n × n row-major `Float64Array` of pairwise distances.
     /// `labels` is a `Uint32Array` of integer class labels of length n.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JsValue)` if the canvas element cannot be found.
     #[allow(clippy::too_many_arguments)]
     pub fn from_distances(
         canvas_id: &str,
@@ -253,6 +265,10 @@ impl EmbeddingRunner {
 
     /// Render the current state to canvas.
     /// Stores the auto-fit half-extent so zoom/pan can use it as a reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JsValue)` if canvas drawing fails.
     pub fn render(&mut self) -> Result<(), JsValue> {
         let auto_half = plot::draw_embedding(
             &self.canvas,
@@ -272,6 +288,10 @@ impl EmbeddingRunner {
     }
 
     /// Render the current state as a square SVG string of `size`×`size` pixels.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JsValue)` if SVG generation fails.
     pub fn render_svg(&self, size: u32) -> Result<String, JsValue> {
         plot::draw_embedding_svg(
             size,
@@ -374,6 +394,10 @@ impl EmbeddingRunner {
     /// undefined for this state — every label-aware one, on unlabelled data —
     /// is omitted rather than sent as NaN, which is what lets the panel filter
     /// on `undefined`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JsValue)` if JS object property setting fails.
     pub fn compute_metrics(&self) -> Result<JsValue, JsValue> {
         let (values, spread) = self.state.compute_metrics();
         let obj = js_sys::Object::new();
@@ -416,6 +440,10 @@ impl EmbeddingRunner {
 ///
 /// A free function, not a method: the Pareto selector is populated from
 /// front JSON before any `EmbeddingRunner` has been constructed.
+///
+/// # Errors
+///
+/// Returns `Err(JsValue)` if JS object property setting fails.
 #[wasm_bindgen]
 pub fn metric_registry() -> Result<JsValue, JsValue> {
     let arr = js_sys::Array::new();
@@ -480,6 +508,10 @@ fn web_name(m: metrics::Metric) -> String {
 
 /// Return default `TrainingConfig` values as a JS object, so the frontend
 /// can populate its inputs from a single source of truth.
+///
+/// # Errors
+///
+/// Returns `Err(JsValue)` if JS object property setting fails.
 #[wasm_bindgen]
 pub fn get_default_config() -> Result<JsValue, JsValue> {
     let cfg = TrainingConfig::default();

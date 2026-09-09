@@ -162,6 +162,10 @@ impl TrialRecord {
 /// both errors, so a half-written results file from a killed sweep fails the run
 /// instead of quietly contributing a front computed over fewer trials. Blank
 /// lines are skipped; the optimizer's writer can leave a trailing newline.
+///
+/// # Errors
+///
+/// Returns `Err` if the file cannot be opened or any line fails to deserialize.
 pub fn load_jsonl<T: DeserializeOwned>(path: impl AsRef<Path>) -> Result<Vec<T>> {
     let path = path.as_ref();
     let file = File::open(path).at(path)?;
@@ -178,6 +182,10 @@ pub fn load_jsonl<T: DeserializeOwned>(path: impl AsRef<Path>) -> Result<Vec<T>>
 }
 
 /// Trial records from a results JSONL, excluding `--mode scan` sweeps.
+///
+/// # Errors
+///
+/// Propagates errors from [`load_jsonl`] (file I/O or deserialization).
 pub fn trial_records(path: impl AsRef<Path>) -> Result<Vec<TrialRecord>> {
     let mut recs: Vec<TrialRecord> = load_jsonl(path)?;
     recs.retain(|r| r.scan_param.is_none());
@@ -193,6 +201,10 @@ pub fn trial_records(path: impl AsRef<Path>) -> Result<Vec<TrialRecord>> {
 /// Unlike the optimizer's per-trial writer (which appends, so a killed sweep
 /// leaves a valid prefix), this **truncates**: these tables are recomputed
 /// whole from the results directory every run.
+///
+/// # Errors
+///
+/// Returns `Err` if directory creation, file creation, or writing fails.
 pub fn write_jsonl<T: Serialize>(
     path: impl AsRef<Path>,
     rows: impl IntoIterator<Item = T>,
