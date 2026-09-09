@@ -1,3 +1,4 @@
+use fitting_core::cast::count_to_f64;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use crate::evaluate::Evaluator;
@@ -32,7 +33,7 @@ pub(crate) fn trial_seed(trial_idx: usize, seed_idx: usize) -> u64 {
 }
 
 pub(crate) fn mean_std(values: &[f64]) -> (f64, f64) {
-    let n = values.len() as f64;
+    let n = count_to_f64(values.len());
     let mean = values.iter().sum::<f64>() / n;
     let variance = values.iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / n;
     (mean, variance.sqrt())

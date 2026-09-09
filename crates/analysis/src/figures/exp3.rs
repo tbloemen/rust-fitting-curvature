@@ -1,7 +1,9 @@
 //! Experiment 3 — median Pareto-front κ against the data-intrinsic `κ_data`, and
 //! the unanchored-vs-`rms_anchored` κ overlay.
 
+use fitting_core::cast::count_to_f64;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use plotters::coord::Shift;
 use plotters::prelude::*;
@@ -36,6 +38,9 @@ struct Point {
 }
 
 impl<'a> KappaScatter<'a> {
+    /// # Errors
+    ///
+    /// Propagates errors from [`load_kappa_data`] (JSONL open/read/parse).
     pub fn new(cells: &'a CellMap, results_dir: &std::path::Path, n: usize) -> Result<Self> {
         Ok(Self {
             cells,
@@ -110,10 +115,14 @@ impl Figure for KappaScatter<'_> {
                 let xs: Vec<f64> = pts.iter().map(|p| p.kappa_data).collect();
                 let ys: Vec<f64> = pts.iter().map(|p| p.kappa).collect();
                 if let Some((rho, p)) = spearman(&xs, &ys) {
-                    title += &format!("   (Spearman ρ={rho:+.2}, p={p:.2}, n={})", pts.len());
+                    let _ = write!(
+                        title,
+                        "   (Spearman ρ={rho:+.2}, p={p:.2}, n={})",
+                        pts.len()
+                    );
                 }
             } else if !pts.is_empty() {
-                title += &format!("   (n={}, too few for ρ)", pts.len());
+                let _ = write!(title, "   (n={}, too few for ρ)", pts.len());
             }
 
             let xs: Vec<f64> = pts.iter().map(|p| p.kappa_data).collect();
@@ -308,7 +317,7 @@ pub struct Bin {
 #[must_use]
 pub fn histogram(values: &[f64], lo: f64, hi: f64, n_bins: usize) -> Vec<Bin> {
     let edges: Vec<f64> = (0..=n_bins)
-        .map(|i| lo + (hi - lo) * i as f64 / n_bins as f64)
+        .map(|i| lo + (hi - lo) * count_to_f64(i) / count_to_f64(n_bins))
         .collect();
     bin_by_edges(values, &edges)
 }
@@ -318,7 +327,7 @@ pub fn histogram(values: &[f64], lo: f64, hi: f64, n_bins: usize) -> Vec<Bin> {
 pub fn log_histogram(values: &[f64], lo: f64, hi: f64, n_bins: usize) -> Vec<Bin> {
     let (a, b) = (lo.log10(), hi.log10());
     let edges: Vec<f64> = (0..=n_bins)
-        .map(|i| 10f64.powf(a + (b - a) * i as f64 / n_bins as f64))
+        .map(|i| 10f64.powf(a + (b - a) * count_to_f64(i) / count_to_f64(n_bins)))
         .collect();
     bin_by_edges(values, &edges)
 }
@@ -352,7 +361,7 @@ fn bin_by_edges(values: &[f64], edges: &[f64]) -> Vec<Bin> {
             lo: w[0],
             hi: w[1],
             density: if w[1] > w[0] {
-                c as f64 / (n as f64 * (w[1] - w[0]))
+                count_to_f64(c) / (count_to_f64(n) * (w[1] - w[0]))
             } else {
                 0.0
             },
@@ -361,6 +370,10 @@ fn bin_by_edges(values: &[f64], edges: &[f64]) -> Vec<Bin> {
 }
 
 /// Draw filled, semi-transparent bars so overlaid histograms stay readable.
+///
+/// # Errors
+///
+/// Returns plotting backend errors.
 pub fn draw_histogram<DB, X, Y>(
     chart: &mut ChartContext<DB, Cartesian2d<X, Y>>,
     bins: &[Bin],

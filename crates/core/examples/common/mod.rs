@@ -12,6 +12,7 @@
 
 #![allow(dead_code)]
 
+use fitting_core::cast::count_to_f64;
 use fitting_core::data::{load_fashion_mnist, load_mnist, load_pbmc, load_wordnet_mammals};
 use fitting_core::matrices::compute_euclidean_distance_matrix;
 use fitting_core::synthetic_data::{
@@ -62,20 +63,20 @@ pub fn d_max_of(d: &[f64]) -> f64 {
 /// implies (see `Reconstruction::kappa`).
 pub fn d_rms_of(d: &[f64], n: usize) -> f64 {
     let s: f64 = d.iter().map(|x| x * x).sum();
-    (s / (n as f64 * (n as f64 - 1.0))).sqrt()
+    (s / (count_to_f64(n) * (count_to_f64(n) - 1.0))).sqrt()
 }
 
 fn fixture(
     name: &'static str,
     truth: &'static str,
     color: (u8, u8, u8),
-    dp: DataPoints,
+    dp: &DataPoints,
 ) -> Fixture {
     Fixture {
         name,
         truth,
         color,
-        distances: distances_for(&dp),
+        distances: distances_for(dp),
         n: dp.n_points,
     }
 }
@@ -92,37 +93,37 @@ pub fn synthetic(n: usize, seed: u64) -> Vec<Fixture> {
             "grid 10D",
             "euclidean",
             (148, 103, 189),
-            generate_hd_uniform_grid(n, HD, seed),
+            &generate_hd_uniform_grid(n, HD, seed),
         ),
         fixture(
             "grid 2D",
             "euclidean",
             (197, 176, 213),
-            generate_uniform_grid(n, seed),
+            &generate_uniform_grid(n, seed),
         ),
         fixture(
             "sphere 2D",
             "spherical",
             (44, 160, 44),
-            generate_uniform_sphere(n, seed),
+            &generate_uniform_sphere(n, seed),
         ),
         fixture(
             "sphere 10D",
             "spherical",
             (152, 223, 138),
-            generate_hd_sphere(n, HD, seed),
+            &generate_hd_sphere(n, HD, seed),
         ),
         fixture(
             "tree 2D",
             "hyperbolic",
             (214, 39, 40),
-            generate_tree_structured(n, seed),
+            &generate_tree_structured(n, seed),
         ),
         fixture(
             "tree 10D",
             "hyperbolic",
             (255, 152, 150),
-            generate_hd_tree(n, HD, seed),
+            &generate_hd_tree(n, HD, seed),
         ),
     ]
 }
@@ -157,7 +158,7 @@ pub fn real(n: usize, data_root: &str) -> Vec<Fixture> {
     let mut out = Vec::new();
     for (name, color, result) in loaded {
         match result {
-            Ok(dp) => out.push(fixture(name, "?", color, dp)),
+            Ok(dp) => out.push(fixture(name, "?", color, &dp)),
             Err(e) => eprintln!("{name} skipped: {e}"),
         }
     }
@@ -183,19 +184,19 @@ pub fn controls(n: usize, seed: u64) -> Vec<Fixture> {
             "H2 exact (ctrl)",
             "hyperbolic",
             (0, 0, 0),
-            generate_uniform_hyperbolic(n, seed, 5.0),
+            &generate_uniform_hyperbolic(n, seed, 5.0),
         ),
         fixture(
             "hyperbolic_shells",
             "hyperbolic",
             (255, 187, 120),
-            generate_hd_hyperbolic_shells(n, HD, seed),
+            &generate_hd_hyperbolic_shells(n, HD, seed),
         ),
         fixture(
             "antipodal_clusters",
             "spherical",
             (23, 190, 207),
-            generate_hd_antipodal_clusters(n, HD, seed),
+            &generate_hd_antipodal_clusters(n, HD, seed),
         ),
     ]
 }

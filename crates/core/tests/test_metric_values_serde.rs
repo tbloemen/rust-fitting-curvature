@@ -8,9 +8,11 @@
 
 #![cfg(feature = "serde")]
 
+use fitting_core::cast::count_to_f64;
 use fitting_core::metrics::{Metric, MetricValue, MetricValues, ALL};
 use fitting_core::spread::SpreadDiagnostics;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 
 fn values(f: impl Fn(Metric) -> f64) -> MetricValues {
     let mut v = MetricValues::MISSING;
@@ -55,7 +57,7 @@ fn a_diverged_trials_non_finite_value_is_absent_not_an_error() {
 
 #[test]
 fn round_trip_preserves_every_value() {
-    let v = values(|m| m.index() as f64 * 0.125);
+    let v = values(|m| count_to_f64(m.index()) * 0.125);
     let back: MetricValues = serde_json::from_str(&serde_json::to_string(&v).unwrap()).unwrap();
     assert_eq!(back, v);
 }
@@ -98,7 +100,7 @@ fn flatten_puts_the_metrics_at_the_top_level_in_field_order() {
     let r = Record {
         dataset_name: "tree".into(),
         learning_rate: 0.5,
-        metrics: values(|m| m.index() as f64),
+        metrics: values(|m| count_to_f64(m.index())),
         time_ms: 7,
     };
     let json = serde_json::to_string(&r).unwrap();
@@ -117,7 +119,7 @@ fn flatten_does_not_claim_the_records_own_columns() {
     let r: serde_json::Result<Record> = serde_json::from_str(json);
     let r = r.expect("a record with no metric block must still load");
     assert_eq!(r.dataset_name, "tree");
-    assert_eq!(r.learning_rate, 0.5);
+    assert_eq!(r.learning_rate.partial_cmp(&0.5), Some(Ordering::Equal));
     assert_eq!(r.time_ms, 7);
     assert_eq!(
         r.metrics.get(fitting_core::metrics::TRUSTWORTHINESS),
@@ -179,7 +181,7 @@ fn spread_at(v: f64) -> SpreadDiagnostics {
 fn the_two_blocks_do_not_claim_each_others_columns() {
     let line = TrialLine {
         dataset_name: "tree".into(),
-        metrics: values(|m| m.index() as f64),
+        metrics: values(|m| count_to_f64(m.index())),
         spread: spread_at(6.0),
         time_ms: 7,
     };

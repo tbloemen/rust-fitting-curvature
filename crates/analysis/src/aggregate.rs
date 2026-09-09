@@ -82,6 +82,10 @@ pub struct GroupSummary {
 ///
 /// A later file wins on a duplicate `stem`, so re-running a few cells at a
 /// different setting and concatenating keeps the newer values.
+///
+/// # Errors
+///
+/// Propagates errors from [`load_jsonl`] (file I/O or deserialization).
 pub fn load_table(paths: &[impl AsRef<Path>]) -> Result<Vec<CellRecord>> {
     let mut by_stem: BTreeMap<String, CellRecord> = BTreeMap::new();
     for path in paths {
@@ -184,17 +188,18 @@ pub struct RankTest {
 /// settings) is omitted rather than reported with a missing p-value.
 #[must_use]
 pub fn rank_tests(rows: &[DeltaRow], settings: &[String]) -> Vec<RankTest> {
+    // (n, geometry, dataset)
+    type BlockKey = (usize, String, String);
+
     if settings.len() < 3 {
         return Vec::new();
     }
-    let control = match settings.iter().position(|s| s == BASELINE) {
-        Some(i) => i,
-        None => return Vec::new(),
+    let Some(control) = settings.iter().position(|s| s == BASELINE) else {
+        return Vec::new();
     };
 
     // (region, geometry, block) → setting → ΔR2. The geometry is carried in the
     // key as well as the block so the pooled and per-geometry views share it.
-    type BlockKey = (usize, String, String); // (n, geometry, dataset)
     let mut by_region: BTreeMap<String, BTreeMap<BlockKey, BTreeMap<String, f64>>> =
         BTreeMap::new();
     for r in rows {

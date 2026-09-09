@@ -5,6 +5,7 @@
 //! - `labels`: integer labels (length n)
 //! - `distances`: precomputed intrinsic distance matrix (flat n × n)
 
+use crate::cast::{count_to_f64, to_u32, to_usize};
 use std::f64::consts::PI;
 
 pub use crate::rng::Rng;
@@ -96,14 +97,16 @@ fn poincare_to_hyperboloid_nd(p: &[f64], n: usize, poincare_dim: usize) -> Vec<f
 fn sample_unit_sphere(rng: &mut Rng, dim: usize) -> Vec<f64> {
     let mut v: Vec<f64> = (0..dim).map(|_| rng.normal()).collect();
     let norm = v.iter().map(|x| x * x).sum::<f64>().sqrt().max(1e-15);
-    v.iter_mut().for_each(|x| *x /= norm);
+    for x in &mut v {
+        *x /= norm;
+    }
     v
 }
 
 /// Generate a tree structure in the 2D Poincaré disk.
 /// Returns (`poincaré_coords` [n×2], labels [n]).
 fn poincare_tree_2d(n_samples: usize, rng: &mut Rng) -> (Vec<f64>, Vec<u32>) {
-    let max_depth = (n_samples as f64).log2().ceil() as usize;
+    let max_depth = to_usize(count_to_f64(n_samples).log2().ceil());
     let max_depth = max_depth.max(2);
 
     let mut poincare = Vec::new();
@@ -116,12 +119,12 @@ fn poincare_tree_2d(n_samples: usize, rng: &mut Rng) -> (Vec<f64>, Vec<u32>) {
 
     'outer: for depth in 1..=max_depth {
         let n_at_depth = 1 << depth; // 2^depth
-        let r = (depth as f64 * 0.8 / 2.0).tanh();
+        let r = (count_to_f64(depth) * 0.8 / 2.0).tanh();
         for i in 0..n_at_depth {
-            let angle = 2.0 * PI * f64::from(i) / f64::from(n_at_depth) + depth as f64 * 0.3;
+            let angle = 2.0 * PI * f64::from(i) / f64::from(n_at_depth) + count_to_f64(depth) * 0.3;
             poincare.push(r * angle.cos());
             poincare.push(r * angle.sin());
-            labels.push((depth as u32).min(4));
+            labels.push(u32::try_from(depth.min(4)).expect("depth is a log2 of n_samples"));
             if labels.len() >= n_samples {
                 break 'outer;
             }
@@ -129,12 +132,12 @@ fn poincare_tree_2d(n_samples: usize, rng: &mut Rng) -> (Vec<f64>, Vec<u32>) {
     }
 
     while labels.len() < n_samples {
-        let depth = (rng.uniform() * max_depth as f64) as usize + 1;
-        let r = (depth as f64 * 0.8 / 2.0).tanh();
+        let depth = to_usize(rng.uniform() * count_to_f64(max_depth)) + 1;
+        let r = (count_to_f64(depth) * 0.8 / 2.0).tanh();
         let angle = rng.uniform() * 2.0 * PI;
         poincare.push(r * angle.cos());
         poincare.push(r * angle.sin());
-        labels.push((depth as u32).min(4));
+        labels.push(u32::try_from(depth.min(4)).expect("depth is a log2 of n_samples"));
     }
 
     poincare.truncate(n_samples * 2);
@@ -186,6 +189,10 @@ pub fn generate_uniform_grid(n_samples: usize, seed: u64) -> DataPoints {
 }
 
 /// N(0, I) in R^2, labels by median radius (0=inner, 1=outer).
+///
+/// # Panics
+///
+/// Panics if `n_samples == 0` or if any radius is NaN.
 #[must_use]
 pub fn generate_gaussian_blob(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
@@ -301,6 +308,14 @@ pub fn generate_uniform_sphere(n_samples: usize, seed: u64) -> DataPoints {
 }
 
 /// Von Mises-Fisher distribution (kappa=10) around north pole.
+///
+/// # Panics
+///
+/// Panics if `n_samples == 0` or if any distance is NaN.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "m,b,c,z,w,u,x,y are the standard Wood (1994) vMF rejection sampling variables: m=dim-1, b=rejection bound, c=acceptance threshold"
+)]
 #[must_use]
 pub fn generate_von_mises_fisher(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
@@ -420,7 +435,7 @@ pub fn generate_uniform_hyperbolic(n_samples: usize, seed: u64, max_rho: f64) ->
         poincare.push(poincare_r * angle.cos());
         poincare.push(poincare_r * angle.sin());
 
-        let label = ((rho / max_rho * 3.0) as u32).min(2);
+        let label = to_u32(rho / max_rho * 3.0).min(2);
         labels.push(label);
     }
 
@@ -455,6 +470,10 @@ pub fn generate_tree_structured(n_samples: usize, seed: u64) -> DataPoints {
 }
 
 /// Concentric rings at fixed hyperbolic radii, labels by shell (0, 1, 2).
+///
+/// # Panics
+///
+/// Panics if `shell_idx` exceeds u32 range.
 #[must_use]
 pub fn generate_hyperbolic_shells(n_samples: usize, seed: u64) -> DataPoints {
     let mut rng = Rng::new(seed);
@@ -474,7 +493,7 @@ pub fn generate_hyperbolic_shells(n_samples: usize, seed: u64) -> DataPoints {
             let angle = rng.uniform() * 2.0 * PI;
             poincare.push(r * angle.cos());
             poincare.push(r * angle.sin());
-            labels.push(shell_idx as u32);
+            labels.push(u32::try_from(shell_idx).expect("the number of shells is a small count"));
         }
     }
 
@@ -502,6 +521,10 @@ pub fn generate_hyperbolic_shells(n_samples: usize, seed: u64) -> DataPoints {
 /// Labels by quadrant of the first two coordinates (0-3), matching the 2D
 /// generator: using all 2^dim orthants would give one label per handful of
 /// points at dim=10 and make the label-based metrics meaningless.
+///
+/// # Panics
+///
+/// Panics if `dim < 2`.
 #[must_use]
 pub fn generate_hd_uniform_grid(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 2, "dim must be at least 2");
@@ -528,6 +551,10 @@ pub fn generate_hd_uniform_grid(n_samples: usize, dim: usize, seed: u64) -> Data
 
 /// Uniform on S^(dim-1): sample dim normals and normalize.
 /// Labels by sign of first coordinate (two hemispheres).
+///
+/// # Panics
+///
+/// Panics if `dim < 2`.
 #[must_use]
 pub fn generate_hd_sphere(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 2, "dim must be at least 2");
@@ -554,6 +581,10 @@ pub fn generate_hd_sphere(n_samples: usize, dim: usize, seed: u64) -> DataPoints
 /// Two concentrated clusters at antipodal poles on S^(dim-1).
 /// Uses shift-and-normalize: add κ * `pole_direction` to a random normal, then normalize.
 /// Labels by cluster (0=north, 1=south).
+///
+/// # Panics
+///
+/// Panics if `dim < 2`.
 #[must_use]
 pub fn generate_hd_antipodal_clusters(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 2, "dim must be at least 2");
@@ -589,6 +620,10 @@ pub fn generate_hd_antipodal_clusters(n_samples: usize, dim: usize, seed: u64) -
 /// The tree structure is generated in a 2D Poincaré disk; extra Poincaré dimensions
 /// receive small noise so the data is non-degenerate in all ambient dimensions.
 /// Labels by depth (0-4).
+///
+/// # Panics
+///
+/// Panics if `dim < 3`.
 #[must_use]
 pub fn generate_hd_tree(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 3, "dim must be at least 3 for hd_tree");
@@ -634,6 +669,10 @@ pub fn generate_hd_tree(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
 /// Concentric hyperbolic shells in H^(dim-1) embedded in R^dim.
 /// Each shell is a (dim-2)-sphere in the Poincaré ball at a fixed hyperbolic radius.
 /// Labels by shell (0, 1, 2).
+///
+/// # Panics
+///
+/// Panics if `dim < 3` or `shell_idx` exceeds u32.
 #[must_use]
 pub fn generate_hd_hyperbolic_shells(n_samples: usize, dim: usize, seed: u64) -> DataPoints {
     assert!(dim >= 3, "dim must be at least 3 for hd_hyperbolic_shells");
@@ -657,7 +696,7 @@ pub fn generate_hd_hyperbolic_shells(n_samples: usize, dim: usize, seed: u64) ->
             for dir_k in dir.iter().take(poincare_dim) {
                 poincare.push(r * dir_k);
             }
-            labels.push(shell_idx as u32);
+            labels.push(u32::try_from(shell_idx).expect("the number of shells is a small count"));
         }
     }
 
@@ -879,6 +918,10 @@ pub const DATASET_NAMES: &[&str] = &[
 ];
 
 /// Load a synthetic dataset by name (2D/3D frontend generators).
+///
+/// # Errors
+///
+/// Returns `Err` for unknown dataset name.
 pub fn load_synthetic(name: &str, n_samples: usize, seed: u64) -> Result<DataPoints, String> {
     match name {
         "uniform_grid" => Ok(generate_uniform_grid(n_samples, seed)),

@@ -5,6 +5,7 @@
 //! eigenvalue mass — the Wilson residual — going to zero. If that holds, the
 //! reconstruction is measuring the model rather than an artefact of it.
 
+use fitting_core::cast::count_to_f64;
 use fitting_core::curvature_detection::{
     fit_euclidean, fit_hyperbolic, fit_spherical, reconstruct_euclidean, reconstruct_hyperbolic,
     reconstruct_spherical,
@@ -13,6 +14,7 @@ use fitting_core::matrices::compute_euclidean_distance_matrix;
 use fitting_core::synthetic_data::{
     generate_uniform_grid, generate_uniform_hyperbolic, generate_uniform_sphere,
 };
+use std::cmp::Ordering;
 
 const DIM: usize = 2;
 
@@ -27,7 +29,7 @@ fn max_distance_error(a: &[f64], b: &[f64]) -> f64 {
 /// RMS pairwise distance, for scaling the tolerance to the data.
 fn d_rms(d: &[f64], n: usize) -> f64 {
     let sum: f64 = d.iter().map(|v| v * v).sum();
-    (sum / (n * (n - 1)) as f64).sqrt()
+    (sum / count_to_f64(n * (n - 1))).sqrt()
 }
 
 #[test]
@@ -41,7 +43,7 @@ fn sphere_round_trips_at_its_own_radius() {
     assert!((rec.curvature - 1.0).abs() < 1e-12);
 
     // Exact data on S² leaves nothing outside the signature block.
-    let gauge = n as f64 * d_rms(&data.distances, n).powi(2);
+    let gauge = count_to_f64(n) * d_rms(&data.distances, n).powi(2);
     assert!(
         rec.discarded_mass / gauge < 1e-10,
         "S² should reconstruct exactly, discarded {} (gauge {gauge})",
@@ -61,7 +63,7 @@ fn hyperboloid_round_trips_at_its_own_radius() {
     assert_eq!(rec.ambient_dim, DIM + 1);
     assert!((rec.curvature + 1.0).abs() < 1e-12);
 
-    let gauge = n as f64 * d_rms(&data.distances, n).powi(2);
+    let gauge = count_to_f64(n) * d_rms(&data.distances, n).powi(2);
     assert!(
         rec.discarded_mass / gauge < 1e-9,
         "H² should reconstruct exactly, discarded {} (gauge {gauge})",
@@ -80,10 +82,10 @@ fn grid_round_trips_flat() {
     let rec = reconstruct_euclidean(&d, n, DIM);
 
     assert_eq!(rec.ambient_dim, DIM);
-    assert_eq!(rec.curvature, 0.0);
+    assert_eq!(rec.curvature.partial_cmp(&0.0), Some(Ordering::Equal));
 
     // A 2-D grid spans exactly 2 dimensions, so classical MDS is exact.
-    let gauge = n as f64 * d_rms(&d, n).powi(2);
+    let gauge = count_to_f64(n) * d_rms(&d, n).powi(2);
     assert!(
         rec.discarded_mass / gauge < 1e-10,
         "a planar grid should reconstruct exactly, discarded {}",

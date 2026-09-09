@@ -2,6 +2,7 @@
 
 use super::quality::{Direction, Family, QualityMetric, Space};
 use super::values::MetricValue;
+use crate::cast::count_to_f64;
 use crate::context::EmbeddingContext;
 
 /// Distance consistency (`DSC`) from Sips et al. (2009), as surveyed in
@@ -28,6 +29,10 @@ use crate::context::EmbeddingContext;
 /// Ties count as a miss — the comparison is strict, as in the definition — and
 /// a single-class input scores 1.0, the minimum over an empty set of rival
 /// centroids being infinite.
+///
+/// # Panics
+///
+/// Panics if a label is missing from the sorted label array or if `pts_2d` has fewer than `2*n` elements.
 #[must_use]
 pub fn distance_consistency(pts_2d: &[f64], labels: &[u32], n: usize) -> f64 {
     let mut unique_labels: Vec<u32> = labels.to_vec();
@@ -57,8 +62,8 @@ pub fn distance_consistency(pts_2d: &[f64], labels: &[u32], n: usize) -> f64 {
     }
     for c in 0..k {
         if counts[c] > 0 {
-            centroids[c].0 /= counts[c] as f64;
-            centroids[c].1 /= counts[c] as f64;
+            centroids[c].0 /= count_to_f64(counts[c]);
+            centroids[c].1 /= count_to_f64(counts[c]);
         }
     }
 
@@ -83,7 +88,7 @@ pub fn distance_consistency(pts_2d: &[f64], labels: &[u32], n: usize) -> f64 {
         }
     }
 
-    hits as f64 / n as f64
+    count_to_f64(hits) / count_to_f64(n)
 }
 
 /// Distance consistency (Sips et al. 2009), on the 2-D projection.

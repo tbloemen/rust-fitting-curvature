@@ -11,6 +11,7 @@
 //! projected-or-manifold binary and `Family` hold only real preference
 //! families.
 
+use crate::cast::count_to_f64;
 use crate::context::EmbeddingContext;
 use crate::metrics::{values_mean_of, MetricValue};
 
@@ -22,9 +23,9 @@ use crate::metrics::{values_mean_of, MetricValue};
 /// private because the accessors are what callers want.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpreadDiagnostics {
-    r_max: MetricValue,
-    r_rms: MetricValue,
-    r_gyration: MetricValue,
+    max: MetricValue,
+    rms: MetricValue,
+    gyration: MetricValue,
 }
 
 impl Default for SpreadDiagnostics {
@@ -37,9 +38,9 @@ impl SpreadDiagnostics {
     /// Nothing measured — what `--mode scan` writes, and what a results line
     /// predating a column reads back as.
     pub const MISSING: Self = Self {
-        r_max: MetricValue::Absent,
-        r_rms: MetricValue::Absent,
-        r_gyration: MetricValue::Absent,
+        max: MetricValue::Absent,
+        rms: MetricValue::Absent,
+        gyration: MetricValue::Absent,
     };
 
     /// Measure the configuration's extent.
@@ -52,9 +53,9 @@ impl SpreadDiagnostics {
     pub fn compute(c: &EmbeddingContext<'_>) -> Self {
         if !c.spread_is_finite() {
             return Self {
-                r_max: MetricValue::Diverged,
-                r_rms: MetricValue::Diverged,
-                r_gyration: MetricValue::Diverged,
+                max: MetricValue::Diverged,
+                rms: MetricValue::Diverged,
+                gyration: MetricValue::Diverged,
             };
         }
         let origin = c.origin_dist();
@@ -63,13 +64,13 @@ impl SpreadDiagnostics {
         } else {
             (
                 origin.iter().copied().fold(0.0_f64, f64::max),
-                (origin.iter().map(|d| d * d).sum::<f64>() / origin.len() as f64).sqrt(),
+                (origin.iter().map(|d| d * d).sum::<f64>() / count_to_f64(origin.len())).sqrt(),
             )
         };
         Self {
-            r_max: MetricValue::measured(r_max),
-            r_rms: MetricValue::measured(r_rms),
-            r_gyration: MetricValue::measured(gyration_radius(c.manifold_dist(), c.n)),
+            max: MetricValue::measured(r_max),
+            rms: MetricValue::measured(r_rms),
+            gyration: MetricValue::measured(gyration_radius(c.manifold_dist(), c.n)),
         }
     }
 
@@ -78,20 +79,20 @@ impl SpreadDiagnostics {
     /// diverged shows in the aggregate rather than being averaged away.
     #[must_use]
     pub fn mean(samples: &[SpreadDiagnostics]) -> SpreadDiagnostics {
-        let n = samples.len() as f64;
+        let n = count_to_f64(samples.len());
         let avg =
             |f: fn(&SpreadDiagnostics) -> MetricValue| values_mean_of(samples.iter().map(f), n);
         Self {
-            r_max: avg(|s| s.r_max),
-            r_rms: avg(|s| s.r_rms),
-            r_gyration: avg(|s| s.r_gyration),
+            max: avg(|s| s.max),
+            rms: avg(|s| s.rms),
+            gyration: avg(|s| s.gyration),
         }
     }
 
     /// Largest geodesic distance from the manifold origin.
     #[must_use]
     pub fn r_max(&self) -> Option<f64> {
-        self.r_max.value()
+        self.max.value()
     }
 
     /// RMS geodesic distance from the manifold origin — the `R_rms` of
@@ -105,7 +106,7 @@ impl SpreadDiagnostics {
     /// [`Self::r_gyration`] there.
     #[must_use]
     pub fn r_rms(&self) -> Option<f64> {
-        self.r_rms.value()
+        self.rms.value()
     }
 
     /// Origin-free spread: the radius of gyration over the pairwise geodesics.
@@ -114,7 +115,7 @@ impl SpreadDiagnostics {
     /// [`gyration_radius`].
     #[must_use]
     pub fn r_gyration(&self) -> Option<f64> {
-        self.r_gyration.value()
+        self.gyration.value()
     }
 }
 
@@ -141,7 +142,7 @@ pub fn gyration_radius(dist: &[f64], n: usize) -> f64 {
         return 0.0;
     }
     let sum_sq: f64 = dist.iter().map(|d| d * d).sum();
-    (sum_sq / (2.0 * (n * n) as f64)).sqrt()
+    (sum_sq / (2.0 * count_to_f64(n * n))).sqrt()
 }
 
 // ─── Wire format ─────────────────────────────────────────────────────────────
@@ -166,17 +167,17 @@ mod wire {
     impl SpreadDiagnostics {
         fn column(&self, column: &str) -> MetricValue {
             match column {
-                "r_max" => self.r_max,
-                "r_rms" => self.r_rms,
-                _ => self.r_gyration,
+                "r_max" => self.max,
+                "r_rms" => self.rms,
+                _ => self.gyration,
             }
         }
 
         fn set(&mut self, column: &str, v: MetricValue) {
             match column {
-                "r_max" => self.r_max = v,
-                "r_rms" => self.r_rms = v,
-                _ => self.r_gyration = v,
+                "r_max" => self.max = v,
+                "r_rms" => self.rms = v,
+                _ => self.gyration = v,
             }
         }
     }
@@ -231,6 +232,7 @@ mod wire {
 mod tests {
     use super::*;
     use crate::matrices::compute_euclidean_distance_matrix;
+    use std::cmp::Ordering;
 
     /// The flat-space identity the `2n²` divisor exists for: in Euclidean space
     /// the gyration radius *is* the RMS distance to the centroid. A wrong
@@ -246,7 +248,7 @@ mod tests {
         let mut points = vec![0.0f64; N * D];
         for i in 0..N {
             for d in 0..D {
-                let t = (i * D + d) as f64;
+                let t = count_to_f64(i * D + d);
                 points[i * D + d] = (t * 0.7).sin() * (1.0 + t * 0.31);
             }
         }
@@ -262,7 +264,7 @@ mod tests {
             }
         }
         for c in &mut centroid {
-            *c /= N as f64;
+            *c /= count_to_f64(N);
         }
         let want = {
             let sum_sq: f64 = (0..N)
@@ -272,7 +274,7 @@ mod tests {
                         .sum::<f64>()
                 })
                 .sum();
-            (sum_sq / N as f64).sqrt()
+            (sum_sq / count_to_f64(N)).sqrt()
         };
 
         assert!(
@@ -287,6 +289,9 @@ mod tests {
     #[test]
     fn test_gyration_of_collapsed_configuration_is_zero() {
         let dist = vec![0.0; 16 * 16];
-        assert_eq!(gyration_radius(&dist, 16), 0.0);
+        assert_eq!(
+            gyration_radius(&dist, 16).partial_cmp(&0.0),
+            Some(Ordering::Equal)
+        );
     }
 }

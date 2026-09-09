@@ -1,5 +1,4 @@
 use indicatif::{MultiProgress, ProgressBar};
-use std::sync::Arc;
 
 use crate::cli::Args;
 use crate::common::{eval_all_metrics, make_progress_bar};
@@ -13,7 +12,7 @@ use fitting_core::metrics::{DAVIES_BOULDIN_RATIO, TRUSTWORTHINESS};
 pub(crate) fn run_random(
     dataset_name: &str,
     args: &Args,
-    evaluator: Arc<Evaluator>,
+    evaluator: &Evaluator,
     mp: &MultiProgress,
 ) {
     let mut rng = fitting_core::synthetic_data::Rng::new(0xdead_beef_cafe_1111);
@@ -46,14 +45,15 @@ pub(crate) fn run_random(
         let mut config = sample_space.sample(&mut rng);
         config.curvature_magnitude = ParamSpec::Fixed(curvature.abs());
         let (agg, spread) = eval_all_metrics(
-            &evaluator,
+            evaluator,
             &config,
             curvature_sign,
             args.n_seeds,
             trial_idx,
             &pb_iters,
         );
-        let elapsed = start.elapsed().as_millis() as u64;
+        let elapsed =
+            u64::try_from(start.elapsed().as_millis()).expect("elapsed millis fit in u64");
 
         let result = TrialResult::new(
             &config,

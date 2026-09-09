@@ -1,3 +1,4 @@
+use fitting_core::cast::{count_to_f64, to_usize};
 use fitting_core::context::EmbeddingContext;
 use fitting_core::curvature_detection::{detect_geometry, GeometryVerdict};
 use fitting_core::embedding::EmbeddingState;
@@ -143,5 +144,5 @@ impl Evaluator {
 
 /// The neighbourhood size every metric in this crate is scored at.
 pub fn scoring_k(n: usize) -> usize {
-    (30_f64.min(n as f64 * 0.1)).round() as usize
+    to_usize((30_f64.min(count_to_f64(n) * 0.1)).round())
 }

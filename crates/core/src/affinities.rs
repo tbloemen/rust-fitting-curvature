@@ -1,3 +1,5 @@
+use crate::cast::{count_to_f64, to_usize};
+
 /// Binary search for sigma that achieves target perplexity for a single point.
 pub fn binary_search_sigma(sq_distances: &[f64], target_perplexity: f64) -> f64 {
     let target_entropy = target_perplexity.ln();
@@ -75,7 +77,7 @@ fn compute_conditional_probabilities(
     perplexity: f64,
     n_points: usize,
 ) -> Vec<f64> {
-    let k = (n_points - 1).min((3.0 * perplexity + 1.0) as usize);
+    let k = (n_points - 1).min(to_usize(3.0 * perplexity + 1.0));
     let mut p_cond = vec![0.0; n_points * n_points];
 
     for i in 0..n_points {
@@ -114,7 +116,7 @@ fn compute_conditional_probabilities(
 
 fn symmetrize_and_normalize_p(p_cond: &[f64], n_points: usize) -> Vec<f64> {
     let mut p = vec![0.0; n_points * n_points];
-    let denom = 2.0 * n_points as f64;
+    let denom = 2.0 * count_to_f64(n_points);
     for i in 0..n_points {
         for j in 0..n_points {
             p[i * n_points + j] = (p_cond[i * n_points + j] + p_cond[j * n_points + i]) / denom;

@@ -51,7 +51,21 @@ jobs:
         with:
           components: clippy
           targets: wasm32-unknown-unknown
-      - run: cargo clippy -p fitting-web --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo clippy -p fitting-web --target wasm32-unknown-unknown --all-targets -- -D warnings
+
+  clippy-analysis:
+    name: Clippy (analysis)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # --all-features enables the `plots` feature, which pulls in
+      # plotters -> font-kit -> fontconfig.
+      - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+      - run: cargo clippy -p fitting-analysis --all-targets --all-features -- -D warnings
 
   fmt:
     name: Rustfmt

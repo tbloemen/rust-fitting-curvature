@@ -3,6 +3,8 @@
 //! Extracted from `synthetic_data` so other modules (e.g. detection) can
 //! reuse the same deterministic RNG implementation.
 
+use crate::cast::u64_to_f64;
+
 /// Simple seeded PRNG (xoshiro256**)
 pub struct Rng {
     s: [u64; 4],
@@ -15,10 +17,10 @@ impl Rng {
         let mut state = seed;
         let mut s = [0u64; 4];
         for slot in &mut s {
-            state = state.wrapping_add(0x9e3779b97f4a7c15);
+            state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
             let mut z = state;
-            z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
             *slot = z ^ (z >> 31);
         }
         Self { s }
@@ -38,7 +40,7 @@ impl Rng {
 
     /// Uniform in [0, 1)
     pub fn uniform(&mut self) -> f64 {
-        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+        u64_to_f64(self.next_u64() >> 11) / u64_to_f64(1u64 << 53)
     }
 
     /// Approximate normal via Box-Muller

@@ -39,7 +39,7 @@ fn kappa_prefers_the_recorded_magnitude() {
     )
     .expect("hyperbolic trial shape");
 
-    let expected = 0.1587415548667954 * 4.583735477895421_f64.powi(2);
+    let expected = 0.158_741_554_866_795_4 * 4.583_735_477_895_421_f64.powi(2);
     let got = record.kappa().expect("curved trial has kappa");
     assert!((got - expected).abs() < 1e-12, "got {got}, want {expected}");
 }

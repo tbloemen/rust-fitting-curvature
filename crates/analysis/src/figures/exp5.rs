@@ -175,8 +175,8 @@ impl Figure for Marginals<'_> {
 
     fn size(&self) -> (u32, u32) {
         (
-            400 * HYPERPARAMS.len() as u32,
-            300 * REAL_DATASETS.len() as u32,
+            400 * u32::try_from(HYPERPARAMS.len()).expect("hyperparams is a small constant"),
+            300 * u32::try_from(REAL_DATASETS.len()).expect("real datasets is a small constant"),
         )
     }
 

@@ -3,6 +3,7 @@
 
 use fitting_core::kernels::{compute_q_matrix, t_distribution_kernel};
 use fitting_core::manifolds::{Euclidean, Hyperboloid, Sphere};
+use std::cmp::Ordering;
 
 #[test]
 fn test_t_distribution_values() {
@@ -69,7 +70,11 @@ fn test_q_matrix_diagonal_zero() {
 
     let q = compute_q_matrix(&manifold, &points, n, 2, 1.0);
     for i in 0..n {
-        assert_eq!(q[i * n + i], 0.0, "Q diagonal not zero at {i}");
+        assert_eq!(
+            q[i * n + i].partial_cmp(&0.0),
+            Some(Ordering::Equal),
+            "Q diagonal not zero at {i}"
+        );
     }
 }
 

@@ -227,10 +227,13 @@ fn main() {
     }
 
     let rows: Vec<Row> = map_parallel(&fixtures, build_row);
+    print_table(&rows, args.n, args.seed);
+    write_jsonl(&rows, jsonl, args.seed);
+}
 
+fn print_table(rows: &[Row], n: usize, seed: u64) {
     println!(
-        "\nThree-arm signature residuals, normalised by n*d_max^2 (n={}, dim={DIM}, seed={})\n",
-        args.n, args.seed
+        "\nThree-arm signature residuals, normalised by n*d_max^2 (n={n}, dim={DIM}, seed={seed})\n",
     );
     println!(
         "{:<20}{:>12}{:>11}{:>11}{:>11}{:>12}{:>11}{:>11}{:>11}{:>11}{:>10}{:>11}{:>11}{:>10}{:>7}  gromov",
@@ -251,7 +254,7 @@ fn main() {
         "pinned",
     );
     println!("{}", "-".repeat(200));
-    for r in &rows {
+    for r in rows {
         println!(
             "{:<20}{:>12}{:>11.3e}{:>11.3e}{:>11.3e}{:>12}{:>11.2e}{:>11.2e}{:>11.4}{:>11.3e}{:>10.4}{:>11.4}{:>11.3e}{:>10.4}{:>7}  {}",
             r.name,
@@ -300,10 +303,9 @@ fn main() {
     let agree = rows.iter().filter(|r| r.truth == r.winner).count();
     let labelled = rows.iter().filter(|r| r.truth != "?").count();
     println!("\n  argmin matches construction on {agree}/{labelled} datasets of known geometry");
+}
 
-    // The default output lives under `results/`, which is gitignored and so is
-    // absent from a fresh clone; `File::create` does not make parent
-    // directories.
+fn write_jsonl(rows: &[Row], jsonl: &str, seed: u64) {
     if let Some(parent) = std::path::Path::new(jsonl).parent() {
         if !parent.as_os_str().is_empty() {
             if let Err(e) = std::fs::create_dir_all(parent) {
@@ -320,8 +322,8 @@ fn main() {
             std::process::exit(1);
         }
     };
-    for r in &rows {
-        if let Err(e) = writeln!(out, "{}", json_line(r, args.seed)) {
+    for r in rows {
+        if let Err(e) = writeln!(out, "{}", json_line(r, seed)) {
             eprintln!("error: cannot write {jsonl}: {e}");
             std::process::exit(1);
         }

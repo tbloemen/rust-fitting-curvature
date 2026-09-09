@@ -93,10 +93,6 @@ fn canonical_trials(path: &Path) -> Vec<serde_json::Value> {
 
 #[test]
 fn resume_reproduces_uninterrupted_run() {
-    let dir = unique_dir();
-    let full = dir.join("full.jsonl");
-    let chunked = dir.join("chunked.jsonl");
-
     // Full GP budget, and the point at which the first chunk is "interrupted".
     // 3 of 4 is deliberately an odd boundary: with batch size 2 the full run's
     // final GP batch is [trial 3, trial 4], so resume must reuse trial 3 and
@@ -104,6 +100,10 @@ fn resume_reproduces_uninterrupted_run() {
     // partial-batch reuse path, not just whole-batch reuse.
     const N_FULL: usize = 4;
     const N_CHUNK1: usize = 3;
+
+    let dir = unique_dir();
+    let full = dir.join("full.jsonl");
+    let chunked = dir.join("chunked.jsonl");
 
     // 1. Uninterrupted reference run.
     run_pareto(&full, N_FULL, false);

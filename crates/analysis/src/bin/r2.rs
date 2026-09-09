@@ -26,6 +26,7 @@
 //! * **`front`** — recompute a cell's Pareto front in the optimizer's
 //!   `*_pareto_*.json` schema, for the cells whose sweep predates front writing.
 
+use fitting_core::cast::count_to_f64;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -174,10 +175,13 @@ struct FrontArgs {
     force: bool,
 }
 
+/// (N, geometry, dataset) — the block a set of comparable cells shares.
+type BlockKey = (usize, String, String);
+
 fn main() -> Result<()> {
     match Args::parse().command {
         Command::Stats(a) => run_stats(a),
-        Command::Aggregate(a) => run_aggregate(a),
+        Command::Aggregate(a) => run_aggregate(&a),
         Command::Compare(a) => run_compare(a),
         Command::Recommend(a) => run_recommend(a),
         Command::Front(a) => run_front(a),
@@ -215,7 +219,7 @@ fn run_stats(args: StatsArgs) -> Result<()> {
 
 // ─── Stage 2: ΔR2 + the rank test ─────────────────────────────────────────────
 
-fn run_aggregate(args: AggregateArgs) -> Result<()> {
+fn run_aggregate(args: &AggregateArgs) -> Result<()> {
     let table: Vec<CellRecord> = aggregate::load_table(&args.tables)?;
     if table.is_empty() {
         let first = args.tables.first().cloned().unwrap_or_default();
@@ -328,7 +332,6 @@ fn run_compare(args: CompareArgs) -> Result<()> {
     // (N, geometry, dataset) → setting → cell. Sorted keys throughout, so the
     // output is sorted by (n, geometry, dataset, setting) without a final sort
     // and is byte-identical across runs.
-    type BlockKey = (usize, String, String);
     let mut blocks: BTreeMap<BlockKey, BTreeMap<&str, &CellFile>> = BTreeMap::new();
     for cf in &cells {
         blocks
@@ -476,7 +479,8 @@ fn agreement_row(region: &str, geometry: &str, pairs: &[(f64, f64)]) -> Agreemen
         geometry: geometry.to_string(),
         n_pairs: pairs.len(),
         n_signed: signed.len(),
-        sign_concordance: (!signed.is_empty()).then(|| concordant as f64 / signed.len() as f64),
+        sign_concordance: (!signed.is_empty())
+            .then(|| count_to_f64(concordant) / count_to_f64(signed.len())),
         spearman_rho: spearman.map(|(rho, _)| rho),
         spearman_p: spearman.map(|(_, p)| p),
     }

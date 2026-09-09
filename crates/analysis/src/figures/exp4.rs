@@ -38,6 +38,7 @@
 //!   tautology — and the cut that would remove a near-isometric projection is
 //!   κ, which is already the x axis.
 
+use fitting_core::cast::count_to_f64;
 use plotters::coord::Shift;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
@@ -125,7 +126,10 @@ impl Figure for RhoManProj<'_> {
     }
 
     fn size(&self) -> (u32, u32) {
-        (400 * METRIC_PAIRS.len() as u32, 480)
+        (
+            400 * u32::try_from(METRIC_PAIRS.len()).expect("metric pairs is a small constant"),
+            480,
+        )
     }
 
     fn draw<DB: DrawingBackend>(&self, root: &DrawingArea<DB, Shift>) -> Res
@@ -392,7 +396,10 @@ impl Figure for ProjGap {
     }
 
     fn size(&self) -> (u32, u32) {
-        (400 * METRIC_PAIRS.len() as u32, 480)
+        (
+            400 * u32::try_from(METRIC_PAIRS.len()).expect("metric pairs is a small constant"),
+            480,
+        )
     }
 
     fn draw<DB: DrawingBackend>(&self, root: &DrawingArea<DB, Shift>) -> Res
@@ -508,7 +515,7 @@ impl Figure for ProjGap {
                     // "no correlation" instead of "not computable".
                     _ => format!("{geometry} ρ=n/a (n={})", xs.len()),
                 };
-                let y_text = y_hi - (y_hi - y_lo) * (0.02 + 0.07 * g_idx as f64);
+                let y_text = y_hi - (y_hi - y_lo) * (0.02 + 0.07 * count_to_f64(g_idx));
                 chart.plotting_area().draw(&Text::new(
                     label,
                     (x_lo * 1.6, y_text),

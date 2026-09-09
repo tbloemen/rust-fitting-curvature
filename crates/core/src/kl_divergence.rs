@@ -1,3 +1,4 @@
+use crate::cast::count_to_f64;
 use crate::manifolds::Manifold;
 
 /// Compute globally-normalized similarity matrix from pairwise distances.
@@ -68,7 +69,7 @@ pub fn norm_loss_gradient(
         }
     }
 
-    let m = n_points as f64;
+    let m = count_to_f64(n_points);
     loss /= m;
     for g in &mut grad {
         *g /= m;

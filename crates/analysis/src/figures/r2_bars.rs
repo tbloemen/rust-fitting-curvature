@@ -25,6 +25,7 @@
 //! - **Everything is scaled by [`SCALE`]**, exactly as the table is, so a chart
 //!   and the table row it comes from carry the same digits.
 
+use fitting_core::cast::{count_to_f64, to_i32};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -72,6 +73,11 @@ const HEAD_ROOM: f64 = 0.16;
 /// An **absent** table is not an error: it is a separate `r2` run, and the bar
 /// charts are skipped without it exactly as Exp 3 skips its scatter without a
 /// `κ_data` export. A table that is there and will not parse still fails.
+///
+/// # Errors
+///
+/// Returns `Err` if the file is present but malformed. A missing file returns
+/// an empty `Vec`.
 pub fn load_deltas(path: &Path) -> Result<Vec<DeltaRow>> {
     match load_jsonl(path) {
         Ok(rows) => Ok(rows),
@@ -244,7 +250,10 @@ impl Figure for R2Bars {
         // Wide enough that a bar can carry its own value: the settings of one
         // region differ in the third digit, so the labels are the chart's
         // resolution and they must not collide.
-        (200 + 150 * self.groups.len() as u32, 520)
+        (
+            200 + 150 * u32::try_from(self.groups.len()).expect("a small number of groups"),
+            520,
+        )
     }
 
     fn draw<DB: DrawingBackend>(&self, root: &DrawingArea<DB, Shift>) -> Res
@@ -273,8 +282,9 @@ impl Figure for R2Bars {
         // key points on a continuous axis — they would not land on the group
         // centres. Splitting the strip off first keeps the plot's own geometry
         // untouched.
-        let (plot_area, label_area) =
-            body.split_vertically(body.dim_in_pixel().1 as i32 - LABEL_AREA);
+        let (plot_area, label_area) = body.split_vertically(
+            i32::try_from(body.dim_in_pixel().1).unwrap_or(i32::MAX) - LABEL_AREA,
+        );
 
         let n_groups = self.groups.len();
         // Zero-based, always: the bar's length is the value it reports.
@@ -285,7 +295,7 @@ impl Figure for R2Bars {
             .margin(10)
             .x_label_area_size(0)
             .y_label_area_size(64)
-            .build_cartesian_2d(0f64..n_groups as f64, 0f64..y_hi)?;
+            .build_cartesian_2d(0f64..count_to_f64(n_groups), 0f64..y_hi)?;
 
         style_mesh!(chart.configure_mesh())
             .disable_x_mesh()
@@ -297,12 +307,12 @@ impl Figure for R2Bars {
         // against its neighbour across a group boundary.
         chart.draw_series((0..n_groups).filter(|g| g % 2 == 1).map(|g| {
             Rectangle::new(
-                [(g as f64, 0.0), (g as f64 + 1.0, y_hi)],
+                [(count_to_f64(g), 0.0), (count_to_f64(g) + 1.0, y_hi)],
                 RGBColor(246, 246, 246).filled(),
             )
         }))?;
 
-        let slot = (1.0 - 2.0 * GROUP_PAD) / self.settings.len() as f64;
+        let slot = (1.0 - 2.0 * GROUP_PAD) / count_to_f64(self.settings.len());
         for (i, setting) in self.settings.iter().enumerate() {
             let color = setting_color(setting);
             let bars: Vec<(f64, f64, f64)> = self
@@ -311,7 +321,8 @@ impl Figure for R2Bars {
                 .enumerate()
                 .filter_map(|(g, group)| {
                     let value = group.values[i]? * SCALE;
-                    let x0 = g as f64 + GROUP_PAD + i as f64 * slot + slot * BAR_GAP / 2.0;
+                    let x0 =
+                        count_to_f64(g) + GROUP_PAD + count_to_f64(i) * slot + slot * BAR_GAP / 2.0;
                     Some((x0, x0 + slot * (1.0 - BAR_GAP), value))
                 })
                 .collect();
@@ -348,8 +359,8 @@ impl Figure for R2Bars {
         let strip_x0 = label_area.get_pixel_range().0.start;
         let width = f64::from(plot_px.end - plot_px.start);
         for (g, group) in self.groups.iter().enumerate() {
-            let centre =
-                plot_px.start + (width * (g as f64 + 0.5) / n_groups as f64).round() as i32;
+            let centre = plot_px.start
+                + to_i32((width * (count_to_f64(g) + 0.5) / count_to_f64(n_groups)).round());
             label_area.draw(&Text::new(
                 group.label.clone(),
                 (centre - strip_x0, 13),

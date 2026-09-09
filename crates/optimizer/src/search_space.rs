@@ -1,3 +1,4 @@
+use fitting_core::cast::{count_to_f64, to_usize};
 use fitting_core::config::{InitMethod, ScalingLossType, TrainingConfig};
 use fitting_core::matrices::get_default_init_scale;
 use fitting_core::synthetic_data::Rng;
@@ -244,14 +245,14 @@ impl TrialConfig {
         curvature_sign: f64,
         seed: u64,
     ) -> TrainingConfig {
-        let perplexity = (self.perplexity_ratio.value() * n_points as f64).max(2.0);
+        let perplexity = (self.perplexity_ratio.value() * count_to_f64(n_points)).max(2.0);
         TrainingConfig {
             n_points,
-            embed_dim: self.embed_dim.value() as usize,
+            embed_dim: to_usize(self.embed_dim.value()),
             curvature: curvature_sign * self.curvature_magnitude.value(),
             perplexity,
-            n_iterations: self.n_iterations.value() as usize,
-            early_exaggeration_iterations: self.early_exaggeration_iterations.value() as usize,
+            n_iterations: to_usize(self.n_iterations.value()),
+            early_exaggeration_iterations: to_usize(self.early_exaggeration_iterations.value()),
             early_exaggeration_factor: self.early_exaggeration_factor.value(),
             learning_rate: self.learning_rate.value(),
             momentum_early: self.momentum_early.value(),
@@ -404,6 +405,7 @@ impl SearchSpace {
 mod tests {
     use super::*;
     use fitting_core::synthetic_data::Rng;
+    use std::cmp::Ordering;
 
     fn test_space() -> SearchSpace {
         let mut hp = TrialConfig::all_free();
@@ -529,7 +531,11 @@ mod tests {
         let mut rng = Rng::new(1);
         for _ in 0..50 {
             let v = spec.mutate(0.0, &mut rng);
-            assert_eq!(v, 0.001, "mutate(0.0) should clamp to lo=0.001");
+            assert_eq!(
+                v.partial_cmp(&0.001),
+                Some(Ordering::Equal),
+                "mutate(0.0) should clamp to lo=0.001"
+            );
         }
     }
 

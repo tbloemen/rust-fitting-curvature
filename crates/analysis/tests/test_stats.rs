@@ -7,6 +7,8 @@ use fitting_analysis::stats::{
     chi2_sf, friedman, holm_against_control, mean, median, normal_sf, pearson, quantile, rankdata,
     spearman, student_t_sf,
 };
+use fitting_core::cast::count_to_f64;
+use std::cmp::Ordering;
 
 fn assert_close(a: f64, b: f64, tol: f64) {
     assert!((a - b).abs() <= tol, "{a} != {b} (tol {tol})");
@@ -43,8 +45,8 @@ fn spearman_matches_scipy() {
     let x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
     let y = [2.0, 1.0, 4.0, 3.0, 7.0, 5.0, 6.0];
     let (rho, p) = spearman(&x, &y).unwrap();
-    assert_close(rho, 0.8214285714285715, 1e-12);
-    assert_close(p, 0.0234488083456915, 1e-9);
+    assert_close(rho, 0.821_428_571_428_571_5, 1e-12);
+    assert_close(p, 0.023_448_808_345_691_5, 1e-9);
 }
 
 #[test]
@@ -53,8 +55,8 @@ fn spearman_handles_ties_like_scipy() {
     let x = [0.1, 0.5, 0.2, 0.9, 0.4, 0.4, 0.7, 0.3];
     let y = [1.0, 0.2, 0.8, 0.1, 0.55, 0.5, 0.3, 0.9];
     let (rho, p) = spearman(&x, &y).unwrap();
-    assert_close(rho, -0.9461247469114745, 1e-12);
-    assert_close(p, 0.0003753118737904405, 1e-9);
+    assert_close(rho, -0.946_124_746_911_474_5, 1e-12);
+    assert_close(p, 0.000_375_311_873_790_440_5, 1e-9);
 }
 
 #[test]
@@ -76,18 +78,18 @@ fn spearman_needs_three_points() {
 #[test]
 fn normal_tail_matches_known_quantiles() {
     assert_close(normal_sf(0.0), 0.5, 1e-7);
-    assert_close(normal_sf(1.0), 0.15865525393145707, 1e-7);
-    assert_close(normal_sf(1.959963984540054), 0.025, 1e-7);
-    assert_close(normal_sf(-1.0), 0.8413447460685429, 1e-7);
+    assert_close(normal_sf(1.0), 0.158_655_253_931_457_07, 1e-7);
+    assert_close(normal_sf(1.959_963_984_540_054), 0.025, 1e-7);
+    assert_close(normal_sf(-1.0), 0.841_344_746_068_542_9, 1e-7);
 }
 
 #[test]
 fn student_t_tail_matches_known_quantiles() {
     // The 97.5th percentile of t with 3 dof is 3.182446305284263.
-    assert_close(student_t_sf(3.182446305284263, 3.0), 0.025, 1e-9);
+    assert_close(student_t_sf(3.182_446_305_284_263, 3.0), 0.025, 1e-9);
     assert_close(student_t_sf(0.0, 5.0), 0.5, 1e-12);
     // Large dof converges to the normal.
-    assert_close(student_t_sf(1.959963984540054, 1e7), 0.025, 1e-5);
+    assert_close(student_t_sf(1.959_963_984_540_054, 1e7), 0.025, 1e-5);
 }
 
 #[test]
@@ -136,7 +138,7 @@ fn chi2_sf_even(x: f64, dof: usize) -> f64 {
     let mut term = 1.0;
     let mut sum = 1.0;
     for j in 1..dof / 2 {
-        term *= h / j as f64;
+        term *= h / count_to_f64(j);
         sum += term;
     }
     (-h).exp() * sum
@@ -148,7 +150,7 @@ fn chi2_tail_matches_the_even_dof_closed_form() {
     // is independent of the library it is meant to replace.
     for &dof in &[2usize, 4, 6, 10, 20] {
         for &x in &[0.25f64, 1.0, 3.5, 8.0, 15.0, 40.0] {
-            assert_close(chi2_sf(x, dof as f64), chi2_sf_even(x, dof), 1e-10);
+            assert_close(chi2_sf(x, count_to_f64(dof)), chi2_sf_even(x, dof), 1e-10);
         }
     }
 }
@@ -165,8 +167,8 @@ fn chi2_tail_matches_the_normal_at_one_dof() {
 
 #[test]
 fn chi2_tail_covers_the_degenerate_ends() {
-    assert_eq!(chi2_sf(0.0, 3.0), 1.0);
-    assert_eq!(chi2_sf(-1.0, 3.0), 1.0);
+    assert_eq!(chi2_sf(0.0, 3.0).partial_cmp(&1.0), Some(Ordering::Equal));
+    assert_eq!(chi2_sf(-1.0, 3.0).partial_cmp(&1.0), Some(Ordering::Equal));
     assert!(chi2_sf(1.0, 0.0).is_nan());
     assert!(chi2_sf(1e6, 2.0) < 1e-300);
 }

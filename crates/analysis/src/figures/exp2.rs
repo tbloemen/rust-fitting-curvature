@@ -127,10 +127,10 @@ impl Figure for StackedFronts<'_> {
         let (legend, grid) = root.split_vertically(38);
         let entries: Vec<LegendEntry> = SETTING_ORDER
             .iter()
-            .map(|s| {
-                let e = LegendEntry::new(*s, setting_color(s));
-                match setting_dash(s) {
-                    Some((d, g)) => e.with_dash(d, g),
+            .map(|setting| {
+                let e = LegendEntry::new(*setting, setting_color(setting));
+                match setting_dash(setting) {
+                    Some((dash, gap)) => e.with_dash(dash, gap),
                     None => e,
                 }
             })
@@ -138,134 +138,192 @@ impl Figure for StackedFronts<'_> {
         draw_legend(&legend, &entries)?;
 
         let panels = grid.split_evenly((REAL_DATASETS.len(), GEOMETRIES.len()));
-        for (i, dataset) in REAL_DATASETS.iter().enumerate() {
-            for (j, geometry) in GEOMETRIES.iter().enumerate() {
-                let panel = &panels[i * GEOMETRIES.len() + j];
+        for (row, dataset) in REAL_DATASETS.iter().enumerate() {
+            for (col, geometry) in GEOMETRIES.iter().enumerate() {
+                let panel = &panels[row * GEOMETRIES.len() + col];
                 let curves = self.curves(dataset, geometry);
-
-                let all_x: Vec<f64> = curves
-                    .iter()
-                    .flat_map(|c| c.points.iter().map(|p| p.0))
-                    .collect();
-                let all_y: Vec<f64> = curves
-                    .iter()
-                    .flat_map(|c| c.points.iter().map(|p| p.1))
-                    .collect();
-                let (mut x_lo, mut x_hi) = robust_range(&all_x, 0.06).unwrap_or((0.0, 1.0));
-                let (mut y_lo, mut y_hi) = robust_range(&all_y, 0.06).unwrap_or((0.0, 1.0));
-                // The fence is computed over the pooled points, so in principle
-                // it could exclude a whole curve. Widen until every setting
-                // keeps at least its cheapest-stress point.
-                for p in curves.iter().filter_map(Curve::cheapest) {
-                    x_lo = x_lo.min(p.0);
-                    x_hi = x_hi.max(p.0);
-                    y_lo = y_lo.min(p.1);
-                    y_hi = y_hi.max(p.1);
-                }
-
-                let mut chart = ChartBuilder::on(panel)
-                    .margin(6)
-                    .margin_top(if i == 0 { 4 } else { 6 })
-                    .caption(
-                        if i == 0 { *geometry } else { "" },
-                        ("sans-serif", 18).into_font().style(FontStyle::Bold),
-                    )
-                    .x_label_area_size(44)
-                    .y_label_area_size(70)
-                    .build_cartesian_2d(x_lo..x_hi, y_lo..y_hi)?;
-
-                let y_desc = if j == 0 {
-                    format!("{dataset}   {Y_LABEL}")
-                } else {
-                    String::new()
-                };
-                let x_desc = if i == REAL_DATASETS.len() - 1 {
-                    X_LABEL
-                } else {
-                    ""
-                };
-                // The mesh style is shared with Exp 3–5; the label size is
-                // overridden after the macro because this canvas is larger.
-                style_mesh!(chart.configure_mesh())
-                    .label_style(("sans-serif", 15).into_font().color(&RGBColor(60, 60, 60)))
-                    .x_desc(x_desc)
-                    .y_desc(y_desc)
-                    .x_labels(5)
-                    .y_labels(5)
-                    .draw()?;
-
-                // Baseline last, so the reference is never buried.
-                let order = curves
-                    .iter()
-                    .filter(|c| c.setting != BASELINE)
-                    .chain(curves.iter().filter(|c| c.setting == BASELINE));
-                let mut off_scale = 0usize;
-                for curve in order {
-                    let color = setting_color(curve.setting);
-                    let steps = step_polyline(&curve.points);
-                    match setting_dash(curve.setting) {
-                        Some((dash, gap)) => {
-                            chart.draw_series(DashedLineSeries::new(
-                                steps,
-                                dash,
-                                gap,
-                                color.mix(LINE_ALPHA).stroke_width(2),
-                            ))?;
-                        }
-                        None => {
-                            chart.draw_series(LineSeries::new(
-                                steps,
-                                color.mix(BASELINE_ALPHA).stroke_width(3),
-                            ))?;
-                        }
-                    }
-                    // Opaque markers on the real front points only — never on
-                    // the staircase corners, which are not trials.
-                    chart.draw_series(
-                        curve
-                            .points
-                            .iter()
-                            .map(|p| Circle::new(*p, 3, color.filled())),
-                    )?;
-
-                    // Points the robust range cut: marked at the edge they left
-                    // through, so a clipped panel never looks complete.
-                    let (px, py) = ((x_hi - x_lo) * 0.02, (y_hi - y_lo) * 0.02);
-                    let clipped: Vec<(f64, f64)> = curve
-                        .points
-                        .iter()
-                        .filter(|(x, y)| *x < x_lo || *x > x_hi || *y < y_lo || *y > y_hi)
-                        .map(|(x, y)| {
-                            (x.clamp(x_lo + px, x_hi - px), y.clamp(y_lo + py, y_hi - py))
-                        })
-                        .collect();
-                    off_scale += clipped.len();
-                    chart.draw_series(
-                        clipped
-                            .into_iter()
-                            .map(|p| TriangleMarker::new(p, 5, color.filled())),
-                    )?;
-                }
-
-                if off_scale > 0 {
-                    // No glyphs: the bitmap backend has no arrows or geometric
-                    // shapes, and renders them as tofu.
-                    let label = if off_scale == 1 {
-                        "1 pt off-scale".to_string()
-                    } else {
-                        format!("{off_scale} pts off-scale")
-                    };
-                    chart.draw_series(std::iter::once(Text::new(
-                        label,
-                        (x_lo + (x_hi - x_lo) * 0.03, y_hi - (y_hi - y_lo) * 0.03),
-                        ("sans-serif", 13)
-                            .into_font()
-                            .color(&RGBColor(110, 110, 110))
-                            .pos(Pos::new(HPos::Left, VPos::Top)),
-                    )))?;
-                }
+                draw_panel(panel, &curves, dataset, geometry, row, col)?;
             }
         }
         Ok(())
     }
+}
+
+/// Draw a single (dataset, geometry) panel of the stacked fronts.
+fn draw_panel<DB: DrawingBackend>(
+    panel: &DrawingArea<DB, Shift>,
+    curves: &[Curve],
+    dataset: &str,
+    geometry: &str,
+    row: usize,
+    col: usize,
+) -> Res
+where
+    DB::ErrorType: 'static,
+{
+    let all_x: Vec<f64> = curves
+        .iter()
+        .flat_map(|c| c.points.iter().map(|p| p.0))
+        .collect();
+    let all_y: Vec<f64> = curves
+        .iter()
+        .flat_map(|c| c.points.iter().map(|p| p.1))
+        .collect();
+    let (mut x_lo, mut x_hi) = robust_range(&all_x, 0.06).unwrap_or((0.0, 1.0));
+    let (mut y_lo, mut y_hi) = robust_range(&all_y, 0.06).unwrap_or((0.0, 1.0));
+    // The fence is computed over the pooled points, so in principle
+    // it could exclude a whole curve. Widen until every setting
+    // keeps at least its cheapest-stress point.
+    for point in curves.iter().filter_map(Curve::cheapest) {
+        x_lo = x_lo.min(point.0);
+        x_hi = x_hi.max(point.0);
+        y_lo = y_lo.min(point.1);
+        y_hi = y_hi.max(point.1);
+    }
+
+    let mut chart = ChartBuilder::on(panel)
+        .margin(6)
+        .margin_top(if row == 0 { 4 } else { 6 })
+        .caption(
+            if row == 0 { geometry } else { "" },
+            ("sans-serif", 18).into_font().style(FontStyle::Bold),
+        )
+        .x_label_area_size(44)
+        .y_label_area_size(70)
+        .build_cartesian_2d(x_lo..x_hi, y_lo..y_hi)?;
+
+    let y_desc = if col == 0 {
+        format!("{dataset}   {Y_LABEL}")
+    } else {
+        String::new()
+    };
+    let x_desc = if row == REAL_DATASETS.len() - 1 {
+        X_LABEL
+    } else {
+        ""
+    };
+    // The mesh style is shared with Exp 3–5; the label size is
+    // overridden after the macro because this canvas is larger.
+    style_mesh!(chart.configure_mesh())
+        .label_style(("sans-serif", 15).into_font().color(&RGBColor(60, 60, 60)))
+        .x_desc(x_desc)
+        .y_desc(y_desc)
+        .x_labels(5)
+        .y_labels(5)
+        .draw()?;
+
+    let off_scale = draw_curves(&mut chart, curves, x_lo, x_hi, y_lo, y_hi)?;
+
+    if off_scale > 0 {
+        draw_off_scale_label(&mut chart, off_scale, x_lo, x_hi, y_lo, y_hi)?;
+    }
+    Ok(())
+}
+
+/// Label a panel whose robust range cut some front points, offset from the
+/// corner the points left through.
+fn draw_off_scale_label<DB, X, Y>(
+    chart: &mut ChartContext<DB, Cartesian2d<X, Y>>,
+    off_scale: usize,
+    x_lo: f64,
+    x_hi: f64,
+    y_lo: f64,
+    y_hi: f64,
+) -> Res
+where
+    DB: DrawingBackend,
+    DB::ErrorType: 'static,
+    X: plotters::coord::ranged1d::Ranged<ValueType = f64>,
+    Y: plotters::coord::ranged1d::Ranged<ValueType = f64>,
+{
+    // No glyphs: the bitmap backend has no arrows or geometric
+    // shapes, and renders them as tofu.
+    let label = if off_scale == 1 {
+        "1 pt off-scale".to_string()
+    } else {
+        format!("{off_scale} pts off-scale")
+    };
+    chart.draw_series(std::iter::once(Text::new(
+        label,
+        (x_lo + (x_hi - x_lo) * 0.03, y_hi - (y_hi - y_lo) * 0.03),
+        ("sans-serif", 13)
+            .into_font()
+            .color(&RGBColor(110, 110, 110))
+            .pos(Pos::new(HPos::Left, VPos::Top)),
+    )))?;
+    Ok(())
+}
+
+/// Draw one setting's front on a chart. Returns how many front points fell
+/// outside the robust range (marked at the edge they left through).
+fn draw_curves<DB, X, Y>(
+    chart: &mut ChartContext<DB, Cartesian2d<X, Y>>,
+    curves: &[Curve],
+    x_lo: f64,
+    x_hi: f64,
+    y_lo: f64,
+    y_hi: f64,
+) -> std::result::Result<usize, Box<dyn std::error::Error>>
+where
+    DB: DrawingBackend,
+    DB::ErrorType: 'static,
+    X: plotters::coord::ranged1d::Ranged<ValueType = f64>,
+    Y: plotters::coord::ranged1d::Ranged<ValueType = f64>,
+{
+    // Baseline last, so the reference is never buried.
+    let order = curves
+        .iter()
+        .filter(|c| c.setting != BASELINE)
+        .chain(curves.iter().filter(|c| c.setting == BASELINE));
+    let mut off_scale = 0usize;
+    for curve in order {
+        let color = setting_color(curve.setting);
+        let steps = step_polyline(&curve.points);
+        match setting_dash(curve.setting) {
+            Some((dash, gap)) => {
+                chart.draw_series(DashedLineSeries::new(
+                    steps,
+                    dash,
+                    gap,
+                    color.mix(LINE_ALPHA).stroke_width(2),
+                ))?;
+            }
+            None => {
+                chart.draw_series(LineSeries::new(
+                    steps,
+                    color.mix(BASELINE_ALPHA).stroke_width(3),
+                ))?;
+            }
+        }
+        // Opaque markers on the real front points only — never on
+        // the staircase corners, which are not trials.
+        chart.draw_series(
+            curve
+                .points
+                .iter()
+                .map(|point| Circle::new(*point, 3, color.filled())),
+        )?;
+
+        // Points the robust range cut: marked at the edge they left
+        // through, so a clipped panel never looks complete.
+        let (pad_x, pad_y) = ((x_hi - x_lo) * 0.02, (y_hi - y_lo) * 0.02);
+        let clipped: Vec<(f64, f64)> = curve
+            .points
+            .iter()
+            .filter(|(x, y)| *x < x_lo || *x > x_hi || *y < y_lo || *y > y_hi)
+            .map(|(x, y)| {
+                (
+                    x.clamp(x_lo + pad_x, x_hi - pad_x),
+                    y.clamp(y_lo + pad_y, y_hi - pad_y),
+                )
+            })
+            .collect();
+        off_scale += clipped.len();
+        chart.draw_series(
+            clipped
+                .into_iter()
+                .map(|point| TriangleMarker::new(point, 5, color.filled())),
+        )?;
+    }
+    Ok(off_scale)
 }

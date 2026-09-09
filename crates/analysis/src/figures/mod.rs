@@ -29,6 +29,7 @@ pub mod exp4;
 pub mod exp5;
 pub mod r2_bars;
 
+use fitting_core::cast::{count_to_f64, to_i32};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -150,12 +151,19 @@ pub const Y_LABEL: &str = "normalised stress (lower is better)";
 pub trait Figure {
     fn name(&self) -> String;
     fn size(&self) -> (u32, u32);
+    /// # Errors
+    ///
+    /// Returns drawing backend errors.
     fn draw<DB: DrawingBackend>(&self, root: &DrawingArea<DB, Shift>) -> Res
     where
         DB::ErrorType: 'static;
 }
 
 /// Render *fig* to `<out_dir>/<name>.svg` and `.png`.
+///
+/// # Errors
+///
+/// Returns errors from directory creation, backend creation, or drawing.
 pub fn save<F: Figure>(fig: &F, out_dir: &Path) -> Result<()> {
     std::fs::create_dir_all(out_dir).at(out_dir)?;
     let name = fig.name();
@@ -243,6 +251,14 @@ impl LegendEntry {
 }
 
 /// Draw a horizontal legend strip: a swatch plus a label per entry.
+///
+/// # Panics
+///
+/// Panics if the legend has more than `i32::MAX` entries.
+///
+/// # Errors
+///
+/// Returns drawing backend errors.
 pub fn draw_legend<DB: DrawingBackend>(
     area: &DrawingArea<DB, Shift>,
     entries: &[LegendEntry],
@@ -250,43 +266,53 @@ pub fn draw_legend<DB: DrawingBackend>(
 where
     DB::ErrorType: 'static,
 {
+    const SWATCH: i32 = 26;
+
     if entries.is_empty() {
         return Ok(());
     }
-    let (w, h) = area.dim_in_pixel();
+    let (width, height) = area.dim_in_pixel();
     let font = ("sans-serif", 15).into_font().color(&OK_BLACK);
     // Lay the entries out in equal slots: swatch, then text.
-    let slot = w as i32 / entries.len() as i32;
-    let y = h as i32 / 2;
+    let slot =
+        i32::try_from(width).unwrap_or(i32::MAX) / i32::try_from(entries.len()).unwrap_or(i32::MAX);
+    let vertical_centre = i32::try_from(height).unwrap_or(i32::MAX) / 2;
     for (i, e) in entries.iter().enumerate() {
-        let x0 = i as i32 * slot + 12;
-        const SWATCH: i32 = 26;
+        let x0 = i32::try_from(i).expect("legend has fewer than 2^31 entries") * slot + 12;
         match e.dash {
             // Tile the pattern across the swatch, clipped to its width.
             Some((dash, gap)) if dash > 0 && gap > 0 => {
-                let mut a = x0;
-                while a < x0 + SWATCH {
-                    let b = (a + dash).min(x0 + SWATCH);
+                let mut dash_start = x0;
+                while dash_start < x0 + SWATCH {
+                    let dash_end = (dash_start + dash).min(x0 + SWATCH);
                     area.draw(&PathElement::new(
-                        vec![(a, y), (b, y)],
+                        vec![(dash_start, vertical_centre), (dash_end, vertical_centre)],
                         e.color.stroke_width(3),
                     ))?;
-                    a = b + gap;
+                    dash_start = dash_end + gap;
                 }
             }
             _ => area.draw(&PathElement::new(
-                vec![(x0, y), (x0 + SWATCH, y)],
+                vec![(x0, vertical_centre), (x0 + SWATCH, vertical_centre)],
                 e.color.stroke_width(3),
             ))?,
         }
         if e.triangle {
-            area.draw(&TriangleMarker::new((x0 + 13, y), 5, e.color.filled()))?;
+            area.draw(&TriangleMarker::new(
+                (x0 + 13, vertical_centre),
+                5,
+                e.color.filled(),
+            ))?;
         } else {
-            area.draw(&Circle::new((x0 + 13, y), 4, e.color.filled()))?;
+            area.draw(&Circle::new(
+                (x0 + 13, vertical_centre),
+                4,
+                e.color.filled(),
+            ))?;
         }
         area.draw(&Text::new(
             e.label.clone(),
-            (x0 + 34, y),
+            (x0 + 34, vertical_centre),
             font.clone().pos(Pos::new(HPos::Left, VPos::Center)),
         ))?;
     }
@@ -296,6 +322,10 @@ where
 // ─── Loading & shared data helpers ────────────────────────────────────────────
 
 /// Map every (setting, dataset, n, geometry) to its list of trial records.
+///
+/// # Errors
+///
+/// Propagates errors from [`discover_cells`] and [`trial_records`].
 pub fn load_all_cells(results_dir: &Path) -> Result<CellMap> {
     let mut cells = CellMap::new();
     for cf in discover_cells(results_dir)? {
@@ -334,6 +364,10 @@ impl KappaData {
 /// only for the N it was actually run at. An **absent** table is not an error —
 /// the `κ_data` export is a separate optimizer run, and Exp 3 skips its scatter
 /// when it has not been done — but a table that is there and will not parse is.
+///
+/// # Errors
+///
+/// Propagates errors from [`load_jsonl`] (file I/O or deserialization).
 pub fn load_kappa_data(results_dir: &Path, n: usize) -> Result<BTreeMap<String, KappaData>> {
     for name in [format!("kappa_data_n{n}.jsonl"), "kappa_data.jsonl".into()] {
         let rows: Vec<KappaData> = match load_jsonl(results_dir.join(&name)) {
@@ -404,11 +438,11 @@ pub fn binned_median(
     let x_max = x.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let (lo, hi) = (x_min.log10(), x_max.log10());
     if hi <= lo {
-        let mean = x.iter().sum::<f64>() / x.len() as f64;
+        let mean = x.iter().sum::<f64>() / count_to_f64(x.len());
         return (vec![mean], median(y).into_iter().collect());
     }
     let edges: Vec<f64> = (0..=n_bins)
-        .map(|i| 10f64.powf(lo + (hi - lo) * i as f64 / n_bins as f64))
+        .map(|i| 10f64.powf(lo + (hi - lo) * count_to_f64(i) / count_to_f64(n_bins)))
         .collect();
     let mut centres = Vec::new();
     let mut meds = Vec::new();
@@ -544,6 +578,10 @@ pub fn snap_to_decades((lo, hi): (f64, f64)) -> (f64, f64) {
 /// plotters accumulates float error while walking decades, handing the default
 /// formatter values like 9.999999999e-5; anything within a fraction of a percent
 /// of a power of ten is printed as that power.
+///
+/// # Panics
+///
+/// Panics if the rounded exponent fails to convert to `usize`.
 #[must_use]
 pub fn log_tick(v: &f64) -> String {
     if *v <= 0.0 || !v.is_finite() {
@@ -552,10 +590,11 @@ pub fn log_tick(v: &f64) -> String {
     let exp = v.log10();
     let rounded = exp.round();
     if (exp - rounded).abs() < 0.01 {
-        let k = rounded as i32;
+        let k = to_i32(rounded);
         return if (-4..=5).contains(&k) {
             // Plain decimals read better than exponents in the common range.
-            let decimals = (-k).max(0) as usize;
+            let decimals =
+                usize::try_from((-k).max(0)).expect("a rounded log10 exponent is a small integer");
             format!("{:.*}", decimals, 10f64.powi(k))
         } else {
             format!("1e{k}")

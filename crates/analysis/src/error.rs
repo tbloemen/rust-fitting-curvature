@@ -145,9 +145,12 @@ impl fmt::Debug for Error {
 }
 
 impl std::error::Error for Error {
+    #[expect(clippy::match_same_arms, reason = "arms bind different source types")]
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::Io { source, .. } => Some(source),
+            // Same body text as the arm above, but `source` is a different
+            // concrete type in each, so the two cannot be or-merged.
             Error::Parse { source, .. } => Some(source),
             Error::Serialize(source) => Some(source),
             _ => None,
@@ -157,7 +160,16 @@ impl std::error::Error for Error {
 
 /// Attach the path to an [`std::io::Result`]: `File::open(p).at(p)?`. A bare
 /// `No such file or directory` is useless when a run touches a few hundred files.
+///
+/// # Errors
+///
+/// Wraps an `std::io::Error` into [`Error::Io`] with the path context.
 pub trait IoContext<T> {
+    /// Wraps an `std::io::Error` into [`Error::Io`] with the path context.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(Error::Io { .. })` when the underlying I/O operation fails.
     fn at(self, path: impl Into<PathBuf>) -> Result<T>;
 }
 

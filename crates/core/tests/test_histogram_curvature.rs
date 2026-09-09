@@ -22,6 +22,7 @@ use fitting_core::synthetic_data::{
     generate_uniform_ball_2d, generate_uniform_ball_3d, generate_uniform_hyperbolic,
     generate_uniform_sphere,
 };
+use std::cmp::Ordering;
 
 const N: usize = 400;
 const BINS: usize = 35;
@@ -65,7 +66,8 @@ fn fits_are_well_formed() {
         );
     }
     assert_eq!(
-        fits.euclidean.curvature_scale, 0.0,
+        fits.euclidean.curvature_scale.partial_cmp(&0.0),
+        Some(Ordering::Equal),
         "Euclidean fit must report zero curvature scale"
     );
 }
@@ -129,7 +131,11 @@ fn verdict_is_coherent() {
             v.best_geometry
         );
         match v.best_geometry {
-            "euclidean" => assert_eq!(v.curvature, 0.0, "{name}: euclidean must have K=0"),
+            "euclidean" => assert_eq!(
+                v.curvature.partial_cmp(&0.0),
+                Some(Ordering::Equal),
+                "{name}: euclidean must have K=0"
+            ),
             "spherical" => assert!(v.curvature >= 0.0, "{name}: spherical must have K≥0"),
             "hyperbolic" => assert!(v.curvature <= 0.0, "{name}: hyperbolic must have K≤0"),
             _ => unreachable!(),
@@ -193,10 +199,16 @@ fn gromov_tree_metric_is_zero() {
 #[test]
 fn gromov_small_n_returns_zero() {
     let dist3 = vec![0.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0];
-    assert_eq!(gromov_hyperbolicity(&dist3, 3, 500), 0.0);
+    assert_eq!(
+        gromov_hyperbolicity(&dist3, 3, 500).partial_cmp(&0.0),
+        Some(Ordering::Equal)
+    );
 
     let dist1 = vec![0.0];
-    assert_eq!(gromov_hyperbolicity(&dist1, 1, 500), 0.0);
+    assert_eq!(
+        gromov_hyperbolicity(&dist1, 1, 500).partial_cmp(&0.0),
+        Some(Ordering::Equal)
+    );
 }
 
 /// Hyperbolic data should produce a smaller normalised δ than Euclidean data

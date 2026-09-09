@@ -31,9 +31,9 @@ mod trial_result;
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-fn get_dataset_names(dataset_arg: &Option<String>) -> Vec<String> {
+fn get_dataset_names(dataset_arg: Option<&str>) -> Vec<String> {
     match dataset_arg {
-        Some(name) if name == "all" => vec![
+        Some("all") => vec![
             "mnist".to_string(),
             "fashion_mnist".to_string(),
             "pbmc".to_string(),
@@ -44,36 +44,18 @@ fn get_dataset_names(dataset_arg: &Option<String>) -> Vec<String> {
             "hyperbolic_shells".to_string(),
             "grid".to_string(),
         ],
-        Some(name) if name == "real" => vec![
+        Some("real") => vec![
             "mnist".to_string(),
             "fashion_mnist".to_string(),
             "pbmc".to_string(),
             "wordnet_mammals".to_string(),
         ],
-        Some(name) => vec![name.clone()],
+        Some(name) => vec![name.to_string()],
         None => vec!["mnist".to_string()],
     }
 }
 
-fn main() {
-    let args = Args::parse();
-
-    if (args.mode == "scan" || args.mode == "bayes") && args.metric.is_none() {
-        eprintln!("Error: --metric is required for --mode {}", args.mode);
-        std::process::exit(1);
-    }
-    if args.mode == "pareto" && args.metric.is_some() {
-        eprintln!("Note: --metric is ignored for --mode pareto (optimises all objectives).");
-    }
-
-    if let Some(parent) = Path::new(&args.output).parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).ok();
-        }
-    }
-
-    let dataset_names = get_dataset_names(&args.dataset);
-
+fn print_mode_banner(args: &Args, dataset_names: &[String]) {
     match args.mode.as_str() {
         "random" => println!(
             "Starting random search: {} datasets × {} trials, curvature=[{},{}], all metrics, seeds={}",
@@ -118,12 +100,37 @@ fn main() {
         }
     }
     println!("Output file: {}", args.output);
+}
+
+fn main() {
+    let args = Args::parse();
+
+    if (args.mode == "scan" || args.mode == "bayes") && args.metric.is_none() {
+        eprintln!("Error: --metric is required for --mode {}", args.mode);
+        std::process::exit(1);
+    }
+    if args.mode == "pareto" && args.metric.is_some() {
+        eprintln!("Note: --metric is ignored for --mode pareto (optimises all objectives).");
+    }
+
+    if let Some(parent) = Path::new(&args.output).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).ok();
+        }
+    }
+
+    let dataset_names = get_dataset_names(args.dataset.as_deref());
+    print_mode_banner(&args, &dataset_names);
 
     let mp = Arc::new(MultiProgress::new());
+    let work = build_work_queue(&args, &dataset_names);
+    spawn_workers(&args, &mp, work);
+    println!("\nAll sessions complete.");
+}
 
-    // Build unified per-dataset work queue.
+fn build_work_queue(args: &Args, dataset_names: &[String]) -> VecDeque<(String, Arc<Evaluator>)> {
     let mut work: VecDeque<(String, Arc<Evaluator>)> = VecDeque::new();
-    for dataset_name in &dataset_names {
+    for dataset_name in dataset_names {
         println!("Loading dataset: {dataset_name}...");
         let dp = &args.data_path;
         let n = args.n_samples;
@@ -148,7 +155,10 @@ fn main() {
         let evaluator = Arc::new(Evaluator::new(dataset));
         work.push_back((dataset_name.clone(), evaluator));
     }
+    work
+}
 
+fn spawn_workers(args: &Args, mp: &Arc<MultiProgress>, work: VecDeque<(String, Arc<Evaluator>)>) {
     let n_threads = args
         .threads
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, std::num::NonZero::get))
@@ -170,17 +180,17 @@ fn main() {
     for _ in 0..n_outer {
         let queue = Arc::clone(&queue);
         let args = args.clone();
-        let mp = Arc::clone(&mp);
+        let mp = Arc::clone(mp);
         let h = thread::spawn(move || loop {
             let item = queue.lock().unwrap().pop_front();
             match item {
                 None => break,
                 Some((dataset_name, evaluator)) => match args.mode.as_str() {
-                    "scan" => run_scan(&dataset_name, &args, evaluator, &mp),
-                    "bayes" => run_bayes(&dataset_name, &args, evaluator, &mp, n_threads),
-                    "pareto" => run_pareto(&dataset_name, &args, evaluator, &mp, n_threads),
+                    "scan" => run_scan(&dataset_name, &args, &evaluator, &mp),
+                    "bayes" => run_bayes(&dataset_name, &args, &evaluator, &mp, n_threads),
+                    "pareto" => run_pareto(&dataset_name, &args, &evaluator, &mp, n_threads),
                     "detect" => run_detect(&dataset_name, &args, &evaluator),
-                    _ => run_random(&dataset_name, &args, evaluator, &mp),
+                    _ => run_random(&dataset_name, &args, &evaluator, &mp),
                 },
             }
         });
@@ -190,6 +200,4 @@ fn main() {
     for h in handles {
         h.join().expect("optimizer thread panicked");
     }
-
-    println!("\nAll sessions complete.");
 }

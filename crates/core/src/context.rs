@@ -90,8 +90,11 @@ impl<'a> EmbeddingContext<'a> {
     /// Seed the manifold geodesics from a caller that already has them, rather
     /// than paying for a second `pairwise_distances` over the same points.
     ///
+    /// # Panics
+    ///
     /// Panics if they have already been derived — silently ignoring the
     /// argument would be the drift this type exists to prevent.
+    #[must_use]
     pub fn with_manifold_dist(self, dist: Vec<f64>) -> Self {
         self.manifold_dist
             .set(dist)

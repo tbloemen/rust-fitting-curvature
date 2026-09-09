@@ -1,3 +1,4 @@
+use crate::cast::{count_to_f64, to_usize};
 use crate::curvature_detection::gromov::four_distinct;
 use crate::curvature_detection::gromov::median_pairwise_distance;
 use crate::curvature_detection::gromov::quad_delta;
@@ -12,6 +13,14 @@ use crate::curvature_detection::gromov::quad_delta;
 /// Hyperbolic spaces have small normalised δ (bounded by log(2)/R for
 /// curvature −1 and typical distance R), while Euclidean/spherical
 /// spaces produce larger values.
+///
+/// # Panics
+///
+/// Panics if any computed δ is NaN.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "a,b,c,d are the four conventional vertex indices of the Gromov four-point condition; n is NumRec matrix dimension"
+)]
 #[must_use]
 pub fn gromov_hyperbolicity(distances: &[f64], n: usize, n_samples: usize) -> f64 {
     if n < 4 {
@@ -19,7 +28,7 @@ pub fn gromov_hyperbolicity(distances: &[f64], n: usize, n_samples: usize) -> f6
     }
 
     // Use the crate-wide Rng for reproducible sampling.
-    let mut rng = crate::rng::Rng::new(0xdeadbeef);
+    let mut rng = crate::rng::Rng::new(0xdead_beef);
     let mut next = || -> usize { rng.next_raw() };
 
     let mut deltas = Vec::with_capacity(n_samples);
@@ -31,7 +40,7 @@ pub fn gromov_hyperbolicity(distances: &[f64], n: usize, n_samples: usize) -> f6
     deltas.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
     // 90th percentile δ.
-    let p90_idx = (deltas.len() as f64 * 0.90) as usize;
+    let p90_idx = to_usize(count_to_f64(deltas.len()) * 0.90);
     let delta_90 = deltas[p90_idx.min(deltas.len() - 1)];
 
     let median_d = median_pairwise_distance(distances, n);

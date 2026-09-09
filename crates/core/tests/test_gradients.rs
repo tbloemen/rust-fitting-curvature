@@ -1,3 +1,4 @@
+use fitting_core::cast::count_to_f64;
 use fitting_core::kernels::compute_q_matrix_with_distances;
 use fitting_core::kl_divergence::kl_gradient;
 use fitting_core::manifolds::{self, Manifold};
@@ -26,7 +27,7 @@ impl GradientTestSetup {
             for j in 0..n_points {
                 if i != j {
                     // Non-uniform P: use (i+j+1) as weight
-                    p[i * n_points + j] = (i + j + 1) as f64;
+                    p[i * n_points + j] = count_to_f64(i + j + 1);
                 }
             }
         }
@@ -229,7 +230,7 @@ fn make_tangent_vector(
 
     // Fill with pseudo-random values
     for d in 0..ambient_dim {
-        v[o + d] = ((seed * 7 + d * 13 + 37) as f64 % 97.0 - 48.5) / 48.5 * 0.01;
+        v[o + d] = (count_to_f64(seed * 7 + d * 13 + 37) % 97.0 - 48.5) / 48.5 * 0.01;
     }
 
     // Project to tangent space

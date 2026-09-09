@@ -1,12 +1,11 @@
 use indicatif::{MultiProgress, ProgressBar};
-use std::sync::Arc;
 use std::thread;
 
 use crate::cli::Args;
 use crate::common::{eval_all_metrics, make_progress_bar, parse_experiment, parse_metric};
 use crate::evaluate::Evaluator;
 use crate::gp::{GpOptimizer, GpState};
-use crate::metrics::{Direction, MetricValues};
+use crate::metrics::{Direction, Metric, MetricValues};
 use crate::search_space::{param_bounds, ParamSpec, SearchSpace, TrialConfig};
 use crate::trial_result::{write_result, TrialResult};
 use fitting_core::spread::SpreadDiagnostics;
@@ -46,9 +45,8 @@ fn load_warm_start_trials(
     dataset_name: &str,
     geometry: &str,
 ) -> Vec<(TrialConfig, f64)> {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return vec![],
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return vec![];
     };
     content
         .lines()
@@ -95,14 +93,14 @@ fn load_warm_start_trials(
 pub(crate) fn run_bayes(
     dataset_name: &str,
     args: &Args,
-    evaluator: Arc<Evaluator>,
+    evaluator: &Evaluator,
     mp: &MultiProgress,
     batch_size: usize,
 ) {
     let metric = parse_metric(args.metric.as_deref().unwrap());
     let direction = metric.direction();
 
-    let (geometry, curvature_sign) = resolve_geometry(args, &evaluator);
+    let (geometry, curvature_sign) = resolve_geometry(args, evaluator);
     let optimize_curvature = curvature_sign != 0.0;
 
     // Curvature magnitude bounds: take abs() of the signed range limits so that
@@ -166,80 +164,23 @@ pub(crate) fn run_bayes(
         let configs = optimizer.suggest_batch(this_batch, &mut rng);
 
         // Evaluate all configs in this batch in parallel, then collect results.
-        let results: Vec<(f64, MetricValues, SpreadDiagnostics, u64)> = thread::scope(|s| {
-            configs
-                .iter()
-                .enumerate()
-                .map(|(i, config)| {
-                    let evaluator = &*evaluator;
-                    let actual_curvature = curvature_sign * config.curvature_magnitude.value();
-                    let trial_idx = completed + i + 1;
-                    s.spawn(move || {
-                        let pb_iters = ProgressBar::hidden();
-                        let start = std::time::Instant::now();
-                        let (all, spread) = eval_all_metrics(
-                            evaluator,
-                            config,
-                            curvature_sign,
-                            args.n_seeds,
-                            trial_idx,
-                            &pb_iters,
-                        );
-                        let elapsed = start.elapsed().as_millis() as u64;
-                        (actual_curvature, all, spread, elapsed)
-                    })
-                })
-                .collect::<Vec<_>>()
-                .into_iter()
-                .map(|h| h.join().unwrap())
-                .collect()
-        });
+        let results = evaluate_batch(evaluator, &configs, curvature_sign, args, completed);
 
         // Observe all results and update the GP before the next round.
-        for (config, (actual_curvature, all, spread, elapsed)) in configs.iter().zip(results.iter())
-        {
-            // An unmeasured reading — a diverged embedding, chiefly — scores as
-            // the worst value in the metric's direction, matching what
-            // `metrics_to_vec` does for the pareto path.
-            let mean = all.get(metric).unwrap_or(match metric.direction() {
-                Direction::Maximize => 0.0,
-                Direction::Minimize => 1.0,
-            });
-            optimizer.observe(config.clone(), mean);
-            completed += 1;
-
-            let mut result = TrialResult::new(
+        for (config, outcome) in configs.iter().zip(results.iter()) {
+            completed = observe_batch_result(
                 config,
-                dataset_name,
-                args.n_samples,
-                args.n_seeds,
-                *actual_curvature,
-                *elapsed,
-            )
-            .with_all_metrics(all, spread);
-            result.geometry = Some(geometry.to_string());
-            if optimize_curvature {
-                result.curvature_magnitude = Some(config.curvature_magnitude.value());
-            }
-            write_result(&result, out_path);
-
-            let best = optimizer.best_trial();
-            pb.set_prefix(format!("{best:.4}"));
-            pb.println(format!(
-                "bayes '{}' trial {:3}/{} | {}={:.4} | best={:.4} | {}ms \
-                 | k={:.3} lr={:.4} perp={:.4}",
-                dataset_name,
+                outcome,
+                &mut optimizer,
+                &metric,
                 completed,
-                args.n_trials,
-                metric.name(),
-                mean,
-                best,
-                *elapsed,
-                actual_curvature,
-                config.learning_rate.value(),
-                config.perplexity_ratio.value(),
-            ));
-            pb.inc(1);
+                dataset_name,
+                args,
+                geometry,
+                optimize_curvature,
+                out_path,
+                &pb,
+            );
         }
 
         remaining -= this_batch;
@@ -247,6 +188,129 @@ pub(crate) fn run_bayes(
 
     pb.finish_with_message(format!("{dataset_name} ({geometry}) done"));
 
+    report_best(
+        &optimizer,
+        dataset_name,
+        geometry,
+        &metric,
+        curvature_sign,
+        &pb,
+    );
+    write_gp_state_file(&optimizer, dataset_name, geometry, out_path, &pb);
+}
+
+/// Evaluate one batch of configs in parallel, returning the per-trial result:
+/// actual curvature, all metrics, spread diagnostics and elapsed milliseconds.
+fn evaluate_batch(
+    evaluator: &Evaluator,
+    configs: &[TrialConfig],
+    curvature_sign: f64,
+    args: &Args,
+    completed: usize,
+) -> Vec<(f64, MetricValues, SpreadDiagnostics, u64)> {
+    thread::scope(|s| {
+        configs
+            .iter()
+            .enumerate()
+            .map(|(i, config)| {
+                let actual_curvature = curvature_sign * config.curvature_magnitude.value();
+                let trial_idx = completed + i + 1;
+                s.spawn(move || {
+                    let pb_iters = ProgressBar::hidden();
+                    let start = std::time::Instant::now();
+                    let (all, spread) = eval_all_metrics(
+                        evaluator,
+                        config,
+                        curvature_sign,
+                        args.n_seeds,
+                        trial_idx,
+                        &pb_iters,
+                    );
+                    let elapsed = u64::try_from(start.elapsed().as_millis())
+                        .expect("elapsed millis fit in u64");
+                    (actual_curvature, all, spread, elapsed)
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect()
+    })
+}
+
+/// Fold one completed trial into the GP, write its JSONL record and update the
+/// progress bar, returning the updated completion count.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "bundles the per-trial logging state"
+)]
+fn observe_batch_result(
+    config: &TrialConfig,
+    outcome: &(f64, MetricValues, SpreadDiagnostics, u64),
+    optimizer: &mut GpOptimizer,
+    metric: &Metric,
+    completed: usize,
+    dataset_name: &str,
+    args: &Args,
+    geometry: &str,
+    optimize_curvature: bool,
+    out_path: &str,
+    pb: &ProgressBar,
+) -> usize {
+    let (actual_curvature, all, spread, elapsed) = outcome;
+    // An unmeasured reading — a diverged embedding, chiefly — scores as
+    // the worst value in the metric's direction, matching what
+    // `metrics_to_vec` does for the pareto path.
+    let mean = all.get(*metric).unwrap_or(match metric.direction() {
+        Direction::Maximize => 0.0,
+        Direction::Minimize => 1.0,
+    });
+    optimizer.observe(config.clone(), mean);
+    let completed = completed + 1;
+
+    let mut result = TrialResult::new(
+        config,
+        dataset_name,
+        args.n_samples,
+        args.n_seeds,
+        *actual_curvature,
+        *elapsed,
+    )
+    .with_all_metrics(all, spread);
+    result.geometry = Some(geometry.to_string());
+    if optimize_curvature {
+        result.curvature_magnitude = Some(config.curvature_magnitude.value());
+    }
+    write_result(&result, out_path);
+
+    let best = optimizer.best_trial();
+    pb.set_prefix(format!("{best:.4}"));
+    pb.println(format!(
+        "bayes '{}' trial {:3}/{} | {}={:.4} | best={:.4} | {}ms \
+         | k={:.3} lr={:.4} perp={:.4}",
+        dataset_name,
+        completed,
+        args.n_trials,
+        metric.name(),
+        mean,
+        best,
+        *elapsed,
+        actual_curvature,
+        config.learning_rate.value(),
+        config.perplexity_ratio.value(),
+    ));
+    pb.inc(1);
+    completed
+}
+
+fn report_best(
+    optimizer: &GpOptimizer,
+    dataset_name: &str,
+    geometry: &str,
+    metric: &Metric,
+    curvature_sign: f64,
+    pb: &ProgressBar,
+) {
     if let Some(best) = optimizer.best_config() {
         pb.println(format!(
             "\n=== Best for '{}' ({}) | {}={:.4} ===\n  \
@@ -265,8 +329,16 @@ pub(crate) fn run_bayes(
             best.norm_loss_weight.value(),
         ));
     }
+}
 
-    // Write GP state for external plotting (analyze_hyperparams.py --mode gp).
+// Write GP state for external plotting (analyze_hyperparams.py --mode gp).
+fn write_gp_state_file(
+    optimizer: &GpOptimizer,
+    dataset_name: &str,
+    geometry: &str,
+    out_path: &str,
+    pb: &ProgressBar,
+) {
     if let Some(state) = optimizer.export_state() {
         let stem = out_path
             .trim_end_matches(".jsonl")

@@ -98,6 +98,7 @@
 //! because `fitting-core` carries no dependencies.  Cost is `O(n³)`
 //! (dominated by the `(2/3)n³` tridiagonalisation) per candidate radius.
 
+use crate::cast::count_to_f64;
 use std::f64::consts::PI;
 
 use super::gromov_ball_curve::detect_hyperbolic;
@@ -117,6 +118,10 @@ const QL_MAX_ITER: usize = 50;
 /// This is the hot path — [`minimise_log_spaced`] calls it once per
 /// candidate radius — so it skips the `O(n³)` back-transformation that
 /// [`eigen_symmetric`] pays for.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "a,z,d,e are the standard NumRec symmetric eigenvalue decomposition variables (matrix, workspace, diagonal, off-diagonal)"
+)]
 #[must_use]
 pub fn eigenvalues_symmetric(a: &[f64], n: usize) -> Vec<f64> {
     if n == 0 {
@@ -168,6 +173,10 @@ impl Eigen {
 /// The eigenvalues it returns agree with [`eigenvalues_symmetric`] to
 /// rounding: both call the same two routines on the same input, and the
 /// vector accumulation does not feed back into `d` or `e`.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "a,z,d,e are the standard NumRec symmetric eigenvalue decomposition variables (matrix, workspace, diagonal, off-diagonal)"
+)]
 #[must_use]
 pub fn eigen_symmetric(a: &[f64], n: usize) -> Eigen {
     if n == 0 {
@@ -207,6 +216,10 @@ pub fn eigen_symmetric(a: &[f64], n: usize) -> Eigen {
 /// only the `(2/3)n³` reduction runs.  With it true, `z` comes back
 /// holding the accumulated orthogonal transformation, which is the extra
 /// `O(n³)` back-transformation loop at the end.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "z,n,d,e,i,l,h,k,f,g,j,scale,hh are the standard NumRec tred2 Householder tridiagonalisation variables"
+)]
 fn tridiagonalise(z: &mut [f64], n: usize, d: &mut [f64], e: &mut [f64], want_vectors: bool) {
     for i in (1..n).rev() {
         let l = i - 1;
@@ -309,6 +322,10 @@ fn tridiagonalise(z: &mut [f64], n: usize, d: &mut [f64], e: &mut [f64], want_ve
 /// columns come back as the eigenvectors of the *original* matrix, in the
 /// same order as `d`.  `None` skips that work entirely, which is what the
 /// radius search wants.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "d,e,n,l,m,g,r,s,c,p,f,b,i are the standard NumRec tqli implicit-shift QL iteration variables"
+)]
 fn ql_implicit(d: &mut [f64], e: &mut [f64], n: usize, mut vectors: Option<&mut [f64]>) {
     for i in 1..n {
         e[i - 1] = e[i];
@@ -437,9 +454,9 @@ pub(crate) fn build_z_euclidean(d: &[f64], n: usize) -> Vec<f64> {
         }
     }
     let row_means: Vec<f64> = (0..n)
-        .map(|i| (0..n).map(|j| d2[i * n + j]).sum::<f64>() / n as f64)
+        .map(|i| (0..n).map(|j| d2[i * n + j]).sum::<f64>() / count_to_f64(n))
         .collect();
-    let grand_mean = row_means.iter().sum::<f64>() / n as f64;
+    let grand_mean = row_means.iter().sum::<f64>() / count_to_f64(n);
 
     let mut b = vec![0.0; n * n];
     for i in 0..n {
@@ -549,7 +566,7 @@ pub struct WilsonFit {
 /// and reporting an infinite misfit makes every threshold comparison reject
 /// — the safe direction.
 fn normalise_residual(residual: f64, n: usize, d_max: f64) -> f64 {
-    let scale = n as f64 * d_max * d_max;
+    let scale = count_to_f64(n) * d_max * d_max;
     if scale > 0.0 {
         residual / scale
     } else {
@@ -559,7 +576,7 @@ fn normalise_residual(residual: f64, n: usize, d_max: f64) -> f64 {
 
 /// Golden-section minimisation on `[a, b]`.  Returns `(r*, f(r*))`.
 fn golden_section(a: f64, b: f64, f: &mut dyn FnMut(f64) -> f64) -> (f64, f64) {
-    let phi = 0.6180339887498949_f64;
+    let phi = 0.618_033_988_749_894_9_f64;
     let mut a = a;
     let mut b = b;
     let mut r1 = a + (1.0 - phi) * (b - a);
@@ -612,9 +629,9 @@ fn minimise_log_spaced(
 ) -> (f64, f64, bool) {
     let log_lo = lo.ln();
     let log_hi = hi.ln();
-    let step = (log_hi - log_lo) / (n_grid - 1) as f64;
+    let step = (log_hi - log_lo) / count_to_f64(n_grid - 1);
     let grid_r: Vec<f64> = (0..n_grid)
-        .map(|i| (log_lo + i as f64 * step).exp())
+        .map(|i| (log_lo + count_to_f64(i) * step).exp())
         .collect();
     let grid_res: Vec<f64> = grid_r.iter().map(|&r| f(r)).collect();
 
@@ -729,7 +746,7 @@ fn rms_distance(distances: &[f64], n: usize) -> f64 {
         return 0.0;
     }
     let sum_sq: f64 = distances.iter().map(|d| d * d).sum();
-    (sum_sq / (n as f64 * (n as f64 - 1.0))).sqrt()
+    (sum_sq / (count_to_f64(n) * (count_to_f64(n) - 1.0))).sqrt()
 }
 
 /// Iterations allowed for the window-cap fixed point before falling back.

@@ -4,6 +4,7 @@
 use super::helpers::euclidean_dist_2d;
 use super::quality::{Direction, Family, QualityMetric, Space};
 use super::values::MetricValue;
+use crate::cast::count_to_f64;
 use crate::context::EmbeddingContext;
 
 /// Davies-Bouldin index from precomputed distance matrix.
@@ -46,7 +47,7 @@ pub fn davies_bouldin(distances: &[f64], labels: &[u32], n: usize) -> f64 {
             .iter()
             .map(|&j| distances[medoid * n + j])
             .sum::<f64>()
-            / indices.len() as f64;
+            / count_to_f64(indices.len());
     }
 
     // DB index
@@ -68,7 +69,7 @@ pub fn davies_bouldin(distances: &[f64], labels: &[u32], n: usize) -> f64 {
         }
         db += max_ratio;
     }
-    db / k as f64
+    db / count_to_f64(k)
 }
 
 /// Davies-Bouldin ratio: `DB_high` / `DB_projected`.

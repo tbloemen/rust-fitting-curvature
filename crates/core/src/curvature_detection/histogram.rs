@@ -35,6 +35,7 @@
 //!    No Gromov gate, no peak-shape heuristics — just the residuals.
 
 use super::signature::GeometryVerdict;
+use crate::cast::{count_to_f64, to_usize};
 
 /// Result of fitting one geometry model.
 #[derive(Debug, Clone)]
@@ -83,6 +84,10 @@ pub struct ShellProfile {
 /// * `distances`    — flat row-major n×n distance matrix.
 /// * `n_points`     — n.
 /// * `n_bins`       — histogram resolution (30–50 recommended).
+///
+/// # Panics
+///
+/// Panics if any `mean_dist` value is NaN.
 #[must_use]
 pub fn shell_density_profile(distances: &[f64], n_points: usize, n_bins: usize) -> ShellProfile {
     if n_points < 3 {
@@ -99,7 +104,7 @@ pub fn shell_density_profile(distances: &[f64], n_points: usize, n_bins: usize) 
             distances[i * n_points..(i + 1) * n_points]
                 .iter()
                 .sum::<f64>()
-                / (n_points as f64 - 1.0)
+                / (count_to_f64(n_points) - 1.0)
         })
         .collect();
 
@@ -119,7 +124,7 @@ pub fn shell_density_profile(distances: &[f64], n_points: usize, n_bins: usize) 
 
     local_dists.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-    let idx95 = ((local_dists.len() as f64) * 0.95) as usize;
+    let idx95 = to_usize(count_to_f64(local_dists.len()) * 0.95);
     let r_max = local_dists[idx95.min(local_dists.len() - 1)];
     if r_max < 1e-12 {
         return ShellProfile {
@@ -140,16 +145,18 @@ pub fn shell_density_profile(distances: &[f64], n_points: usize, n_bins: usize) 
 /// with `n_bins` equal-width bins.  Returns `(bin_centers, density)`; the
 /// density integrates to ~1 so it is comparable across datasets.
 fn histogram(sorted_dists: &[f64], r_max: f64, n_bins: usize) -> (Vec<f64>, Vec<f64>) {
-    let bin_width = r_max / n_bins as f64;
+    let bin_width = r_max / count_to_f64(n_bins);
     let mut counts = vec![0.0f64; n_bins];
     for &d in sorted_dists {
         if d > 1e-12 && d < r_max {
-            let bin = ((d / r_max) * n_bins as f64) as usize;
+            let bin = to_usize((d / r_max) * count_to_f64(n_bins));
             counts[bin.min(n_bins - 1)] += 1.0;
         }
     }
     let total: f64 = counts.iter().sum::<f64>() * bin_width;
-    let bin_centers: Vec<f64> = (0..n_bins).map(|i| (i as f64 + 0.5) * bin_width).collect();
+    let bin_centers: Vec<f64> = (0..n_bins)
+        .map(|i| (count_to_f64(i) + 0.5) * bin_width)
+        .collect();
     let density: Vec<f64> = if total > 1e-12 {
         counts.iter().map(|&c| c / total).collect()
     } else {
@@ -165,22 +172,22 @@ fn ols(x: &[f64], y: &[f64]) -> (f64, f64, f64) {
     if n < 2 {
         return (0.0, 0.0, 0.0);
     }
-    let n_f = n as f64;
+    let n_f = count_to_f64(n);
     let mean_x = x.iter().sum::<f64>() / n_f;
     let mean_y = y.iter().sum::<f64>() / n_f;
 
-    let ss_xx: f64 = x.iter().map(|&xi| (xi - mean_x).powi(2)).sum();
-    let ss_xy: f64 = x
+    let sum_sq_dx: f64 = x.iter().map(|&xi| (xi - mean_x).powi(2)).sum();
+    let sum_cross: f64 = x
         .iter()
         .zip(y)
         .map(|(&xi, &yi)| (xi - mean_x) * (yi - mean_y))
         .sum();
 
-    if ss_xx.abs() < 1e-12 {
+    if sum_sq_dx.abs() < 1e-12 {
         return (0.0, mean_y, 0.0);
     }
 
-    let slope = ss_xy / ss_xx;
+    let slope = sum_cross / sum_sq_dx;
     let intercept = mean_y - slope * mean_x;
 
     let ss_tot: f64 = y.iter().map(|&yi| (yi - mean_y).powi(2)).sum();
@@ -282,7 +289,7 @@ fn curvature_grid(r_max: f64, arg_min: f64, arg_max: f64, n: usize) -> Vec<f64> 
     let c_max = (arg_max / r_max).powi(2);
     (0..n)
         .map(|i| {
-            let t = i as f64 / (n - 1) as f64;
+            let t = count_to_f64(i) / count_to_f64(n - 1);
             c_min * (c_max / c_min).powf(t)
         })
         .collect()
@@ -397,6 +404,10 @@ pub fn fit_geometries(distances: &[f64], n_points: usize, n_bins: usize) -> Geom
 /// * `distances`    — flat row-major n×n distance matrix.
 /// * `n_points`     — n.
 /// * `n_bins`       — histogram resolution (30–50 works well).
+///
+/// # Panics
+///
+/// Panics if `candidates` is empty.
 #[must_use]
 pub fn detect_geometry(distances: &[f64], n_points: usize, n_bins: usize) -> GeometryVerdict {
     let fits = fit_geometries(distances, n_points, n_bins);

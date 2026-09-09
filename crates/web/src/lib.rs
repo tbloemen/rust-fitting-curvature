@@ -1,3 +1,4 @@
+use fitting_core::cast::count_to_f64;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
@@ -30,9 +31,9 @@ fn parse_scaling_loss(s: &str) -> ScalingLossType {
 
 fn parse_projection(s: &str) -> SphericalProjection {
     match s {
-        "azimuthal_equidistant" => SphericalProjection::AzimuthalEquidistant,
         "orthographic" => SphericalProjection::Orthographic,
         "stereographic" => SphericalProjection::Stereographic,
+        // "azimuthal_equidistant", and anything unrecognised, lands here.
         _ => SphericalProjection::AzimuthalEquidistant,
     }
 }
@@ -54,6 +55,10 @@ pub struct EmbeddingRunner {
 #[wasm_bindgen]
 impl EmbeddingRunner {
     /// Create a runner from a named synthetic dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JsValue)` if the dataset name is unknown or the canvas element cannot be found.
     #[allow(clippy::too_many_arguments)]
     pub fn from_synthetic(
         canvas_id: &str,
@@ -107,6 +112,10 @@ impl EmbeddingRunner {
     }
 
     /// Create a runner from external data with labels (e.g., MNIST).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JsValue)` if the canvas element cannot be found.
     #[allow(clippy::too_many_arguments)]
     pub fn from_data_with_labels(
         canvas_id: &str,
@@ -160,6 +169,10 @@ impl EmbeddingRunner {
     ///
     /// `distances` is a flat n × n row-major `Float64Array` of pairwise distances.
     /// `labels` is a `Uint32Array` of integer class labels of length n.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JsValue)` if the canvas element cannot be found.
     #[allow(clippy::too_many_arguments)]
     pub fn from_distances(
         canvas_id: &str,
@@ -252,6 +265,10 @@ impl EmbeddingRunner {
 
     /// Render the current state to canvas.
     /// Stores the auto-fit half-extent so zoom/pan can use it as a reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JsValue)` if canvas drawing fails.
     pub fn render(&mut self) -> Result<(), JsValue> {
         let auto_half = plot::draw_embedding(
             &self.canvas,
@@ -271,6 +288,10 @@ impl EmbeddingRunner {
     }
 
     /// Render the current state as a square SVG string of `size`×`size` pixels.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JsValue)` if SVG generation fails.
     pub fn render_svg(&self, size: u32) -> Result<String, JsValue> {
         plot::draw_embedding_svg(
             size,
@@ -301,39 +322,39 @@ impl EmbeddingRunner {
         .coords
     }
 
-    /// Current viewport state as [cx, cy, half, `auto_half`].
-    /// When no explicit viewport is set, cx=cy=0 and `half=auto_half`.
+    /// Current viewport state as [`center_x`, `center_y`, `half`, `auto_half`].
+    /// With no explicit viewport, the centre is the origin and `half = auto_half`.
     #[must_use]
     pub fn get_viewport(&self) -> Vec<f64> {
-        let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
-        vec![cx, cy, half, self.auto_half]
+        let (center_x, center_y, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
+        vec![center_x, center_y, half, self.auto_half]
     }
 
     /// Zoom the viewport around a normalized canvas position (0..1, 0..1).
     /// `factor > 1` zooms in, `factor < 1` zooms out.
     pub fn zoom_at(&mut self, norm_x: f64, norm_y: f64, factor: f64) {
-        let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
+        let (center_x, center_y, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
         let aspect = f64::from(self.canvas.width()) / f64::from(self.canvas.height().max(1));
         let half_x = half * aspect;
         // Canvas coordinate → plot coordinate
-        let plot_x = cx + (norm_x - 0.5) * 2.0 * half_x;
-        let plot_y = cy - (norm_y - 0.5) * 2.0 * half; // y axis is flipped
+        let plot_x = center_x + (norm_x - 0.5) * 2.0 * half_x;
+        let plot_y = center_y - (norm_y - 0.5) * 2.0 * half; // y axis is flipped
         let new_half = (half / factor).clamp(1e-6, self.auto_half * 20.0);
         let new_half_x = new_half * aspect;
         // Keep plot_x/plot_y under the cursor fixed
-        let new_cx = plot_x - (norm_x - 0.5) * 2.0 * new_half_x;
-        let new_cy = plot_y + (norm_y - 0.5) * 2.0 * new_half;
-        self.view = Some((new_cx, new_cy, new_half));
+        let new_center_x = plot_x - (norm_x - 0.5) * 2.0 * new_half_x;
+        let new_center_y = plot_y + (norm_y - 0.5) * 2.0 * new_half;
+        self.view = Some((new_center_x, new_center_y, new_half));
     }
 
     /// Pan the viewport by a normalized canvas delta.
-    pub fn pan_by(&mut self, norm_dx: f64, norm_dy: f64) {
-        let (cx, cy, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
+    pub fn pan_by(&mut self, norm_delta_x: f64, norm_delta_y: f64) {
+        let (center_x, center_y, half) = self.view.unwrap_or((0.0, 0.0, self.auto_half));
         let aspect = f64::from(self.canvas.width()) / f64::from(self.canvas.height().max(1));
         let half_x = half * aspect;
-        let dx = -norm_dx * 2.0 * half_x;
-        let dy = norm_dy * 2.0 * half; // y axis is flipped
-        self.view = Some((cx + dx, cy + dy, half));
+        let plot_delta_x = -norm_delta_x * 2.0 * half_x;
+        let plot_delta_y = norm_delta_y * 2.0 * half; // y axis is flipped
+        self.view = Some((center_x + plot_delta_x, center_y + plot_delta_y, half));
     }
 
     /// Reset the viewport to auto-fit.
@@ -373,6 +394,10 @@ impl EmbeddingRunner {
     /// undefined for this state — every label-aware one, on unlabelled data —
     /// is omitted rather than sent as NaN, which is what lets the panel filter
     /// on `undefined`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JsValue)` if JS object property setting fails.
     pub fn compute_metrics(&self) -> Result<JsValue, JsValue> {
         let (values, spread) = self.state.compute_metrics();
         let obj = js_sys::Object::new();
@@ -415,6 +440,10 @@ impl EmbeddingRunner {
 ///
 /// A free function, not a method: the Pareto selector is populated from
 /// front JSON before any `EmbeddingRunner` has been constructed.
+///
+/// # Errors
+///
+/// Returns `Err(JsValue)` if JS object property setting fails.
 #[wasm_bindgen]
 pub fn metric_registry() -> Result<JsValue, JsValue> {
     let arr = js_sys::Array::new();
@@ -479,13 +508,17 @@ fn web_name(m: metrics::Metric) -> String {
 
 /// Return default `TrainingConfig` values as a JS object, so the frontend
 /// can populate its inputs from a single source of truth.
+///
+/// # Errors
+///
+/// Returns `Err(JsValue)` if JS object property setting fails.
 #[wasm_bindgen]
 pub fn get_default_config() -> Result<JsValue, JsValue> {
     let cfg = TrainingConfig::default();
     let obj = js_sys::Object::new();
     set_prop(&obj, "curvature", cfg.curvature)?;
     set_prop(&obj, "perplexity", cfg.perplexity)?;
-    set_prop(&obj, "n_iterations", cfg.n_iterations as f64)?;
+    set_prop(&obj, "n_iterations", count_to_f64(cfg.n_iterations))?;
     set_prop(&obj, "learning_rate", cfg.learning_rate)?;
     set_prop(
         &obj,
@@ -495,7 +528,7 @@ pub fn get_default_config() -> Result<JsValue, JsValue> {
     set_prop(
         &obj,
         "early_exaggeration_iterations",
-        cfg.early_exaggeration_iterations as f64,
+        count_to_f64(cfg.early_exaggeration_iterations),
     )?;
     set_prop(&obj, "centering_weight", cfg.centering_weight)?;
     set_prop(&obj, "global_loss_weight", cfg.global_loss_weight)?;

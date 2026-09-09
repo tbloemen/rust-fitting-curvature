@@ -4,8 +4,8 @@ use crate::common::{eval_single_metric, make_progress_bar, parse_experiment};
 use crate::evaluate::Evaluator;
 use crate::search_space::TrialConfig;
 use crate::trial_result::{write_result, TrialResult};
+use fitting_core::cast::count_to_f64;
 use indicatif::{MultiProgress, ProgressBar};
-use std::sync::Arc;
 
 fn load_best_config_from_jsonl(
     path: &str,
@@ -29,9 +29,9 @@ fn load_best_config_from_jsonl(
         let metric = v["metric_mean"].as_f64().unwrap_or(f64::NEG_INFINITY);
         if metric > best_val {
             best_val = metric;
-            let perp_ratio = v["perplexity_ratio"]
-                .as_f64()
-                .unwrap_or_else(|| v["perplexity"].as_f64().unwrap_or(15.0) / n_points as f64);
+            let perp_ratio = v["perplexity_ratio"].as_f64().unwrap_or_else(|| {
+                v["perplexity"].as_f64().unwrap_or(15.0) / count_to_f64(n_points)
+            });
             let mut hp = TrialConfig::all_free();
             hp.learning_rate = ParamSpec::Fixed(v["learning_rate"].as_f64().unwrap_or(10.0));
             hp.perplexity_ratio = ParamSpec::Fixed(perp_ratio);
@@ -54,7 +54,7 @@ fn sweep_values(lo: f64, hi: f64, n: usize, log: bool) -> Vec<f64> {
     (0..n)
         .map(|i| {
             let t = if n > 1 {
-                i as f64 / (n - 1) as f64
+                count_to_f64(i) / count_to_f64(n - 1)
             } else {
                 0.0
             };
@@ -87,15 +87,16 @@ fn apply_param(config: &mut TrialConfig, param: &str, val: f64) {
 ///
 /// Geometry is resolved once (via `--geometry` or auto-detection).  When the geometry
 /// is non-Euclidean, curvature magnitude is also swept as an additional parameter.
-pub fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: &MultiProgress) {
+pub fn run_scan(dataset_name: &str, args: &Args, evaluator: &Evaluator, mp: &MultiProgress) {
+    use crate::search_space::ParamSpec;
+
     let metric = args.metric.as_deref().unwrap();
     let n_points = evaluator.n_points();
 
-    let (geometry, curvature_sign) = resolve_geometry(args, &evaluator);
+    let (geometry, curvature_sign) = resolve_geometry(args, evaluator);
     let optimize_curvature = curvature_sign != 0.0;
 
     let hp = parse_experiment(&args.experiment);
-    use crate::search_space::ParamSpec;
     let mut default_config = hp.clone();
     // Override with sensible scan baseline values for the free parameters.
     default_config.learning_rate = ParamSpec::Fixed(10.0);
@@ -126,8 +127,49 @@ pub fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: 
         .abs()
         .max(crate::search_space::param_bounds("curvature_magnitude").0);
     let curvature_mag_max = args.curvature_max.abs().max(curvature_mag_min);
+    let params = build_scan_params(
+        &hp,
+        optimize_curvature,
+        curvature_mag_min,
+        curvature_mag_max,
+        n,
+    );
+
+    let total = params.iter().map(|(_, v)| v.len()).sum::<usize>() as u64;
+    let pb = make_progress_bar(
+        mp,
+        total,
+        "{spinner:.green} scan={msg} [{bar:35.cyan/blue}] {pos}/{len} {wide_msg}",
+    );
+    pb.set_message(format!("{dataset_name} ({geometry})"));
+
+    let out_path = &args.output;
+    run_scan_sweep(
+        &params,
+        &base,
+        evaluator,
+        curvature_sign,
+        metric,
+        args,
+        dataset_name,
+        geometry,
+        optimize_curvature,
+        out_path,
+        &pb,
+    );
+
+    pb.finish_with_message(format!("{dataset_name} ({geometry}) scan done"));
+}
+
+fn build_scan_params(
+    hp: &TrialConfig,
+    optimize_curvature: bool,
+    curvature_mag_min: f64,
+    curvature_mag_max: f64,
+    n: usize,
+) -> Vec<(&'static str, Vec<f64>)> {
     use crate::search_space::param_bounds;
-    let mut params: Vec<(&str, Vec<f64>)> = Vec::new();
+    let mut params: Vec<(&'static str, Vec<f64>)> = Vec::new();
     if hp.learning_rate.is_optimized() {
         let (lo, hi, log) = param_bounds("learning_rate");
         params.push(("learning_rate", sweep_values(lo, hi, n, log)));
@@ -158,20 +200,30 @@ pub fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: 
             sweep_values(curvature_mag_min, curvature_mag_max, n, true),
         ));
     }
+    params
+}
 
-    let total = params.iter().map(|(_, v)| v.len()).sum::<usize>() as u64;
-    let pb = make_progress_bar(
-        mp,
-        total,
-        "{spinner:.green} scan={msg} [{bar:35.cyan/blue}] {pos}/{len} {wide_msg}",
-    );
-    pb.set_message(format!("{dataset_name} ({geometry})"));
-
-    let out_path = &args.output;
+#[expect(
+    clippy::too_many_arguments,
+    reason = "bundles the per-trial scan state"
+)]
+fn run_scan_sweep(
+    params: &[(&'static str, Vec<f64>)],
+    base: &TrialConfig,
+    evaluator: &Evaluator,
+    curvature_sign: f64,
+    metric: &str,
+    args: &Args,
+    dataset_name: &str,
+    geometry: &str,
+    optimize_curvature: bool,
+    out_path: &str,
+    pb: &ProgressBar,
+) {
     let pb_iters = ProgressBar::hidden();
     let mut trial_idx = 0usize;
 
-    for (param_name, values) in &params {
+    for (param_name, values) in params {
         for &val in values {
             trial_idx += 1;
             let mut config = base.clone();
@@ -181,7 +233,7 @@ pub fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: 
 
             let start = std::time::Instant::now();
             let (mean, std) = eval_single_metric(
-                &evaluator,
+                evaluator,
                 &config,
                 curvature_sign,
                 metric,
@@ -189,7 +241,8 @@ pub fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: 
                 trial_idx,
                 &pb_iters,
             );
-            let elapsed = start.elapsed().as_millis() as u64;
+            let elapsed =
+                u64::try_from(start.elapsed().as_millis()).expect("elapsed millis fit in u64");
 
             let mut result = TrialResult::new(
                 &config,
@@ -212,6 +265,4 @@ pub fn run_scan(dataset_name: &str, args: &Args, evaluator: Arc<Evaluator>, mp: 
             pb.inc(1);
         }
     }
-
-    pb.finish_with_message(format!("{dataset_name} ({geometry}) scan done"));
 }
