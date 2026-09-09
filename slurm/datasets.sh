@@ -20,7 +20,7 @@ DATASETS_REAL="mnist fashion_mnist pbmc wordnet_mammals"
 
 # The original five synthetics. Their generators are unchanged, so results
 # already under results/ stay comparable for these.
-DATASETS_SYNTH_ORIGINAL="sphere antipodal_clusters tree hyperbolic_shells grid"
+DATASETS_SYNTH_ORIGINAL="sphere tree hyperbolic_shells grid"
 
 # Added for the geometry-matching redesign: a real tree metric, and the matched
 # geodesic balls (one sampling scheme mapped into three geometries, at a 2-D and
