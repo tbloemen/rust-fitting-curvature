@@ -1198,6 +1198,9 @@ pub const DATASET_NAMES: &[&str] = &[
     "ball2_euclidean",
     "ball2_spherical",
     "ball2_hyperbolic",
+    "ball9_euclidean",
+    "ball9_spherical",
+    "ball9_hyperbolic",
 ];
 
 /// Load a synthetic dataset by name (2D/3D frontend generators).
@@ -1234,6 +1237,27 @@ pub fn load_synthetic(name: &str, n_samples: usize, seed: u64) -> Result<DataPoi
         "ball2_hyperbolic" => Ok(generate_matched_ball(
             n_samples,
             2,
+            -1.0,
+            MATCHED_BALL_EXTENT,
+            seed,
+        )),
+        "ball9_euclidean" => Ok(generate_matched_ball(
+            n_samples,
+            9,
+            0.0,
+            MATCHED_BALL_EXTENT,
+            seed,
+        )),
+        "ball9_spherical" => Ok(generate_matched_ball(
+            n_samples,
+            9,
+            1.0,
+            MATCHED_BALL_EXTENT,
+            seed,
+        )),
+        "ball9_hyperbolic" => Ok(generate_matched_ball(
+            n_samples,
+            9,
             -1.0,
             MATCHED_BALL_EXTENT,
             seed,
