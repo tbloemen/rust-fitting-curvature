@@ -806,11 +806,14 @@ impl Figure for MatchedEpsilon {
     }
 
     fn size(&self) -> (u32, u32) {
-        // Wider per group than the gain figure: four bars and a three-line
-        // label where that one has two bars and two lines.
+        // Exactly [`MatchedGain::size`], though this figure carries four bars to
+        // its two: the pair is what has to fit, and a wider one overran the A4
+        // text width the thesis sets its figures in. Being the same size is also
+        // what lets the two be set one under the other at one scale, which is
+        // how they are meant to be read.
         (
-            240 + 170 * u32::try_from(self.groups.len()).expect("a small number of groups"),
-            546,
+            220 + 130 * u32::try_from(self.groups.len()).expect("a small number of groups"),
+            500,
         )
     }
 
