@@ -32,9 +32,9 @@ reproduce a saved front bit-for-bit).
 
 ### A1. N=5000 κ_data not computed
 
-- **Thesis** (§curvature-magnitude-results, §manifold-projection-gap): Exp 3 and Exp 4 are reported at both N=1000 and N=5000.
+- **Thesis** (§curvature-magnitude-results): the κ-vs-κ_data comparison is reported at both N=1000 and N=5000.
 - **Data:** `results/kappa_data.jsonl` covers **N=1000 only** (9 datasets). There is no `kappa_data_n5000.jsonl`.
-- **Resolution:** run `slurm/submit_detect.sh`, or `--mode detect --dataset all --n-samples 5000` locally. `figures::load_kappa_data` already looks for the `_n5000` file and the Exp 3 N=5000 panel renders once it lands. Exp 4 needs no κ_data file (it derives κ per trial) and is already produced at both N.
+- **Resolution:** run `slurm/submit_detect.sh`, or `--mode detect --dataset all --n-samples 5000` locally. `figures::load_kappa_data` already looks for the `_n5000` file. Note the figure that consumed it was deleted in `8a6e5fc`/`b43c731`; this gap binds again as soon as Experiment 3 (`figures/exp3.rs`, currently a skeleton) draws anything from κ_data.
 
 ### A2. Experiment 1's curvature grid is not a sweep product
 
@@ -91,7 +91,9 @@ reproduce a saved front bit-for-bit).
 ## D. Detector-quality caveats (correct code, but the results text does not state them)
 
 Behaviours of the detector on the actual data, from `--mode detect` at N=1000.
-Not bugs in the export, but each one is something a reader of Exp 3 would need.
+Not bugs in the export, but each one is something a reader of the curvature
+results (Experiment 3, and §curvature-magnitude-results in the exploratory
+chapter) would need.
 
 | dataset              | detected   | κ_data | δ tail slope | angular extent |
 | -------------------- | ---------- | ------ | ------------ | -------------- |
@@ -108,7 +110,7 @@ Not bugs in the export, but each one is something a reader of Exp 3 would need.
 - **Synthetic `sphere` → detected euclidean.** The uniform S² sample does not cover enough of the sphere for the angular-extent gate, which pins at its 2.5 bound. `antipodal_clusters` is detected correctly, which is why it is the more useful spherical fixture (B1).
 - **Synthetic `hyperbolic_shells` → detected euclidean.** δ(k) tail slope 0.225, above the 0.15 saturation threshold, so the hyperbolic gate declines. `tree` and `wordnet_mammals` are detected hyperbolic as expected.
 - **`grid` behaves as the flat control**: the steepest tail slope in the table (0.531, nowhere near saturating) and κ_data = 0.
-- **Spherical embedding κ saturates ≈2.5** on the Pareto front regardless of dataset (Exp 3 figure), whereas hyperbolic embedding κ spreads and tracks κ_data (Spearman ρ ≈ +0.5).
+- **Spherical embedding κ saturates ≈2.5** on the Pareto front regardless of dataset (read off the since-deleted κ-vs-κ_data scatter), whereas hyperbolic embedding κ spreads and tracks κ_data (Spearman ρ ≈ +0.5).
 
 ---
 

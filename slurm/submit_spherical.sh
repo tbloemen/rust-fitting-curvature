@@ -5,7 +5,7 @@
 # default GEOMETRIES), so spherical exists only for all_off. norm_only is
 # skipped on purpose -- it is spherical-incompatible (thesis tab:loss-ablations)
 # -- leaving 3 experiments missing for every dataset. Covers the whole list in
-# slurm/datasets.sh (not just the 4 real ones behind Exp 2's headline count),
+# slurm/datasets.sh (not just the 4 real ones behind Exp 4's headline count),
 # since the synthetic spherical fixtures (sphere, antipodal_clusters and now
 # ball2_spherical / ball9_spherical) feed other analyses.
 #

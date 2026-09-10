@@ -1,4 +1,4 @@
-//! Thesis results figures (Experiments 1–5) from the qParEGO sweeps.
+//! Thesis results figures (Experiments 1–4) from the qParEGO sweeps.
 //!
 //! Rust port of `analyze_experiments.py`. Local-only: this is the one part of
 //! the analysis that needs plotters (and therefore a system font stack), which
@@ -18,7 +18,7 @@ use std::str::FromStr;
 
 use clap::Parser;
 
-use fitting_analysis::figures::{self, exp1, exp2, r2_bars, save};
+use fitting_analysis::figures::{self, exp1, exp2, exp3, exp4, save};
 use fitting_analysis::objectives::ObjectiveSpace;
 use fitting_analysis::{Error, Result};
 
@@ -40,9 +40,16 @@ struct Args {
     #[arg(long, num_args = 1.., default_values_t = [1000usize, 5000])]
     n: Vec<usize>,
 
-    /// Which experiments to render.
-    #[arg(long, num_args = 1.., default_values_t = [1usize, 2, 3, 4, 5])]
-    exp: Vec<usize>,
+    /// Which experiments to render, numbered as the results chapter numbers
+    /// its research questions. Out of range is an error rather than a silent
+    /// no-op, which is what an unrecognised number used to be.
+    #[arg(
+        long,
+        num_args = 1..,
+        value_parser = clap::value_parser!(u8).range(1..=4),
+        default_values_t = [1u8, 2, 3, 4],
+    )]
+    exp: Vec<u8>,
 
     /// The Experiment 1 table written by the `exp1` binary, plotted as two
     /// charts: the matched-minus-mismatched R2 gain, and the ε-indicator
@@ -58,11 +65,6 @@ struct Args {
     /// preference model is the point of it — so it is drawn once per N.
     #[arg(long, num_args = 1.., default_values_t = ["all".to_string()])]
     exp1_region: Vec<String>,
-
-    /// Lowest κ in Exp 4's zoomed gap figure, which is written alongside the
-    /// full one. Set to 0 to skip the zoom.
-    #[arg(long, default_value_t = 0.01)]
-    gap_zoom_kappa: f64,
 
     /// Force the objective space instead of reading it off the sweeps. The
     /// sweeps under `results/` were searched in the 10-objective space
@@ -80,9 +82,9 @@ struct Args {
 }
 
 /// A figure with no data behind it is skipped, not an error: the sweep grid is
-/// not rectangular (no spherical `norm_only`, hyperbolic-only `rms_anchored`)
-/// and Exp 3's scatter needs a `κ_data` export that is a separate run. What is
-/// missing is visible in `out_dir` — the figure simply isn't there.
+/// not rectangular (no spherical `norm_only`, hyperbolic-only `rms_anchored`),
+/// and a skeleton figure reports no data at all. What is missing is visible in
+/// `out_dir` — the figure simply isn't there.
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -125,20 +127,35 @@ fn main() -> Result<()> {
         }
     }
 
+    // Exp 2 and Exp 3 are skeletons: they are dispatched so the slots are
+    // visible here rather than absent, and `has_data` reports false until each
+    // figure is actually drawn.
     if args.exp.contains(&2) {
         for n in &args.n {
-            let fig = exp2::StackedFronts::new(&cells, *n);
+            let fig = exp2::MetricPanels::new(&cells, *n, space);
             if fig.has_data() {
                 save(&fig, &args.out_dir, space)?;
             }
         }
     }
 
-    // Exp 4 is the one figure that is *not* drawn once per N: ρ is a within-cell
-    // rank correlation, so two sample sizes are two populations rather than a
-    // trend, and overlaying them only doubled the marks. The largest N asked for
-    // is the one plotted — `--n 1000` alone still gets a figure.
+    if args.exp.contains(&3) {
+        for n in &args.n {
+            let fig = exp3::KappaLanding::new(&cells, *n, space);
+            if fig.has_data() {
+                save(&fig, &args.out_dir, space)?;
+            }
+        }
+    }
+
     if args.exp.contains(&4) {
+        for n in &args.n {
+            let fig = exp4::StackedFronts::new(&cells, *n);
+            if fig.has_data() {
+                save(&fig, &args.out_dir, space)?;
+            }
+        }
+
         // The R2 table as bar charts, one per (dataset, geometry) per N. These
         // come from the stage-2 JSONL rather than from `cells`, so they are the
         // same numbers the thesis table carries, and they go in their own
@@ -148,10 +165,10 @@ fn main() -> Result<()> {
             .r2_delta
             .clone()
             .unwrap_or_else(|| PathBuf::from(format!("results/r2_delta_{}.jsonl", space.tag())));
-        let deltas = r2_bars::load_deltas(&r2_delta)?;
+        let deltas = exp4::load_deltas(&r2_delta)?;
         let bars_dir = args.out_dir.join("experiment_4");
         for n in &args.n {
-            for fig in r2_bars::R2Bars::panels(&deltas, *n, space) {
+            for fig in exp4::R2Bars::panels(&deltas, *n, space) {
                 save(&fig, &bars_dir, space)?;
             }
         }

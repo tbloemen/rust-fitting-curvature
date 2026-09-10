@@ -82,7 +82,7 @@
       [`all_free`], [$bold(+0.42)$], [$+0.03$], [$-0.13$], [$-0.54$], [$bold(+2.00)$], [$bold(+0.88)$], [$-4.38$], [$bold(+3.68)$],
       table.hline(stroke: 0.8pt),
     ),
-    caption: [Experiment 2: R2 indicator gain $Delta R_2$ of each loss-weight setting over the
+    caption: [Experiment 4: R2 indicator gain $Delta R_2$ of each loss-weight setting over the
     `all_off` baseline on the real datasets, under each preference region of @preference-regions
     ($N = 5000$).
 

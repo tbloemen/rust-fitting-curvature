@@ -125,7 +125,8 @@ fn every_pair_follows_the_manifold_naming_convention() {
     // METRIC_PAIRS is derived by matching `QualityMetric::base`, so the pairing
     // itself can no longer be wrong. What is still worth pinning is the
     // *naming*: `_manifold` is the suffix that ties a pair's second member to
-    // its JSONL column, and Exp 4's panel captions read the first member's.
+    // its JSONL column, and a panel caption over such a pair reads the first
+    // member's.
     for (projected, manifold) in METRIC_PAIRS.iter() {
         assert_eq!(manifold.name(), format!("{}_manifold", projected.name()));
     }
@@ -134,8 +135,8 @@ fn every_pair_follows_the_manifold_naming_convention() {
 
 #[test]
 fn metric_pairs_has_the_declared_length() {
-    // `N_METRIC_PAIRS` is a `const` because `figures/exp4.rs` uses it as an
-    // array length, so it is the one count restated rather than derived.
+    // `N_METRIC_PAIRS` is a `const` because it is used as an array length, so
+    // it is the one count restated rather than derived.
     assert_eq!(METRIC_PAIRS.len(), N_METRIC_PAIRS);
 }
 

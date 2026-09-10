@@ -130,8 +130,10 @@ fn orientation_flips_minimised_objectives() {
     // The manifold reading of a minimised metric is minimised too, and is now
     // flipped alongside its twin. It used to be left alone, because `MINIMIZE`
     // listed objective names and `normalized_stress_manifold` is not an
-    // objective — but `figures/exp4.rs` does look it up, to difference the two
-    // readings of one configuration. Under the old orientation that panel
+    // objective — but the manifold-vs-projection figure deleted in `b43c731`
+    // did look it up, to difference the two readings of one configuration.
+    // Under the old
+    // orientation that panel
     // subtracted an unoriented manifold stress from an oriented projected one,
     // so an embedding whose two readings agreed at 0.1 plotted a gap of −0.8
     // instead of ~0. Orientation is a property of the metric, not of whether it

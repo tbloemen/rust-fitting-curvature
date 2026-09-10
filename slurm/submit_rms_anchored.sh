@@ -1,8 +1,7 @@
 #!/bin/sh
 # Run the never-executed rms_anchored setting (DISCREPANCIES.md A2): fixes
-# R_rms=1 so the search runs directly over kappa. Exp 3's unanchored-vs-
-# rms_anchored kappa overlay needs this per hyperbolic dataset; the
-# TrialConfig::rms_anchored() path exists but was never swept. Only the
+# R_rms=1 so the search runs directly over kappa, which is what Experiment 3
+# asks about; the TrialConfig::rms_anchored() path exists but was never swept. Only the
 # hyperbolic geometry is meaningful here (rms_anchored gauge-fixes curvature).
 #
 # Covers every dataset in slurm/datasets.sh (matching submit_all.sh/submit_main.sh), not just the

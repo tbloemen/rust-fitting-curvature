@@ -205,8 +205,8 @@ fn legacy_tag() -> String {
 /// Load the rows written by the `exp1` binary.
 ///
 /// An **absent** table is not an error: it is a separate `exp1` run, and this
-/// figure is skipped without it exactly as Exp 3 skips its scatter without a
-/// `κ_data` export. A table that is there and will not parse still fails.
+/// figure is simply not drawn without it. A table that is there and will not
+/// parse still fails.
 ///
 /// # Errors
 ///

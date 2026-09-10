@@ -62,7 +62,7 @@ pub fn pareto_front_records(records: &[TrialRecord], space: ObjectiveSpace) -> V
 /// Indices of the 2D Pareto front over `(x, y)`, sorted by x ascending.
 ///
 /// `x_up` / `y_up` say whether larger is better on each axis. Used for the
-/// per-cell front cross-sections in the Exp 2 figure.
+/// per-cell front cross-sections in the Exp 4 figure.
 #[must_use]
 pub fn slice_front_2d(x: &[f64], y: &[f64], x_up: bool, y_up: bool) -> Vec<usize> {
     let n = x.len().min(y.len());

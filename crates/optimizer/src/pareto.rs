@@ -374,8 +374,10 @@ fn write_fresh_result(
 /// take half the objective budget. What the thesis judges is the 2D
 /// visualisation, so the manifold half optimised a surface no reader looks at.
 /// Those metrics are still measured and written to the JSONL — nothing about
-/// `MetricValues` changed — they just no longer steer the search. `figures/exp4.rs`
-/// reads those columns and is what shows whether dropping them was justified.
+/// `MetricValues` changed — they just no longer steer the search. The figure
+/// that read those columns, and was the evidence for dropping them, has since
+/// been deleted; the columns are kept because Experiment 2 is the question
+/// that would read them again.
 ///
 /// **Bounded in `[0, 1]` only.** Of the label-aware, projection-only metrics
 /// `neighborhood_hit` and `distance_consistency` qualify — the first is a
