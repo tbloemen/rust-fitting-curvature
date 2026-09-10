@@ -1,14 +1,14 @@
 //! R2-indicator analysis of the qParEGO sweeps.
 //!
-//! Five subcommands, each writing a **file** — JSONL throughout, the same format
+//! Six subcommands, each writing a **file** — JSONL throughout, the same format
 //! the sweeps themselves are written in. Nothing goes to stdout; the one thing
 //! that reaches the terminal is a failure, rendered once by `main` returning
 //! `Err`.
 //!
 //! * **`stats`** — stage 1. For every experiment cell (one results `.jsonl` file
 //!   = one (setting, dataset, N, geometry) run) compute the R2 indicator of its
-//!   10-objective Pareto front under each preference region, plus the front
-//!   point each region recommends. One JSON object per cell.
+//!   Pareto front under each preference region, plus the front point each
+//!   region recommends. One JSON object per cell.
 //!
 //! * **`aggregate`** — stage 2. ΔR2 over the `all_off` baseline per region, plus
 //!   the Friedman test over the (dataset, geometry, N) blocks with Holm-adjusted
@@ -151,7 +151,7 @@ struct CompareArgs {
     out: PathBuf,
 
     /// Settings to compare against the baseline. The default is the four
-    /// loss-weight settings of Experiment 2; `rms_anchored` is excluded because
+    /// loss-weight settings of Experiment 4; `rms_anchored` is excluded because
     /// it fixes a different gauge and only exists for hyperbolic.
     #[arg(
         long,

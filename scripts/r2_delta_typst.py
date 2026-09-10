@@ -42,7 +42,7 @@ def _ensure_parent(path: str) -> None:
         os.makedirs(parent, exist_ok=True)
 
 # The synthetic generators of known intrinsic geometry, flat-first and then
-# grouped by curvature sign, and the four real datasets of Experiment 2.  Rows
+# grouped by curvature sign, and the four real datasets of Experiment 4.  Rows
 # absent from the JSONL are skipped; rows present but not listed are appended at
 # the end, so a partial run still produces output.
 DATASET_GROUPS = {
@@ -388,7 +388,7 @@ def build(table, n, datasets, settings, regions):
 
     kind = "synthetic datasets of known intrinsic geometry" if datasets == "synthetic" else "real datasets"
     lines += [
-        "    caption: [Experiment 2: R2 indicator gain $Delta R_2$ of each loss-weight setting over the",
+        "    caption: [Experiment 4: R2 indicator gain $Delta R_2$ of each loss-weight setting over the",
         f"    `all_off` baseline on the {kind}, under each preference region of @preference-regions",
         f"    ($N = {n}$).",
         "",

@@ -205,7 +205,7 @@ pub struct RankTest {
 /// Friedman + Holm over the (dataset, geometry, N) blocks, per preference region.
 ///
 /// Emits one test per region pooled over geometries (`geometry = "*"`) and one
-/// per (region, geometry), because the second prediction of Experiment 2 is a
+/// per (region, geometry), because the second prediction of Experiment 4 is a
 /// setting-by-geometry interaction and pooling would hide it.
 ///
 /// *settings* fixes the treatment list. Only blocks carrying every one of them

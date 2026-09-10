@@ -9,8 +9,9 @@
 //! the ideal point is `(1, …, 1)` and the R2 indicator of `r2.rs` measures
 //! distance to it under a stated set of weights.
 //!
-//! The manifold (pre-projection) variants are still recorded on every trial and
-//! still read by `figures/exp4.rs`; they are simply no longer objectives. See
+//! The manifold (pre-projection) variants are still recorded on every trial;
+//! they are simply no longer objectives, and no figure currently reads them —
+//! the manifold-vs-projection pair that did was deleted in `b43c731`. See
 //! [`objectives::OBJECTIVES`] for why the set is bounded-and-projected.
 //! `indicators.rs` measures the same fronts without any weights at all, as the
 //! parameter-free cross-check on that preference model.

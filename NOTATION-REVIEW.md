@@ -39,7 +39,9 @@ Note for later: the post-2020 R2 papers have drifted to `w`/`W` for weights and
 - **Code:** `records.rs:119-123` defines `kappa()` as the dimensionless product
   `|K| · R_rms²`. Thesis `3theory.typ:159` (`<eq:kappa>`) defines the same, and
   `3theory.typ:165` calls it "the curvature quantity we use throughout".
-  Propagates to `figures/mod.rs:9`, `exp3.rs`, `exp4.rs:125` (`x_desc("median κ (cell)")`).
+  Propagates to `figures/mod.rs` and, once it is drawn, `figures/exp3.rs`.
+  The two figures that carried it on an axis (`x_desc("median κ (cell)")`) were
+  deleted in `8a6e5fc` / `b43c731`.
 - **Literature:** in the κ-stereographic line of work — Bachmann et al.
   (Constant Curvature GCNs), Skopek et al. (Mixed-curvature VAEs), and the
   `geoopt` implementation — **κ *is* the signed sectional curvature**, i.e. the
@@ -112,12 +114,13 @@ Note for later: the post-2020 R2 papers have drifted to `w`/`W` for weights and
 - [ ] **Decision:**
 
 - **Occurrences:**
-  - Spearman's ρ — `stats.rs:86-92`, used by Exp 3.
-  - `ρ_man-proj` — `exp4.rs:1,33`, the manifold-vs-projected rank agreement.
+  - Spearman's ρ — `stats.rs:86-92`.
+  - `ρ_man-proj` — the manifold-vs-projected rank agreement of the figure
+    deleted in `b43c731`; nothing draws it now.
   - `ρ_perp`, perplexity ratio — thesis `4methods.typ:173`; surfaces here as the
     `perplexity_ratio` column (`records.rs:42`, `TrialRecord::param`).
   - `ρ(r)`, the signature residual — thesis `4methods.typ:383`.
-- **Impact:** the first two appear in the same figures, and the collision is
+- **Impact:** the first two appeared in the same figures, and the collision is
   live inside the analysis crate rather than only in the thesis.
 - **Resolution:** ρ for Spearman is non-negotiable, and `ρ_man-proj` inherits
   from it legitimately. `ρ_perp` is the one to move — perplexity has no ρ

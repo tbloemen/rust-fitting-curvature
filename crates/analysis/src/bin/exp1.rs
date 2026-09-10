@@ -53,7 +53,6 @@ use fitting_analysis::{load_jsonl, trial_records, write_jsonl, Error, Result};
 /// The loss-weight setting Experiment 1 reads. `all_off` zeroes every auxiliary
 /// loss, recovering plain KL-divergence t-SNE, so geometry is the only thing
 /// varying between the cells being compared — which is the whole question.
-/// `5results.typ` also reuses these same fronts for Experiment 5.
 const DEFAULT_SETTING: &str = "all_off";
 
 #[derive(Parser, Debug)]

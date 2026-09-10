@@ -82,7 +82,7 @@
       [`all_free`], [$bold(+25.4)$], [$-4.18$], [$+12.0$], [$+52.4$], [$bold(+75.0)$], [$bold(+23.8)$], [$+32.2$], [$bold(+34.2)$],
       table.hline(stroke: 0.8pt),
     ),
-    caption: [Experiment 2: R2 indicator gain $Delta R_2$ of each loss-weight setting over the
+    caption: [Experiment 4: R2 indicator gain $Delta R_2$ of each loss-weight setting over the
     `all_off` baseline on the synthetic datasets of known intrinsic geometry, under each preference region of @preference-regions
     ($N = 5000$).
 

@@ -83,8 +83,9 @@ impl QualityMetric for Trustworthiness {
 ///
 /// Measured but not optimised: what the thesis judges is the 2-D visualisation,
 /// so the manifold half of the objective budget was optimising a surface no
-/// reader looks at. `figures/exp4.rs` plots this against its twin, and is the
-/// evidence for having dropped it.
+/// reader looks at. The analysis figure that plotted this against its twin was
+/// the evidence for having dropped it, and has since been deleted; the column
+/// is still written.
 pub struct TrustworthinessManifold;
 impl QualityMetric for TrustworthinessManifold {
     fn name(&self) -> &'static str {

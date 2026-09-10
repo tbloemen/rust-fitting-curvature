@@ -1,36 +1,40 @@
-//! Thesis results figures (Experiments 1–5) from the qParEGO sweeps.
+//! Thesis results figures (Experiments 1–4) from the qParEGO sweeps.
 //!
-//! Port of `analyze_experiments.py`. Produces the figures the results chapter
-//! marks with `// TODO: figure:` in `docs/thesis/sections/5results.typ`:
+//! One module per research question of `docs/thesis/sections/4methods.typ`,
+//! numbered as the results chapter numbers them:
 //!
-//! * **Exp 1** (`geometry-match`) — the matched-minus-mismatched R2 gain, one
-//!   group per synthetic dataset, one bar per mismatched embedding geometry.
-//!   The figure companion to `@tab:geometry-match-r2`, read back from the same
-//!   JSONL. Unlike the others this one comes from the stage-2 table rather than
-//!   from `cells`, so it and the thesis table cannot disagree.
-//! * **Exp 2** (`ablation-results`) — stacked Pareto fronts, one panel per
-//!   (dataset, geometry), one curve per loss-weight setting.
-//! * **Exp 3** (`curvature-magnitude-results`) — median Pareto-front
-//!   dimensionless curvature κ = |`K|·R_rms²` against the data-intrinsic `κ_data`
-//!   (from `results/kappa_data.jsonl`), synthetic vs real markers; plus the
-//!   unanchored-vs-`rms_anchored` κ overlay (skipped with a notice if no
-//!   `rms_anchored` runs exist).
-//! * **Exp 4** (`manifold-projection-gap`) — two figures. ρ_man-proj(κ): per
-//!   cell, the Spearman correlation between each metric's manifold and
-//!   2D-projected variants over the cell's trials, against the cell's median κ.
-//!   And the projection gap: per Pareto-front trial, `oriented(manifold) −
-//!   oriented(2D)` against that trial's own κ, all datasets pooled, with a
-//!   Spearman per geometry in each panel. Both are one panel per metric,
-//!   hyperbolic vs spherical.
-//! * **Exp 5** (`comparison-real-results`) — the 4×3 trustworthiness-vs-stress
-//!   Pareto-front grid with convex envelope, and the hyperparameter marginal
-//!   histograms of the `all_off` fronts.
+//! | module | question | thesis anchor |
+//! |---|---|---|
+//! | [`exp1`] | Does matching dataset and embedding curvature improve quality? | `synthetic-grid-results` |
+//! | [`exp2`] | What effect does curvature have on established metrics? | `metric-results` |
+//! | [`exp3`] | Can curvature be tuned as its own hyperparameter? | `curvature-tuning-results` |
+//! | [`exp4`] | Can auxiliary global loss terms improve the visualisations? | `ablation-results` |
+//!
+//! * **Exp 1** — the matched-minus-mismatched R2 gain, one group per synthetic
+//!   dataset, one bar per mismatched embedding geometry, plus the ε-indicator
+//!   between the same fronts. The figure companions to
+//!   `@tab:geometry-match-r2`, read back from the same JSONL, so they and the
+//!   thesis table cannot disagree.
+//! * **Exp 2** — a skeleton; see the module doc for the two figures the
+//!   results chapter asks for.
+//! * **Exp 3** — a skeleton; see the module doc.
+//! * **Exp 4** — stacked Pareto fronts, one panel per (dataset, geometry) and
+//!   one curve per loss-weight setting; and the R2 levels of the same settings
+//!   as grouped bar charts under `<out-dir>/experiment_4`.
 //!
 //! κ uses **`R_rms`** (`r_rms`), not `R_max` — the thesis definition.
+//!
+//! **The κ and log-axis helpers below have no caller right now and are kept on
+//! purpose.** `KappaData`, [`load_kappa_data`], [`median_front_kappa`],
+//! [`binned_median`], [`convex_lower_hull`], [`padded_log_range`],
+//! [`snap_to_decades`], [`log_tick`], [`all_datasets`] and [`CURVED`] were
+//! written for figures that Exp 2 and Exp 3 will need again. Do not sweep them
+//! out as dead code.
 
 pub mod exp1;
 pub mod exp2;
-pub mod r2_bars;
+pub mod exp3;
+pub mod exp4;
 
 use fitting_core::cast::{count_to_f64, to_i32};
 use std::collections::BTreeMap;
@@ -122,15 +126,16 @@ const fn synth_datasets() -> [&'static str; SYNTH_TRUTH.len()] {
 pub const CURVED: [&str; 2] = ["hyperbolic", "spherical"];
 
 pub use crate::cell::GEOMETRIES;
-/// The five metrics that have both a 2D and a manifold reading; Exp 4 plots one
-/// panel per metric, in table order. A *diagnostic* table — no longer the
-/// objective list, which is [`OBJECTIVES`].
+/// The five metrics that have both a 2D and a manifold reading, in table order.
+/// A *diagnostic* table — no longer the objective list, which is
+/// [`OBJECTIVES`]. No figure reads it at present; the manifold-vs-projection
+/// pair that did was deleted with the old `exp4.rs`.
 pub use crate::objectives::METRIC_PAIRS;
 /// The six objectives and the three preference families, in region order;
 /// `r2_bars` labels its axes from these.
 pub use crate::objectives::{FAMILIES, OBJECTIVES};
 
-/// All datasets, real first — the order Exp 3 iterates in.
+/// All datasets, real first.
 #[must_use]
 pub fn all_datasets() -> Vec<&'static str> {
     REAL_DATASETS.into_iter().chain(SYNTH_DATASETS).collect()
@@ -219,17 +224,15 @@ macro_rules! style_mesh {
     };
 }
 
-/// One legend entry: label, colour, and the line/marker style that identifies
-/// the series (Exp 4 overlays two sample sizes in one colour, so the swatch has
-/// to carry the dash and marker distinction too).
+/// One legend entry: label, colour, and the line style that identifies the
+/// series.
 pub struct LegendEntry {
     pub label: String,
     pub color: RGBColor,
-    /// `(dash, gap)` in pixels, or `None` for a solid line. Exp 2 gives every
+    /// `(dash, gap)` in pixels, or `None` for a solid line. Exp 4 gives every
     /// setting its own pattern, so the swatch carries the pattern itself rather
     /// than a dashed/not-dashed flag.
     pub dash: Option<(i32, i32)>,
-    pub triangle: bool,
 }
 
 impl LegendEntry {
@@ -238,7 +241,6 @@ impl LegendEntry {
             label: label.into(),
             color,
             dash: None,
-            triangle: false,
         }
     }
 
@@ -246,14 +248,6 @@ impl LegendEntry {
     #[must_use]
     pub fn with_dash(mut self, dash: i32, gap: i32) -> Self {
         self.dash = Some((dash, gap));
-        self
-    }
-
-    /// Mark this entry as the dashed/triangle series (Exp 4's second N).
-    #[must_use]
-    pub fn secondary(mut self) -> Self {
-        self.dash = Some((8, 6));
-        self.triangle = true;
         self
     }
 }
@@ -305,19 +299,11 @@ where
                 e.color.stroke_width(3),
             ))?,
         }
-        if e.triangle {
-            area.draw(&TriangleMarker::new(
-                (x0 + 13, vertical_centre),
-                5,
-                e.color.filled(),
-            ))?;
-        } else {
-            area.draw(&Circle::new(
-                (x0 + 13, vertical_centre),
-                4,
-                e.color.filled(),
-            ))?;
-        }
+        area.draw(&Circle::new(
+            (x0 + 13, vertical_centre),
+            4,
+            e.color.filled(),
+        ))?;
         area.draw(&Text::new(
             e.label.clone(),
             (x0 + 34, vertical_centre),
@@ -387,8 +373,9 @@ impl KappaData {
 /// Prefers `kappa_data_n{n}.jsonl` and falls back to the unsuffixed
 /// `kappa_data.jsonl` (which the local n=1000 run writes), trusting the latter
 /// only for the N it was actually run at. An **absent** table is not an error —
-/// the `κ_data` export is a separate optimizer run, and Exp 3 skips its scatter
-/// when it has not been done — but a table that is there and will not parse is.
+/// the `κ_data` export is a separate optimizer run, so a figure that needs it
+/// is skipped when it has not been done — but a table that is there and will
+/// not parse is.
 ///
 /// # Errors
 ///
@@ -414,7 +401,7 @@ pub fn load_kappa_data(results_dir: &Path, n: usize) -> Result<BTreeMap<String, 
     Ok(BTreeMap::new())
 }
 
-/// Median κ over the 10-objective Pareto front of *records*.
+/// Median κ over the Pareto front of *records* in *space*.
 #[must_use]
 pub fn median_front_kappa(records: &[TrialRecord], space: ObjectiveSpace) -> Option<f64> {
     let front = pareto_front_records(records, space);
@@ -528,8 +515,9 @@ pub fn padded_range(values: &[f64], frac: f64) -> Option<(f64, f64)> {
     // "Degenerate" has to be judged *relatively*: values that agree to all but
     // the last ulp satisfy `hi > lo`, so an exact test leaves a span of ~1e-16
     // and the panel magnifies float rounding noise to full width. Exp 3's
-    // hyperbolic κ_data hit exactly this once every dataset pinned at the
-    // Wilson cap, where hyp_kappa is the constant HYPERBOLIC_KAPPA_MIN.
+    // The deleted κ_data scatter hit exactly this once every hyperbolic
+    // dataset pinned at the Wilson cap, where hyp_kappa is the constant
+    // HYPERBOLIC_KAPPA_MIN.
     let span = hi - lo;
     let pad = if span > 1e-12 * lo.abs().max(hi.abs()).max(1.0) {
         span * frac
@@ -542,7 +530,7 @@ pub fn padded_range(values: &[f64], frac: f64) -> Option<(f64, f64)> {
 /// A padded axis range that ignores outliers: [`padded_range`] over the values
 /// inside Tukey's fences, `[q1 − 1.5·IQR, q3 + 1.5·IQR]`.
 ///
-/// A single diverged front point used to set a whole Exp 2 panel's scale and
+/// A single diverged front point used to set a whole Exp 4 panel's scale and
 /// squash the informative knee into a sliver. The fence only bites when there
 /// really is a far tail, so a well-behaved panel comes out identical to
 /// [`padded_range`]; too few points (a 3-point front) or a degenerate IQR fall

@@ -59,8 +59,8 @@ impl MetricValue {
 
     /// The number, or `None` for any of the three reasons there isn't one.
     ///
-    /// Every caller that feeds a plot or a statistic wants this: `figures/exp5`
-    /// filters on it and `oriented_value` maps `None` to the worst case.
+    /// Every caller that feeds a plot or a statistic wants this: the figures
+    /// filter on it and `oriented_value` maps `None` to the worst case.
     #[must_use]
     pub fn value(self) -> Option<f64> {
         match self {

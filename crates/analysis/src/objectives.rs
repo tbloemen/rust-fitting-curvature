@@ -23,8 +23,8 @@ use crate::records::TrialRecord;
 ///
 /// - *Projected only.* The manifold (pre-projection, geodesic) variants used to
 ///   occupy half this list. They are still measured and still present on
-///   [`TrialRecord`] — [`METRIC_PAIRS`] and `figures/exp4.rs` read them — but
-///   they no longer steer the search.
+///   [`TrialRecord`], and [`METRIC_PAIRS`] still pairs them up — but they no
+///   longer steer the search, and no figure currently reads them.
 /// - *Bounded only.* [`oriented_value`] clamps to `[0, 1]` and the R2 ideal
 ///   point is pinned at `(1, …, 1)`, so an unbounded objective would be
 ///   silently truncated rather than measured. `distance_consistency` qualifies
@@ -267,18 +267,19 @@ pub const FAMILIES: [(&str, &[usize]); 3] = [
 /// independent — an objective with no manifold variant would correctly not
 /// appear here.
 ///
-/// Its remaining consumer is `figures/exp4.rs`, which plots one panel per row
-/// to compare the manifold and projected readings of the same metric. That
-/// figure is the evidence for dropping the manifold objectives, so it outlives
-/// them.
+/// It has no consumer at present. The figure that read it — one panel per row,
+/// comparing the manifold and projected readings of the same metric — was the
+/// evidence for dropping the manifold objectives, and was deleted in `b43c731`
+/// once that argument was settled. The pairing is kept because the manifold columns are
+/// still measured and Experiment 2 is the question that would read them again.
 ///
 /// Derived by matching `QualityMetric::base` over the registry, so a metric
-/// that gains or loses a twin gains or loses a panel with no edit here.
+/// that gains or loses a twin gains or loses a row with no edit here.
 pub static METRIC_PAIRS: LazyLock<Vec<(Metric, Metric)>> =
     LazyLock::new(|| Metric::dual_pairs().collect());
 
-/// Length of [`METRIC_PAIRS`], as a `const` because `figures/exp4.rs` uses it
-/// as an array length and `QualityMetric`'s methods are not const-callable.
+/// Length of [`METRIC_PAIRS`], as a `const` because it is used as an array
+/// length and `QualityMetric`'s methods are not const-callable.
 /// The one number here that is restated rather than derived;
 /// `metric_pairs_has_the_declared_length` pins it.
 pub const N_METRIC_PAIRS: usize = 5;

@@ -553,9 +553,9 @@ fn test_with_projection_hyperbolic_no_nan() {
 }
 
 /// The manifold and projected readings must actually be different numbers
-/// under curvature, or reporting both says nothing — and `figures/exp4.rs`,
-/// which is the evidence for having dropped the manifold objectives, would be
-/// comparing a column against itself.
+/// under curvature, or reporting both says nothing — and the analysis figure
+/// that was the evidence for having dropped the manifold objectives would have
+/// been comparing a column against itself.
 ///
 /// Replaces a `compute_snapshot` test that manufactured the difference by
 /// passing coordinates unrelated to the distance matrix. `MetricContext`
