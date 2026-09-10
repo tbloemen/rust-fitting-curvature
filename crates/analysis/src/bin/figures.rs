@@ -127,11 +127,16 @@ fn main() -> Result<()> {
         }
     }
 
-    // Exp 2 and Exp 3 are skeletons: they are dispatched so the slots are
-    // visible here rather than absent, and `has_data` reports false until each
-    // figure is actually drawn.
+    // Exp 2 draws one metric-vs-κ panel per curved geometry; `panels` returns
+    // only the ones with data, so there is no guard on the loop. Its other two
+    // figures are still skeletons, dispatched beside it so the slot is visible
+    // here rather than absent.
     if args.exp.contains(&2) {
         for n in &args.n {
+            for fig in exp2::MetricVsKappa::panels(&cells, *n) {
+                save(&fig, &args.out_dir, space)?;
+            }
+
             let fig = exp2::MetricPanels::new(&cells, *n, space);
             if fig.has_data() {
                 save(&fig, &args.out_dir, space)?;
@@ -139,6 +144,8 @@ fn main() -> Result<()> {
         }
     }
 
+    // Exp 3 is still a skeleton: dispatched so the slot is visible, and
+    // `has_data` reports false until the figure is actually drawn.
     if args.exp.contains(&3) {
         for n in &args.n {
             let fig = exp3::KappaLanding::new(&cells, *n, space);
