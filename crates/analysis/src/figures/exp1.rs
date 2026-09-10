@@ -431,7 +431,7 @@ impl Figure for MatchedGain {
         // and a two-line label, and the value labels must not collide.
         (
             220 + 130 * u32::try_from(self.groups.len()).expect("a small number of groups"),
-            500,
+            450,
         )
     }
 
@@ -813,7 +813,7 @@ impl Figure for MatchedEpsilon {
         // how they are meant to be read.
         (
             220 + 130 * u32::try_from(self.groups.len()).expect("a small number of groups"),
-            500,
+            450,
         )
     }
 
