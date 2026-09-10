@@ -14,12 +14,13 @@
 //! ```
 
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use clap::Parser;
 
 use fitting_analysis::figures::{self, exp1, exp2, exp3, exp4, exp5, r2_bars, save};
 use fitting_analysis::objectives::ObjectiveSpace;
-use fitting_analysis::Result;
+use fitting_analysis::{Error, Result};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -96,9 +97,22 @@ fn main() -> Result<()> {
         for n in &args.n {
             for region in &args.exp1_region {
                 let fig = exp1::MatchedGain::new(&rows, *n, region);
-                if fig.has_data() {
-                    save(&fig, &args.out_dir, space)?;
+                if !fig.has_data() {
+                    continue;
                 }
+                // The filename is the only place the space is recorded — the
+                // figure itself draws nothing identifying — so a table from the
+                // other space would be silently mislabelled.
+                if fig.space() != space.tag() {
+                    return Err(Error::MixedObjectiveSpaces {
+                        first: path.display().to_string(),
+                        first_space: ObjectiveSpace::from_str(fig.space())
+                            .map_or("unknown", ObjectiveSpace::tag),
+                        second: args.results_dir.display().to_string(),
+                        second_space: space.tag(),
+                    });
+                }
+                save(&fig, &args.out_dir, space)?;
             }
         }
     }

@@ -181,9 +181,10 @@ pub struct MatchedGain {
     region: String,
     /// The loss-weight setting the rows came from, named in the title.
     setting: String,
-    /// The objective space the gains were computed in, named in the title. A
-    /// legacy gain and a current-space gain are different quantities, and the
-    /// figure has to say which it is showing.
+    /// The objective space the rows were scored in, as `ObjectiveSpace::tag`.
+    /// Not drawn — [`MatchedGain::space`] exists so the caller can check it
+    /// against the space it will tag the filename with, since nothing on the
+    /// image would reveal a mismatch.
     space: String,
     groups: Vec<Group>,
 }
@@ -250,6 +251,16 @@ impl MatchedGain {
             space,
             groups,
         }
+    }
+
+    /// The objective space tag the rows carry.
+    ///
+    /// The figure is named for the space [`super::save`] is given, not for this
+    /// one; they differ only if a caller points `--exp1` at a table from the
+    /// other space, which would mislabel the file. The binary compares them.
+    #[must_use]
+    pub fn space(&self) -> &str {
+        &self.space
     }
 
     /// True when at least one dataset has a matched arm and something to
@@ -326,8 +337,19 @@ fn fixed(scaled: f64) -> String {
 // ─── Drawing ─────────────────────────────────────────────────────────────────
 
 impl Figure for MatchedGain {
+    /// The setting, region and sample size, in the name.
+    ///
+    /// Nothing identifying is drawn *on* the figure — the caption states it —
+    /// so the filename is what distinguishes two renders, and it has to carry
+    /// every input that changes the bars. [`super::save`] appends the objective
+    /// space, which is the fourth. The region takes its `W` prefix from the
+    /// thesis notation, which also keeps `all_off` + `all` from reading as one
+    /// token.
     fn name(&self) -> String {
-        format!("exp1_matched_gain_{}_N{}", self.region, self.n)
+        format!(
+            "exp1_matched_gain_{}_W{}_N{}",
+            self.setting, self.region, self.n
+        )
     }
 
     fn size(&self) -> (u32, u32) {
@@ -346,17 +368,6 @@ impl Figure for MatchedGain {
         let root = root.titled(
             "R2 gain of the matched geometry over each mismatched one",
             ("sans-serif", 18).into_font().color(&OK_BLACK),
-        )?;
-        // What this figure is *of*, compactly: two runs over sweeps scored in
-        // different objective spaces produce two figures whose bars are not
-        // comparable, so the space has to be on the image and not only in the
-        // filename. Same for N, the region and the loss-weight setting.
-        let root = root.titled(
-            &format!(
-                "N={} · W_{} · {} · {}",
-                self.n, self.region, self.setting, self.space
-            ),
-            ("sans-serif", 12).into_font().color(&RGBColor(90, 90, 90)),
         )?;
         let (legend, body) = root.split_vertically(30);
 
