@@ -18,6 +18,17 @@
 //! 2. What the *closed-form* constant-curvature MDS the detector hands you for
 //!    free inferred about the same dataset → the `wilson` block.
 //!
+//! Alongside `delta_r2`, and answering the same question without its preference
+//! model, is the `epsilon` block: the binary additive ε-indicator between this
+//! row's front and the *matched* geometry's front, in both directions. R2 is an
+//! average over 252 weight vectors and depends on the region definitions; ε is
+//! parameter-free, fully Pareto compliant and a worst case, so it is the
+//! cross-check that the ΔR2 verdicts are not an artefact of that model. It is
+//! referenced to the matched arm rather than to Euclidean because, unlike R2, ε
+//! is not a number a third front can be scored against — a comparison is a
+//! *pair* of fronts, and the pair the experiment asks about is
+//! matched-against-mismatched.
+//!
 //! The two are set beside each other, not differenced. Every number that scored
 //! the Wilson point *against* the front — its singleton R2, the
 //! `R2(front) − R2(front ∪ {w})` gain, the ε-indicator pair, the dominance flag
@@ -33,7 +44,8 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 
 use fitting_analysis::cell::{discover_cells, truth_of};
-use fitting_analysis::objectives::{resolve_space, ObjectiveSpace};
+use fitting_analysis::indicators::epsilon_pair;
+use fitting_analysis::objectives::{oriented_row, resolve_space, ObjectiveSpace, Row};
 use fitting_analysis::r2::{cell_summary, Weights};
 use fitting_analysis::stats;
 use fitting_analysis::{load_jsonl, trial_records, write_jsonl, Error, Result};
@@ -166,6 +178,44 @@ struct WilsonSummary {
     kappa: f64,
 }
 
+/// The ε-indicator between this row's front and the matched geometry's, in
+/// both directions.
+///
+/// `I_ε+(A, B)` is the smallest amount by which every objective of *A* must be
+/// shifted before *A* dominates *B*, so `I_ε+(A, B) ≤ 0` exactly when *A*
+/// covers *B* (`crate::indicators`). The measure is **asymmetric**, and neither
+/// direction alone settles the comparison when the two fronts cross, so both
+/// are carried.
+///
+/// Absent on the matched row itself — a front is not compared with itself — and
+/// on any row whose dataset has no matched cell, which is the same condition
+/// that leaves the figure's group undrawn.
+#[derive(Debug, Clone, Serialize)]
+struct EpsilonSummary {
+    /// The geometry the comparison is against: this dataset's `truth`. Written
+    /// out so a row is readable without the ground-truth map to hand.
+    matched_geometry: &'static str,
+    /// Size of the matched front. Reported next to the indicator because ε says
+    /// nothing about cardinality: a front of 12 points and one of 230 can score
+    /// the same. This row's own front size is the sibling `n_front`.
+    n_front_matched: usize,
+    /// `I_ε+(matched, geometry)`: how far the matched front must be shifted to
+    /// cover this row's. Smaller is better *for the matched arm*.
+    eps_matched_vs_geometry: f64,
+    /// `I_ε+(geometry, matched)`: the same in the other direction.
+    eps_geometry_vs_matched: f64,
+    /// `eps_geometry_vs_matched − eps_matched_vs_geometry`. Positive means the
+    /// matched geometry came out ahead — the same reading direction as
+    /// `delta_r2` and `@eq:r2-gain`, because ε is likewise a cost.
+    delta_eps: f64,
+    /// `eps_matched_vs_geometry ≤ 0`: the matched front covers this one
+    /// outright.
+    matched_covers_geometry: bool,
+    /// `eps_geometry_vs_matched ≤ 0`: this front covers the matched one
+    /// outright.
+    geometry_covers_matched: bool,
+}
+
 /// One `(dataset, N, geometry)` row.
 #[derive(Debug, Clone, Serialize)]
 struct Exp1Row {
@@ -200,6 +250,10 @@ struct Exp1Row {
     kappa_q25: Option<f64>,
     kappa_q75: Option<f64>,
 
+    /// The parameter-free cross-check on `delta_r2`, against the matched arm.
+    /// `null` on the matched row itself and where the matched cell is missing.
+    epsilon: Option<EpsilonSummary>,
+
     /// `null` when no Wilson run covers this dataset at this N.
     wilson: Option<WilsonSummary>,
 }
@@ -212,6 +266,13 @@ struct Scored {
     n_front: usize,
     r2: BTreeMap<String, f64>,
     kappa: Vec<f64>,
+    /// The front itself, oriented (all objectives in `[0, 1]`, higher better).
+    /// R2 reduces a front to one number per region, which is enough to
+    /// difference; ε does not — it is computed *between* two fronts — so the
+    /// points have to outlive the cell that produced them. A front is a few
+    /// hundred rows of six floats, so holding every cell's is nothing next to
+    /// the trial records they came from, which are dropped.
+    front: Vec<Row>,
 }
 
 fn main() -> Result<()> {
@@ -251,6 +312,16 @@ fn main() -> Result<()> {
             .filter(|k| k.is_finite())
             .collect();
 
+        // The front's points, kept for the ε comparison in pass 2. Re-oriented
+        // from the records rather than returned by `cell_summary`, which hands
+        // back indices; the rows it built are the same ones, since both go
+        // through `oriented_row` in this same space.
+        let front: Vec<Row> = summary
+            .front
+            .iter()
+            .map(|&i| oriented_row(&records[i], space))
+            .collect();
+
         let key = (cf.cell.dataset.clone(), cf.cell.n, cf.cell.geometry.clone());
         order.push(key.clone());
         scored.insert(
@@ -260,6 +331,7 @@ fn main() -> Result<()> {
                 n_front: summary.n_front,
                 r2: summary.r2.clone(),
                 kappa,
+                front,
             },
         );
     }
@@ -294,6 +366,8 @@ fn main() -> Result<()> {
                 .collect()
         });
 
+        let epsilon = epsilon_summary(&scored, dataset, *n, geometry, truth, cell);
+
         let wilson = wilson_summary(&detect_by_key, dataset, *n, geometry, args.wilson_fallback);
 
         rows.push(Exp1Row {
@@ -312,6 +386,7 @@ fn main() -> Result<()> {
             kappa_median: stats::quantile(&cell.kappa, 0.5),
             kappa_q25: stats::quantile(&cell.kappa, 0.25),
             kappa_q75: stats::quantile(&cell.kappa, 0.75),
+            epsilon,
             wilson,
         });
     }
@@ -322,6 +397,43 @@ fn main() -> Result<()> {
         }),
         &rows,
     )
+}
+
+/// This row's ε comparison against the matched arm of the same dataset and *N*.
+///
+/// `None` on the matched row itself — `I_ε+(A, A) = 0` in both directions,
+/// which is a tautology and not a comparison — and on a dataset whose matched
+/// cell was not swept, where there is nothing to reference against. A missing
+/// matched cell is *not* an error, unlike a missing Euclidean one: `delta_r2`
+/// is the table's headline column and the whole table is unanswerable without
+/// its baseline, where ε is the cross-check.
+fn epsilon_summary(
+    scored: &BTreeMap<(String, usize, String), Scored>,
+    dataset: &str,
+    n: usize,
+    geometry: &str,
+    truth: &'static str,
+    arm: &Scored,
+) -> Option<EpsilonSummary> {
+    if geometry == truth {
+        return None;
+    }
+    let matched = scored.get(&(dataset.to_string(), n, truth.to_string()))?;
+
+    // `epsilon_pair(setting, baseline)` reads its first argument as the
+    // treatment: here the matched geometry, whose case the experiment is
+    // making, against the mismatched arm as control. That is what puts
+    // `delta_eps` the same way round as `delta_r2`.
+    let eps = epsilon_pair(&matched.front, &arm.front)?;
+    Some(EpsilonSummary {
+        matched_geometry: truth,
+        n_front_matched: matched.n_front,
+        eps_matched_vs_geometry: eps.setting_vs_baseline,
+        eps_geometry_vs_matched: eps.baseline_vs_setting,
+        delta_eps: eps.delta,
+        matched_covers_geometry: eps.setting_covers_baseline(),
+        geometry_covers_matched: eps.baseline_covers_setting(),
+    })
 }
 
 /// This row's Wilson arm, taken from the detection record for its dataset.

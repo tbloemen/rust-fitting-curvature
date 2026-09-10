@@ -13,7 +13,7 @@
 //!     --exp 1 --exp1-region all structure
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use clap::Parser;
@@ -44,15 +44,18 @@ struct Args {
     #[arg(long, num_args = 1.., default_values_t = [1usize, 2, 3, 4, 5])]
     exp: Vec<usize>,
 
-    /// The Experiment 1 table written by the `exp1` binary, plotted as the
-    /// matched-minus-mismatched gain chart. Absent is not an error — it is a
-    /// separate `exp1` run — and the chart is then simply not written.
+    /// The Experiment 1 table written by the `exp1` binary, plotted as two
+    /// charts: the matched-minus-mismatched R2 gain, and the ε-indicator
+    /// between the same fronts. Absent is not an error — it is a separate
+    /// `exp1` run — and the charts are then simply not written. A table
+    /// predating the `epsilon` block still draws the gain chart.
     #[arg(long)]
     exp1: Option<PathBuf>,
 
     /// Preference regions to draw Experiment 1's gain chart for, one figure
     /// each. The same choice `scripts/exp1_r2_typst.py --region` makes for the
-    /// table, and the same default.
+    /// table, and the same default. The ε chart takes no region — carrying no
+    /// preference model is the point of it — so it is drawn once per N.
     #[arg(long, num_args = 1.., default_values_t = ["all".to_string()])]
     exp1_region: Vec<String>,
 
@@ -104,13 +107,18 @@ fn main() -> Result<()> {
                 // figure itself draws nothing identifying — so a table from the
                 // other space would be silently mislabelled.
                 if fig.space() != space.tag() {
-                    return Err(Error::MixedObjectiveSpaces {
-                        first: path.display().to_string(),
-                        first_space: ObjectiveSpace::from_str(fig.space())
-                            .map_or("unknown", ObjectiveSpace::tag),
-                        second: args.results_dir.display().to_string(),
-                        second_space: space.tag(),
-                    });
+                    return Err(mixed_spaces(fig.space(), &path, &args.results_dir, space));
+                }
+                save(&fig, &args.out_dir, space)?;
+            }
+
+            // The ε companion, once per N rather than once per region: the
+            // indicator carries no preference model, which is the whole reason
+            // it is reported beside the R2 gain.
+            let fig = exp1::MatchedEpsilon::new(&rows, *n);
+            if fig.has_data() {
+                if fig.space() != space.tag() {
+                    return Err(mixed_spaces(fig.space(), &path, &args.results_dir, space));
                 }
                 save(&fig, &args.out_dir, space)?;
             }
@@ -215,4 +223,24 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// The Exp 1 table was scored in a different objective space than the sweeps.
+///
+/// Both Exp 1 figures draw nothing identifying, so the filename is the only
+/// record of the space and a table from the other one would be silently
+/// mislabelled — the two are not comparable. *`table`* is the `--exp1` path,
+/// *`results_dir`* the sweeps whose space was resolved.
+fn mixed_spaces(
+    table_space: &str,
+    table: &Path,
+    results_dir: &Path,
+    space: ObjectiveSpace,
+) -> Error {
+    Error::MixedObjectiveSpaces {
+        first: table.display().to_string(),
+        first_space: ObjectiveSpace::from_str(table_space).map_or("unknown", ObjectiveSpace::tag),
+        second: results_dir.display().to_string(),
+        second_space: space.tag(),
+    }
 }
