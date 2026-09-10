@@ -2,9 +2,11 @@
 //!
 //! The binary itself is thin glue over `cell_summary`, which has its own tests.
 //! What is new here, and so what is worth pinning, is the ground-truth map and
-//! the ΔR2 sign convention.
+//! the sign conventions of the two comparisons it forms — ΔR2 against the
+//! Euclidean baseline, and the ε pair against the matched arm.
 
 use fitting_analysis::cell::{truth_of, GEOMETRIES, SYNTH_TRUTH};
+use fitting_analysis::indicators::epsilon_pair;
 use fitting_analysis::objectives::{ObjectiveSpace, Row};
 use fitting_analysis::r2::{front_utilities, r2, Weights};
 use fitting_analysis::TrialRecord;
@@ -148,4 +150,48 @@ fn delta_r2_is_positive_when_the_row_beats_the_baseline() {
             region.name
         );
     }
+}
+
+// ─── The ε orientation ───────────────────────────────────────────────────────
+
+/// `epsilon_summary` calls `epsilon_pair(matched, arm)` — the matched geometry
+/// as the treatment, the mismatched arm as the control — which is what makes
+/// `delta_eps` read the same way round as `delta_r2`. Swapping the arguments
+/// would flip both stored directions *and* the sign of the summary, and every
+/// number would still look plausible.
+#[test]
+fn epsilon_is_formed_with_the_matched_arm_as_the_treatment() {
+    // A matched front that covers the mismatched one outright: every objective
+    // higher, so no shift is needed to dominate it.
+    let matched = vec![point(0.9)];
+    let arm = vec![point(0.4)];
+
+    let eps = epsilon_pair(&matched, &arm).expect("both fronts are non-empty");
+
+    // I(matched, arm) <= 0: the matched front covers the arm's.
+    assert!(
+        eps.setting_vs_baseline <= 0.0,
+        "I(matched, arm) = {}",
+        eps.setting_vs_baseline
+    );
+    assert!(eps.setting_covers_baseline());
+    // And not the other way round.
+    assert!(eps.baseline_vs_setting > 0.0);
+    assert!(!eps.baseline_covers_setting());
+    // Positive delta = the matched geometry came out ahead, as for ΔR2.
+    assert!(eps.delta > 0.0, "delta = {}", eps.delta);
+}
+
+/// The other side of the same convention: a matched arm that *lost* has to come
+/// out negative rather than merely small.
+#[test]
+fn a_beaten_matched_arm_gives_a_negative_delta_eps() {
+    let matched = vec![point(0.4)];
+    let arm = vec![point(0.9)];
+
+    let eps = epsilon_pair(&matched, &arm).expect("both fronts are non-empty");
+
+    assert!(eps.setting_vs_baseline > 0.0);
+    assert!(eps.baseline_covers_setting());
+    assert!(eps.delta < 0.0, "delta = {}", eps.delta);
 }
