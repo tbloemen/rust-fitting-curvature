@@ -30,9 +30,6 @@
 
 pub mod exp1;
 pub mod exp2;
-pub mod exp3;
-pub mod exp4;
-pub mod exp5;
 pub mod r2_bars;
 
 use fitting_core::cast::{count_to_f64, to_i32};

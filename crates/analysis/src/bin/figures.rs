@@ -18,7 +18,7 @@ use std::str::FromStr;
 
 use clap::Parser;
 
-use fitting_analysis::figures::{self, exp1, exp2, exp3, exp4, exp5, r2_bars, save};
+use fitting_analysis::figures::{self, exp1, exp2, r2_bars, save};
 use fitting_analysis::objectives::ObjectiveSpace;
 use fitting_analysis::{Error, Result};
 
@@ -126,62 +126,11 @@ fn main() -> Result<()> {
         }
     }
 
-    if args.exp.contains(&3) {
-        for n in &args.n {
-            let fig = exp3::KappaScatter::new(&cells, &args.results_dir, *n, space)?;
-            if fig.has_kappa_data() {
-                save(&fig, &args.out_dir, space)?;
-            }
-
-            // One small SVG per dataset rather than one wide strip, so the
-            // panels can be arranged freely in the report.
-            for fig in exp3::RmsAnchored::panels(&cells, *n, space) {
-                if fig.has_anchored() {
-                    save(&fig, &args.out_dir, space)?;
-                }
-            }
-        }
-    }
-
     // Exp 4 is the one figure that is *not* drawn once per N: ρ is a within-cell
     // rank correlation, so two sample sizes are two populations rather than a
     // trend, and overlaying them only doubled the marks. The largest N asked for
     // is the one plotted — `--n 1000` alone still gets a figure.
     if args.exp.contains(&4) {
-        if let Some(n) = args.n.iter().max() {
-            // ρ is a within-cell rank correlation over every trial, not over a
-            // front, so it does not depend on the objective space.
-            let fig = exp4::RhoManProj::new(&cells, *n);
-            if fig.has_data() {
-                save(&fig, &args.out_dir, space)?;
-            }
-        }
-
-        // The gap figure *is* drawn once per N: its unit is a front point, not
-        // a cell, so the two sample sizes are two independent estimates of the
-        // same κ trend and each one stands on its own.
-        //
-        // Each also gets a zoom above `--gap-zoom-kappa`, as its own file. The
-        // full figure's x axis is dominated by the collapsed-embedding spike at
-        // κ ≈ 2e-7, three decades left of anything else; the zoom is where the
-        // curved half of the sweep actually lives. Both are kept — the zoom
-        // excludes real front points, and the reader should be able to see what.
-        for n in &args.n {
-            let fig = exp4::ProjGap::new(&cells, *n, space);
-            if fig.has_data() {
-                save(&fig, &args.out_dir, space)?;
-            }
-
-            // A floor of 0 is "no zoom", not "zoom at zero": with it the zoom
-            // would carry the full figure's name and overwrite it.
-            if args.gap_zoom_kappa > 0.0 {
-                let zoom = exp4::ProjGap::new(&cells, *n, space).zoomed(args.gap_zoom_kappa);
-                if zoom.has_data() {
-                    save(&zoom, &args.out_dir, space)?;
-                }
-            }
-        }
-
         // The R2 table as bar charts, one per (dataset, geometry) per N. These
         // come from the stage-2 JSONL rather than from `cells`, so they are the
         // same numbers the thesis table carries, and they go in their own
@@ -196,20 +145,6 @@ fn main() -> Result<()> {
         for n in &args.n {
             for fig in r2_bars::R2Bars::panels(&deltas, *n, space) {
                 save(&fig, &bars_dir, space)?;
-            }
-        }
-    }
-
-    if args.exp.contains(&5) {
-        for n in &args.n {
-            let fig = exp5::FrontGrid::new(&cells, *n, space);
-            if fig.has_data() {
-                save(&fig, &args.out_dir, space)?;
-            }
-
-            let fig = exp5::Marginals::new(&cells, *n, space);
-            if fig.has_data() {
-                save(&fig, &args.out_dir, space)?;
             }
         }
     }
