@@ -156,8 +156,8 @@ use fitting_core::metrics::{Metric, Space, ALL};
 
 use super::{
     binned_median_on, draw_legend_grid, geometry_color, log_tick, metric_color, metric_dash,
-    padded_log_range, padded_range, BinScale, CellMap, Figure, LegendEntry, LinearTicks,
-    LogTicks, ObjectiveSpace, Res, CURVED, OBJECTIVES, OK_BLACK,
+    padded_log_range, padded_range, BinScale, CellMap, Figure, LegendEntry, LinearTicks, LogTicks,
+    ObjectiveSpace, Res, CURVED, OBJECTIVES, OK_BLACK,
 };
 use crate::objectives::is_minimized_metric;
 use crate::records::TrialRecord;
@@ -920,10 +920,7 @@ where
             chart.draw_series(std::iter::once(Circle::new(*p, 3, color.filled())))?;
             continue;
         }
-        chart.draw_series(LineSeries::new(
-            run.iter().copied(),
-            color.stroke_width(2),
-        ))?;
+        chart.draw_series(LineSeries::new(run.iter().copied(), color.stroke_width(2)))?;
     }
     Ok(())
 }
@@ -996,7 +993,11 @@ mod tests {
         let y = YAxis::of(&points).expect("drawable");
         assert_eq!(y.scale, BinScale::Linear);
         assert_eq!(y.runs, vec![points]);
-        assert!(y.range.0.abs() < f64::EPSILON, "floored at zero, got {}", y.range.0);
+        assert!(
+            y.range.0.abs() < f64::EPSILON,
+            "floored at zero, got {}",
+            y.range.0
+        );
         assert!(y.range.1 > 0.95);
     }
 

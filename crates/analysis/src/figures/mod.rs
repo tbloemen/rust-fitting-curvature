@@ -802,7 +802,11 @@ pub fn log_range_above_floor(values: &[f64], frac: f64) -> Option<(f64, f64)> {
     } else {
         let (q1, q3) = (quantile(&logs, 0.25)?, quantile(&logs, 0.75)?);
         let iqr = q3 - q1;
-        let floor = if iqr > 0.0 { q1 - 1.5 * iqr } else { f64::NEG_INFINITY };
+        let floor = if iqr > 0.0 {
+            q1 - 1.5 * iqr
+        } else {
+            f64::NEG_INFINITY
+        };
         let kept: Vec<f64> = logs.into_iter().filter(|v| *v >= floor).collect();
         padded_range(&kept, frac)?
     };
