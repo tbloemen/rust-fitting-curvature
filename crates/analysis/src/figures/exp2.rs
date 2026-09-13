@@ -4,7 +4,9 @@
 //! [`MetricTrend`] is the figure this module draws: **curvature on x, the
 //! metric reading on y, every metric bounded in `[0, 1]` overlaid on one pair
 //! of axes, one figure per embedding geometry.** Two figures per x axis, not
-//! three — see *No Euclidean panel* below.
+//! three — see *No Euclidean panel* below. [`UnboundedTrend`] is the same
+//! figure for the metrics that are *not* bounded, one panel per metric — see
+//! *The unbounded metrics*.
 //!
 //! ### Two x axes
 //!
@@ -82,6 +84,37 @@
 //! for the R2 indicator — would draw it as a flat line along the bottom. Hence
 //! [`reading`] rather than `oriented`.
 //!
+//! ### The unbounded metrics
+//!
+//! The registry holds three more projected-space metrics — `dunn_index`,
+//! `davies_bouldin_ratio`, `cluster_density_measure` — that are ratios,
+//! unbounded above, and so not objectives. [`UnboundedTrend`] draws them from
+//! the same trials, on the same bins and the same x axes, under the same
+//! log/`_linear` rule, and differs from [`MetricTrend`] in exactly the ways
+//! their unboundedness forces:
+//!
+//! * **One panel per metric.** Their bin medians sit at ~0.9, ~0.001 and
+//!   ~10 → 10⁸ respectively; no single axis reads all three, and the y-axis
+//!   label naming the metric is the only legend needed. The set is the
+//!   registry's `Space::Projected && !is_objective()` ([`unbounded_metrics`]),
+//!   not a list here.
+//! * **The y axis is the metric's own**, and its scale is decided by the same
+//!   rule as x ([`natural_scale`] over the medians): logarithmic where they
+//!   span a decade, linear otherwise. Both are this crate's own tick
+//!   coordinates ([`super::LinearTicks`], [`super::LogTicks`]) because the range is data:
+//!   plotters drops the last linear tick and labels a 1.2-decade log axis once.
+//! * **A log y axis breaks the curve at bins that are off its scale**
+//!   ([`YAxis::of`]). A collapsed embedding — every hyperbolic trial below
+//!   κ ≈ 1e-5 — drives all three ratios to zero, or to ~1e-34 for
+//!   `cluster_density_measure`, thirty decades under the body of the curve.
+//!   The range is fenced at the *low* end only (Tukey, in decades —
+//!   [`super::log_range_above_floor`]); the high end is the metric doing what
+//!   it measures, and the two-decade rise of `cluster_density_measure` in its
+//!   last κ bin is a finding, not a tail.
+//! * The curve is drawn in the geometry's colour, solid, since there is one
+//!   per panel. Filenames put the metric where the other figure puts
+//!   `metric`: `exp2_dunn_index_vs_kappa_hyperbolic_linear_N1000_obj10`.
+//!
 //! ### No Euclidean panel
 //!
 //! `κ = |K|·R_rms²` and Euclidean space has `K = 0` exactly, so every Euclidean
@@ -119,12 +152,12 @@
 use plotters::coord::Shift;
 use plotters::prelude::*;
 
-use fitting_core::metrics::Metric;
+use fitting_core::metrics::{Metric, Space, ALL};
 
 use super::{
-    binned_median_on, draw_legend_grid, log_tick, metric_color, metric_dash, padded_log_range,
-    padded_range, BinScale, CellMap, Figure, LegendEntry, LinearTicks, ObjectiveSpace, Res, CURVED,
-    OBJECTIVES, OK_BLACK,
+    binned_median_on, draw_legend_grid, geometry_color, log_tick, metric_color, metric_dash,
+    padded_log_range, padded_range, BinScale, CellMap, Figure, LegendEntry, LinearTicks,
+    LogTicks, ObjectiveSpace, Res, CURVED, OBJECTIVES, OK_BLACK,
 };
 use crate::objectives::is_minimized_metric;
 use crate::records::TrialRecord;
@@ -189,6 +222,81 @@ impl XAxis {
 /// handful of points flips on one of them.
 const MIN_PER_BIN: usize = 20;
 
+/// Every trial the panels at one N and geometry draw from — the [`SETTING`]
+/// cells, pooled over datasets — paired with its *x* value.
+///
+/// A trial without an x value is not a point on this figure at all. The `> 0`
+/// is the log axis' requirement, not a quality filter: κ = 0 is Euclidean,
+/// which has no panel here, and |K| is searched from 1e-6 up.
+fn pooled_trials<'a>(
+    cells: &'a CellMap,
+    n: usize,
+    geometry: &str,
+    x: XAxis,
+) -> Vec<(f64, &'a TrialRecord)> {
+    cells
+        .iter()
+        .filter(|(cell, _)| cell.setting == SETTING && cell.n == n && cell.geometry == geometry)
+        .flat_map(|(_, records)| records.iter())
+        .filter_map(|r| {
+            x.value(r)
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .map(|v| (v, r))
+        })
+        .collect()
+}
+
+/// How an axis over *values* is naturally spaced: logarithmic when the
+/// positive values span a decade or more, linear otherwise.
+///
+/// **A log axis needs a decade to label.** plotters derives a log scale's key
+/// points from its endpoints and finds none inside a window narrower than one
+/// decade, so the spherical κ panel — pinned to a factor of ~1.4 by the
+/// wrong-pole gauge — came out with no x ticks at all. Below a decade the axis
+/// is linear, which is also the honest rendering: nothing about that window is
+/// multiplicative.
+///
+/// The same rule serves both axes: x over the trials' κ or |K|, and, for
+/// [`UnboundedTrend`], y over one metric's bin medians.
+fn natural_scale(values: &[f64]) -> BinScale {
+    match padded_log_range(values, 0.0) {
+        Some((lo, hi)) if hi / lo >= 10.0 => BinScale::Log,
+        _ => BinScale::Linear,
+    }
+}
+
+/// The x-axis scales a geometry is rendered at, given its natural one.
+///
+/// Where the natural axis is logarithmic, the linear rendering of the same
+/// trials is drawn as well, as a second file. Seven decades of x compressed
+/// onto equal-width bins is a different reading of the same corpus — it shows
+/// where the trials actually *are*, which the log axis deliberately flattens —
+/// and neither is a substitute for the other.
+fn renderings(natural: BinScale) -> &'static [BinScale] {
+    match natural {
+        BinScale::Log => &[BinScale::Log, BinScale::Linear],
+        BinScale::Linear => &[BinScale::Linear],
+    }
+}
+
+/// The x range of a panel drawn on *scale*: the span of the *drawn* bin
+/// centres, padded a little, falling back to the bin edges' span.
+///
+/// The axis spans the drawn points, not the trials: a curve stops at the last
+/// bin that cleared [`MIN_PER_BIN`], and the sparse tail beyond it — there are
+/// trials there, just too few per bin to take a median of — would otherwise
+/// read as empty axis. Padded in the axis' own metric so the end points do not
+/// sit on the frame; not snapped to whole decades, which would reopen exactly
+/// that gap. plotters puts a log axis' ticks on powers of ten whatever the
+/// endpoints are.
+fn x_range_of(drawn: &[f64], edges: &[f64], scale: BinScale) -> (f64, f64) {
+    let span = (edges[0], edges[edges.len() - 1]);
+    match scale {
+        BinScale::Log => padded_log_range(drawn, 0.03).unwrap_or(span),
+        BinScale::Linear => padded_range(drawn, 0.03).unwrap_or(span),
+    }
+}
+
 /// Half of `exp1::MatchedGain::size()` (740 x 450), so two of these occupy the
 /// width one Exp 1 figure does and the pair sits side by side at the A4 text
 /// width.
@@ -246,47 +354,10 @@ impl MetricTrend {
     pub fn panels(cells: &CellMap, n: usize, x: XAxis) -> Vec<MetricTrend> {
         let mut out: Vec<MetricTrend> = Vec::new();
         for geometry in CURVED {
-            // A trial without an x value is not a point on this figure at
-            // all. The `> 0` is the log axis' requirement, not a quality
-            // filter: κ = 0 is Euclidean, which has no panel here, and |K| is
-            // searched from 1e-6 up.
-            let kept: Vec<(f64, &TrialRecord)> = cells
-                .iter()
-                .filter(|(cell, _)| {
-                    cell.setting == SETTING && cell.n == n && cell.geometry == geometry
-                })
-                .flat_map(|(_, records)| records.iter())
-                .filter_map(|r| {
-                    x.value(r)
-                        .filter(|v| v.is_finite() && *v > 0.0)
-                        .map(|v| (v, r))
-                })
-                .collect();
-
+            let kept = pooled_trials(cells, n, geometry, x);
             let xs: Vec<f64> = kept.iter().map(|(v, _)| *v).collect();
-            // **A log axis needs a decade to label.** plotters derives a log
-            // scale's key points from its endpoints and finds none inside a
-            // window narrower than one decade, so the spherical κ panel —
-            // pinned to a factor of ~1.4 by the wrong-pole gauge — came out
-            // with no x ticks at all. Below a decade the axis is linear, which
-            // is also the honest rendering: nothing about that window is
-            // multiplicative.
-            let natural = match padded_log_range(&xs, 0.0) {
-                Some((lo, hi)) if hi / lo >= 10.0 => BinScale::Log,
-                _ => BinScale::Linear,
-            };
-
-            // Where the natural axis is logarithmic, the linear rendering of
-            // the same trials is drawn as well, as a second file. Seven decades
-            // of x compressed onto equal-width bins is a different reading of
-            // the same corpus — it shows where the trials actually *are*, which
-            // the log axis deliberately flattens — and neither is a substitute
-            // for the other.
-            let scales: &[BinScale] = match natural {
-                BinScale::Log => &[BinScale::Log, BinScale::Linear],
-                BinScale::Linear => &[BinScale::Linear],
-            };
-            for &scale in scales {
+            let natural = natural_scale(&xs);
+            for &scale in renderings(natural) {
                 if let Some(panel) =
                     Self::panel(x, geometry, n, &kept, &xs, scale, scale != natural)
                 {
@@ -316,22 +387,11 @@ impl MetricTrend {
             return None;
         }
 
-        // The axis spans the *drawn* points, not the trials: a curve stops at
-        // the last bin that cleared MIN_PER_BIN, and the sparse tail beyond it
-        // — there are trials there, just too few per bin to take a median of
-        // — would otherwise read as empty axis. Padded a little in the axis'
-        // own metric so the end points do not sit on the frame; not snapped to
-        // whole decades, which would reopen exactly that gap. plotters puts a
-        // log axis' ticks on powers of ten whatever the endpoints are.
         let drawn: Vec<f64> = series
             .iter()
             .flat_map(|s| s.points.iter().map(|p| p.0))
             .collect();
-        let span = (edges[0], edges[edges.len() - 1]);
-        let x_range = match scale {
-            BinScale::Log => padded_log_range(&drawn, 0.03).unwrap_or(span),
-            BinScale::Linear => padded_range(&drawn, 0.03).unwrap_or(span),
-        };
+        let x_range = x_range_of(&drawn, &edges, scale);
 
         Some(MetricTrend {
             x,
@@ -594,6 +654,280 @@ impl Figure for MetricLegend {
     }
 }
 
+// ─── Unbounded metrics ───────────────────────────────────────────────────────
+
+/// Every projected-space metric the registry does *not* bound in `[0, 1]` —
+/// the complement of [`OBJECTIVES`] on the same surface, read off the registry
+/// the same way. `unbounded_metrics_are_the_three_ratios` pins what that is
+/// today.
+fn unbounded_metrics() -> impl Iterator<Item = Metric> {
+    ALL.iter()
+        .copied()
+        .filter(|m| m.space() == Space::Projected && !m.is_objective())
+}
+
+/// Fraction of the y span kept clear above and below the drawn medians.
+const Y_PAD: f64 = 0.05;
+
+/// One unbounded metric against one curvature ([`XAxis`]), for one embedding
+/// geometry — see *The unbounded metrics* in the module doc. Same population,
+/// bins and x axis as [`MetricTrend`]; what differs is that the y axis is the
+/// metric's own.
+pub struct UnboundedTrend {
+    x: XAxis,
+    geometry: &'static str,
+    n: usize,
+    metric: Metric,
+    /// Runs of consecutive drawn bins, `(x, median)` each. More than one run
+    /// only where a bin inside the curve fell outside `y_range`, so the line
+    /// breaks there rather than jumping across.
+    runs: Vec<Vec<(f64, f64)>>,
+    x_range: (f64, f64),
+    x_scale: BinScale,
+    alternate: bool,
+    y_range: (f64, f64),
+    y_scale: BinScale,
+}
+
+impl UnboundedTrend {
+    /// One panel per (curved geometry, x-axis rendering, unbounded metric), in
+    /// that nesting order; a combination with no drawable bins is absent.
+    #[must_use]
+    pub fn panels(cells: &CellMap, n: usize, x: XAxis) -> Vec<UnboundedTrend> {
+        let mut out = Vec::new();
+        for geometry in CURVED {
+            let kept = pooled_trials(cells, n, geometry, x);
+            let xs: Vec<f64> = kept.iter().map(|(v, _)| *v).collect();
+            let natural = natural_scale(&xs);
+            for &scale in renderings(natural) {
+                let Some(edges) = scale.edges(&xs, N_BINS) else {
+                    continue;
+                };
+                for metric in unbounded_metrics() {
+                    let Some(series) = Series::build(metric, &edges, scale, &kept) else {
+                        continue;
+                    };
+                    let Some(y) = YAxis::of(&series.points) else {
+                        continue;
+                    };
+                    let drawn: Vec<f64> = y.runs.iter().flatten().map(|p| p.0).collect();
+                    out.push(UnboundedTrend {
+                        x,
+                        geometry,
+                        n,
+                        metric,
+                        x_range: x_range_of(&drawn, &edges, scale),
+                        x_scale: scale,
+                        alternate: scale != natural,
+                        runs: y.runs,
+                        y_range: y.range,
+                        y_scale: y.scale,
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    /// Always true for a panel [`UnboundedTrend::panels`] returned; kept so
+    /// the driver reads the same as every other figure's.
+    #[must_use]
+    pub fn has_data(&self) -> bool {
+        self.runs.iter().any(|r| !r.is_empty())
+    }
+}
+
+/// The y axis of one [`UnboundedTrend`] panel, decided from its bin medians.
+struct YAxis {
+    scale: BinScale,
+    range: (f64, f64),
+    /// The medians that sit inside `range`, as runs of consecutive bins.
+    runs: Vec<Vec<(f64, f64)>>,
+}
+
+impl YAxis {
+    /// *points* are one metric's `(x, median)` per drawn bin, in x order.
+    /// `None` when none of them can be placed.
+    ///
+    /// The scale is [`natural_scale`] over the medians, the same rule as x. On
+    /// a linear axis every median is drawn and the range is padded around them,
+    /// floored at zero — the three metrics are non-negative by construction,
+    /// and an axis dipping below zero would say otherwise.
+    ///
+    /// A log axis is different. Its range is [`super::log_range_above_floor`]
+    /// — Tukey's lower fence in decades, the top left open — and a median
+    /// outside it is **not drawn**, the line breaking at that bin. Two things
+    /// make that necessary rather than cosmetic. A median of zero has no place
+    /// on a log axis at all; and `cluster_density_measure` reads ~1e-34 on a
+    /// collapsed embedding, which is where every hyperbolic trial below
+    /// κ ≈ 1e-5 sits, so the low-κ bins would otherwise stretch the axis over
+    /// thirty-odd empty decades and flatten the three the metric actually moves
+    /// in. The break is the honest rendering: the metric is not "low" there,
+    /// it is off the scale. The fence is one-sided because the failure is:
+    /// a collapsed embedding drives these ratios to zero, never up, and the
+    /// high end of the curve is the signal.
+    fn of(points: &[(f64, f64)]) -> Option<Self> {
+        let ys: Vec<f64> = points.iter().map(|p| p.1).collect();
+        let scale = natural_scale(&ys);
+        let range = match scale {
+            BinScale::Log => super::log_range_above_floor(&ys, Y_PAD)?,
+            BinScale::Linear => {
+                let (lo, hi) = padded_range(&ys, Y_PAD)?;
+                (lo.max(0.0), hi)
+            }
+        };
+        let inside = |y: f64| match scale {
+            BinScale::Log => y > 0.0 && y >= range.0 && y <= range.1,
+            BinScale::Linear => true,
+        };
+
+        let mut runs: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut open = false;
+        for &p in points {
+            if inside(p.1) {
+                if !open {
+                    runs.push(Vec::new());
+                    open = true;
+                }
+                runs.last_mut().expect("a run was just opened").push(p);
+            } else {
+                open = false;
+            }
+        }
+        if runs.is_empty() {
+            return None;
+        }
+        Some(Self { scale, range, runs })
+    }
+}
+
+impl Figure for UnboundedTrend {
+    fn name(&self) -> String {
+        // The `_linear` marks the alternate x rendering, exactly as
+        // `MetricTrend::name` does; the y scale is read off the axis.
+        let axis = if self.alternate { "_linear" } else { "" };
+        format!(
+            "exp2_{}_vs_{}_{}{axis}_N{}",
+            self.metric.name(),
+            self.x.tag(),
+            self.geometry,
+            self.n
+        )
+    }
+
+    fn size(&self) -> (u32, u32) {
+        PANEL
+    }
+
+    fn draw<DB: DrawingBackend>(&self, root: &DrawingArea<DB, Shift>) -> Res
+    where
+        DB::ErrorType: 'static,
+    {
+        let mut builder = ChartBuilder::on(root);
+        builder
+            .margin(6)
+            .margin_right(12)
+            .caption(
+                self.geometry,
+                ("sans-serif", 14)
+                    .into_font()
+                    .style(FontStyle::Bold)
+                    .color(&OK_BLACK),
+            )
+            .x_label_area_size(34)
+            // Wider than `MetricTrend`'s: a y tick here can be `100000` or
+            // `0.0002`, not `0.8`.
+            .y_label_area_size(58);
+
+        let (xlo, xhi) = self.x_range;
+        let y_desc = label(self.metric);
+        let color = geometry_color(self.geometry);
+        // Four axis pairings, one chart type each; the curve itself is drawn
+        // by one generic body. The x ticks are `MetricTrend`'s; y is always
+        // this crate's own ticks, log or linear, because the range is data
+        // and plotters loses the last linear tick and labels a short log axis
+        // once — see `LinearTicks` and `LogTicks`.
+        match (self.x_scale, self.y_scale) {
+            (BinScale::Log, BinScale::Log) => {
+                let yt = LogTicks::new(self.y_range, 5);
+                let mut chart = builder.build_cartesian_2d((xlo..xhi).log_scale(), yt.clone())?;
+                style_mesh!(chart.configure_mesh())
+                    .x_desc(self.x.desc())
+                    .y_desc(y_desc)
+                    .x_label_formatter(&log_tick)
+                    .y_label_formatter(&|v| yt.label(v))
+                    .x_labels(5)
+                    .draw()?;
+                draw_runs(&mut chart, &self.runs, color)?;
+            }
+            (BinScale::Log, BinScale::Linear) => {
+                let yt = LinearTicks::new(self.y_range, 4);
+                let mut chart = builder.build_cartesian_2d((xlo..xhi).log_scale(), yt.clone())?;
+                style_mesh!(chart.configure_mesh())
+                    .x_desc(self.x.desc())
+                    .y_desc(y_desc)
+                    .x_label_formatter(&log_tick)
+                    .y_label_formatter(&|v| yt.label(v))
+                    .x_labels(5)
+                    .draw()?;
+                draw_runs(&mut chart, &self.runs, color)?;
+            }
+            (BinScale::Linear, BinScale::Log) => {
+                let xt = LinearTicks::new(self.x_range, 4);
+                let yt = LogTicks::new(self.y_range, 5);
+                let mut chart = builder.build_cartesian_2d(xt.clone(), yt.clone())?;
+                style_mesh!(chart.configure_mesh())
+                    .x_desc(self.x.desc())
+                    .y_desc(y_desc)
+                    .x_label_formatter(&|v| xt.label(v))
+                    .y_label_formatter(&|v| yt.label(v))
+                    .draw()?;
+                draw_runs(&mut chart, &self.runs, color)?;
+            }
+            (BinScale::Linear, BinScale::Linear) => {
+                let xt = LinearTicks::new(self.x_range, 4);
+                let yt = LinearTicks::new(self.y_range, 4);
+                let mut chart = builder.build_cartesian_2d(xt.clone(), yt.clone())?;
+                style_mesh!(chart.configure_mesh())
+                    .x_desc(self.x.desc())
+                    .y_desc(y_desc)
+                    .x_label_formatter(&|v| xt.label(v))
+                    .y_label_formatter(&|v| yt.label(v))
+                    .draw()?;
+                draw_runs(&mut chart, &self.runs, color)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Draw each run as its own solid polyline, so a break between runs is a gap.
+fn draw_runs<DB, X, Y>(
+    chart: &mut ChartContext<DB, Cartesian2d<X, Y>>,
+    runs: &[Vec<(f64, f64)>],
+    color: RGBColor,
+) -> Res
+where
+    DB: DrawingBackend,
+    DB::ErrorType: 'static,
+    X: plotters::coord::ranged1d::Ranged<ValueType = f64>,
+    Y: plotters::coord::ranged1d::Ranged<ValueType = f64>,
+{
+    for run in runs {
+        // A polyline through one point draws nothing; mark it so an isolated
+        // bin between two breaks is not simply lost.
+        if let [p] = run.as_slice() {
+            chart.draw_series(std::iter::once(Circle::new(*p, 3, color.filled())))?;
+            continue;
+        }
+        chart.draw_series(LineSeries::new(
+            run.iter().copied(),
+            color.stroke_width(2),
+        ))?;
+    }
+    Ok(())
+}
+
 // ─── Skeletons ───────────────────────────────────────────────────────────────
 
 /// Metric readings across the three embedding geometries, one panel per metric.
@@ -638,5 +972,56 @@ impl Figure for MetricPanels<'_> {
         DB::ErrorType: 'static,
     {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fitting_core::metrics::{CLUSTER_DENSITY_MEASURE, DAVIES_BOULDIN_RATIO, DUNN_INDEX};
+
+    #[test]
+    fn unbounded_metrics_are_the_three_ratios() {
+        let got: Vec<Metric> = unbounded_metrics().collect();
+        assert_eq!(
+            got,
+            vec![DAVIES_BOULDIN_RATIO, DUNN_INDEX, CLUSTER_DENSITY_MEASURE]
+        );
+    }
+
+    #[test]
+    fn linear_y_axis_draws_everything_and_floors_at_zero() {
+        // Sub-decade medians, one of them zero: linear, all drawn, one run.
+        let points = vec![(1.0, 0.0), (2.0, 0.8), (3.0, 0.9), (4.0, 0.95)];
+        let y = YAxis::of(&points).expect("drawable");
+        assert_eq!(y.scale, BinScale::Linear);
+        assert_eq!(y.runs, vec![points]);
+        assert!(y.range.0.abs() < f64::EPSILON, "floored at zero, got {}", y.range.0);
+        assert!(y.range.1 > 0.95);
+    }
+
+    #[test]
+    fn log_y_axis_breaks_the_curve_at_off_scale_bins() {
+        // A body over three decades with a collapsed bin at each end and one
+        // in the middle: log, the ~1e-34 and zero medians are outside the
+        // Tukey fence and the line breaks there.
+        // A high spike at the end is signal, not tail, and stays.
+        let mut points: Vec<(f64, f64)> = vec![(0.0, 1e-34), (1.0, 0.0)];
+        points.extend((2..12).map(|i| (f64::from(i), 10f64.powi(i % 4 + 1))));
+        points.push((12.0, 1e-30));
+        points.extend((13..20).map(|i| (f64::from(i), 10f64.powi(i % 4 + 1))));
+        points.push((20.0, 1e9));
+        let y = YAxis::of(&points).expect("drawable");
+        assert_eq!(y.scale, BinScale::Log);
+        assert_eq!(y.runs.len(), 2);
+        assert_eq!(y.runs[0].len(), 10);
+        assert_eq!(y.runs[1].len(), 8);
+        assert!(y.range.0 > 1.0 && y.range.0 <= 10.0);
+        assert!(y.range.1 >= 1e9 && y.range.1 < 1e11);
+    }
+
+    #[test]
+    fn nothing_placeable_is_no_axis() {
+        assert!(YAxis::of(&[]).is_none());
     }
 }

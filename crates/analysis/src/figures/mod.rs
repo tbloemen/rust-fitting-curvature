@@ -15,8 +15,9 @@
 //!   between the same fronts. The figure companions to
 //!   `@tab:geometry-match-r2`, read back from the same JSONL, so they and the
 //!   thesis table cannot disagree.
-//! * **Exp 2** — a skeleton; see the module doc for the two figures the
-//!   results chapter asks for.
+//! * **Exp 2** — the metric-response trends: every `[0,1]` metric overlaid
+//!   against κ and against |K|, and one panel per unbounded metric on its own
+//!   y axis. The module doc lists the two figures still to draw.
 //! * **Exp 3** — a skeleton; see the module doc.
 //! * **Exp 4** — stacked Pareto fronts, one panel per (dataset, geometry) and
 //!   one curve per loss-weight setting; and the R2 levels of the same settings
@@ -778,6 +779,36 @@ pub fn padded_log_range(values: &[f64], frac: f64) -> Option<(f64, f64)> {
     Some((10f64.powf(lo), 10f64.powf(hi)))
 }
 
+/// A padded log range over the values above Tukey's *lower* fence in decades —
+/// [`robust_range`]'s rule, applied at one end only.
+///
+/// For a non-negative ratio metric the far tail is one-sided: a collapsed
+/// embedding drives `dunn_index` and `davies_bouldin_ratio` to exactly zero and
+/// `cluster_density_measure` to ~1e-34, thirty decades under the body, while a
+/// high reading is the metric doing what it measures. A two-sided fence would
+/// cut the high end along with the floor — Exp 2's `cluster_density_measure`
+/// rises two decades in its last κ bin, and that bin is the finding. So the
+/// upper bound is the largest value, padded; only the floor is fenced. Values
+/// at or below zero cannot be placed on a log axis and are dropped first.
+#[must_use]
+pub fn log_range_above_floor(values: &[f64], frac: f64) -> Option<(f64, f64)> {
+    let logs: Vec<f64> = values
+        .iter()
+        .filter(|v| v.is_finite() && **v > 0.0)
+        .map(|v| v.log10())
+        .collect();
+    let (lo, hi) = if logs.len() < 8 {
+        padded_range(&logs, frac)?
+    } else {
+        let (q1, q3) = (quantile(&logs, 0.25)?, quantile(&logs, 0.75)?);
+        let iqr = q3 - q1;
+        let floor = if iqr > 0.0 { q1 - 1.5 * iqr } else { f64::NEG_INFINITY };
+        let kept: Vec<f64> = logs.into_iter().filter(|v| *v >= floor).collect();
+        padded_range(&kept, frac)?
+    };
+    Some((10f64.powf(lo), 10f64.powf(hi)))
+}
+
 /// Widen a log range outward to whole decades.
 ///
 /// Only for *axis* bounds, never for histogram bins. plotters derives log ticks
@@ -888,6 +919,98 @@ impl Ranged for LinearTicks {
     }
 }
 
+/// A log axis whose ticks are chosen to fit, not one per decade.
+///
+/// plotters labels a log axis at powers of ten and nowhere else unless it is
+/// asked for ten times as many ticks as there are decades — so a y axis
+/// spanning 1.2 decades, which is what `dunn_index`'s bin medians do, gets one
+/// label. This climbs the same ladder the other way: the `1, 2, 5 × 10^k` marks
+/// inside the range if at most `max` of them fit, else the decades, else every
+/// second, third, … decade. Like [`LinearTicks`] it is its own [`Ranged`]
+/// coordinate; the mapping is the one plotters' `LogCoord` does, linear in
+/// `ln`. Label it with [`LogTicks::label`].
+#[derive(Debug, Clone)]
+pub struct LogTicks {
+    range: std::ops::Range<f64>,
+    ticks: Vec<f64>,
+}
+
+impl LogTicks {
+    /// Up to `max` ticks inside `(lo, hi)`; none when the range is not a
+    /// positive, finite, non-empty one — the axis still builds, unlabelled.
+    #[must_use]
+    pub fn new((lo, hi): (f64, f64), max: usize) -> Self {
+        let mut out = Self {
+            range: lo..hi,
+            ticks: Vec::new(),
+        };
+        if !(lo.is_finite() && hi.is_finite() && lo > 0.0 && hi > lo) || max == 0 {
+            return out;
+        }
+        let k_lo = to_i32(lo.log10().floor());
+        let k_hi = to_i32(hi.log10().ceil());
+        let inside = |v: f64| v >= lo && v <= hi;
+        let fine: Vec<f64> = (k_lo..=k_hi)
+            .flat_map(|k| [1.0, 2.0, 5.0].map(|m| m * 10f64.powi(k)))
+            .filter(|v| inside(*v))
+            .collect();
+        if fine.len() <= max {
+            out.ticks = fine;
+            return out;
+        }
+        let decades: Vec<f64> = (k_lo..=k_hi)
+            .map(|k| 10f64.powi(k))
+            .filter(|v| inside(*v))
+            .collect();
+        // Every `stride`-th decade, the smallest stride that fits.
+        let stride = decades.len().div_ceil(max).max(1);
+        out.ticks = decades.into_iter().step_by(stride).collect();
+        out
+    }
+
+    /// The tick positions, in axis order.
+    #[must_use]
+    pub fn ticks(&self) -> &[f64] {
+        &self.ticks
+    }
+
+    /// The tick's label: plain decimals in the common range (`0.002`, `200`),
+    /// `2e7` outside it. Same range rule as [`log_tick`].
+    #[must_use]
+    pub fn label(&self, v: &f64) -> String {
+        if !(*v > 0.0 && v.is_finite()) {
+            return String::new();
+        }
+        let k = to_i32(v.log10().floor());
+        if (-4..=5).contains(&k) {
+            let decimals = usize::try_from((-k).max(0)).unwrap_or(0);
+            format!("{v:.decimals$}")
+        } else {
+            let mantissa = v / 10f64.powi(k);
+            format!("{}e{k}", mantissa.round())
+        }
+    }
+}
+
+impl Ranged for LogTicks {
+    type FormatOption = plotters::coord::ranged1d::DefaultFormatting;
+    type ValueType = f64;
+
+    fn map(&self, value: &f64, limit: (i32, i32)) -> i32 {
+        // What `LogCoord<f64>` does: a linear axis over `ln`. Callers never
+        // map a non-positive value — it has no place on this axis.
+        RangedCoordf64::from(self.range.start.ln()..self.range.end.ln()).map(&value.ln(), limit)
+    }
+
+    fn key_points<Hint: plotters::coord::ranged1d::KeyPointHint>(&self, _hint: Hint) -> Vec<f64> {
+        self.ticks.clone()
+    }
+
+    fn range(&self) -> std::ops::Range<f64> {
+        self.range.clone()
+    }
+}
+
 /// Tick label for a log axis.
 ///
 /// plotters accumulates float error while walking decades, handing the default
@@ -921,6 +1044,23 @@ pub fn log_tick(v: &f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_ticks_fill_a_short_range_and_thin_a_long_one() {
+        // 1.2 decades: the 1-2-5 marks fit.
+        let t = LogTicks::new((5e-4, 8e-3), 5);
+        assert_eq!(t.ticks(), &[5e-4, 1e-3, 2e-3, 5e-3]);
+        assert_eq!(t.label(&2e-3), "0.002");
+        // 1.3 decades above one: `200`, not `200.000`.
+        let t = LogTicks::new((20.0, 400.0), 5);
+        assert_eq!(t.ticks(), &[20.0, 50.0, 100.0, 200.0]);
+        assert_eq!(t.label(&200.0), "200");
+        // Seven decades: every second decade, as plotters would.
+        let t = LogTicks::new((10.0, 1e8), 5);
+        assert_eq!(t.ticks(), &[10.0, 1e3, 1e5, 1e7]);
+        assert_eq!(t.label(&1e7), "1e7");
+        assert_eq!(LogTicks::new((0.0, 1.0), 5).ticks(), &[] as &[f64]);
+    }
 
     /// The split has to be behaviour-preserving on the input `binned_median`
     /// was written for: positive, spanning several decades.
