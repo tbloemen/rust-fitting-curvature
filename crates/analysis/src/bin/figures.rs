@@ -127,18 +127,39 @@ fn main() -> Result<()> {
         }
     }
 
-    // Exp 2 and Exp 3 are skeletons: they are dispatched so the slots are
-    // visible here rather than absent, and `has_data` reports false until each
-    // figure is actually drawn.
+    // Exp 2 draws one metric-trend panel per curved geometry and per x axis —
+    // κ, the embedding curvature, and |K|, the searched hyperparameter;
+    // `panels` returns only the ones with data, so there is no guard on the
+    // loop. Their shared legend is a separate file, built from all of the
+    // panels so it names exactly the curves they draw. Its other two figures
+    // are still skeletons, dispatched beside it so the slot is visible here
+    // rather than absent. Everything lands under `<out-dir>/experiment_2`:
+    // the panels and the legend are set together as one row, and a directory
+    // keeps that set from being spread among the other experiments' files.
     if args.exp.contains(&2) {
+        let exp2_dir = args.out_dir.join("experiment_2");
         for n in &args.n {
+            let mut panels = Vec::new();
+            for x in [exp2::XAxis::Kappa, exp2::XAxis::Curvature] {
+                panels.extend(exp2::MetricTrend::panels(&cells, *n, x));
+            }
+            for fig in &panels {
+                save(fig, &exp2_dir, space)?;
+            }
+            let legend = exp2::MetricLegend::from_panels(&panels, *n);
+            if legend.has_data() {
+                save(&legend, &exp2_dir, space)?;
+            }
+
             let fig = exp2::MetricPanels::new(&cells, *n, space);
             if fig.has_data() {
-                save(&fig, &args.out_dir, space)?;
+                save(&fig, &exp2_dir, space)?;
             }
         }
     }
 
+    // Exp 3 is still a skeleton: dispatched so the slot is visible, and
+    // `has_data` reports false until the figure is actually drawn.
     if args.exp.contains(&3) {
         for n in &args.n {
             let fig = exp3::KappaLanding::new(&cells, *n, space);

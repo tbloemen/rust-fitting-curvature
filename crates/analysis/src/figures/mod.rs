@@ -24,12 +24,13 @@
 //!
 //! κ uses **`R_rms`** (`r_rms`), not `R_max` — the thesis definition.
 //!
-//! **The κ and log-axis helpers below have no caller right now and are kept on
+//! **Some κ and log-axis helpers below still have no caller and are kept on
 //! purpose.** `KappaData`, [`load_kappa_data`], [`median_front_kappa`],
-//! [`binned_median`], [`convex_lower_hull`], [`padded_log_range`],
-//! [`snap_to_decades`], [`log_tick`], [`all_datasets`] and [`CURVED`] were
-//! written for figures that Exp 2 and Exp 3 will need again. Do not sweep them
-//! out as dead code.
+//! [`binned_median`], [`convex_lower_hull`], [`snap_to_decades`] and
+//! [`all_datasets`] were written for figures Exp 2 and Exp 3 will need again.
+//! Do not sweep them out as dead code. The rest of that list now has one:
+//! Exp 2's κ axis reads [`padded_log_range`], [`log_tick`], [`CURVED`] and the
+//! two halves of the binner, [`BinScale::edges`] and [`binned_median_on`].
 
 pub mod exp1;
 pub mod exp2;
@@ -40,6 +41,7 @@ use fitting_core::cast::{count_to_f64, to_i32};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use plotters::coord::types::RangedCoordf64;
 use plotters::coord::Shift;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
@@ -102,6 +104,55 @@ pub fn geometry_color(geometry: &str) -> RGBColor {
         "spherical" => OK_VERMILLION,
         _ => OK_BLACK,
     }
+}
+
+/// One Okabe-Ito colour per objective, indexed by position in [`OBJECTIVES`].
+///
+/// Six objectives, six colours — `OK_GREY` is left out on purpose, so it stays
+/// available as the "not one of these" fallback the way it is for a geometry.
+/// Adding a seventh objective would need a seventh distinguishable colour
+/// before this list can grow; `metric_colors_are_distinct` fails first.
+pub const METRIC_PALETTE: [RGBColor; 6] = [
+    OK_BLACK,
+    OK_ORANGE,
+    OK_SKYBLUE,
+    OK_GREEN,
+    OK_BLUE,
+    OK_VERMILLION,
+];
+
+/// Dash pattern per objective, in the same order — so a figure overlaying all
+/// six survives a greyscale print, as Exp 4's settings do. `None` is solid.
+pub const METRIC_DASH: [Option<(i32, i32)>; 6] = [
+    None,
+    Some((7, 4)),
+    Some((2, 3)),
+    Some((11, 4)),
+    Some((7, 3)),
+    Some((2, 2)),
+];
+
+/// The colour a metric is drawn in, by wire name; `OK_GREY` for anything that
+/// is not an objective.
+#[must_use]
+pub fn metric_color(name: &str) -> RGBColor {
+    metric_slot(name).map_or(OK_GREY, |i| METRIC_PALETTE[i])
+}
+
+/// The `(dash, gap)` pattern a metric is drawn with, or `None` for solid.
+#[must_use]
+pub fn metric_dash(name: &str) -> Option<(i32, i32)> {
+    metric_slot(name).and_then(|i| METRIC_DASH[i])
+}
+
+/// Position of *name* in [`OBJECTIVES`], if it is one.
+///
+/// The two style tables are as long as [`OBJECTIVES`] — pinned by
+/// `metric_style_tables_cover_the_objectives` — so the index needs no modulo,
+/// and a seventh objective is a compile-time-length mismatch away from being
+/// caught rather than a silently reused colour.
+fn metric_slot(name: &str) -> Option<usize> {
+    OBJECTIVES.iter().position(|m| m.name() == name)
 }
 
 pub const REAL_DATASETS: [&str; 4] = ["mnist", "fashion_mnist", "pbmc", "wordnet_mammals"];
@@ -313,6 +364,71 @@ where
     Ok(())
 }
 
+/// [`draw_legend`], wrapped onto *cols* columns.
+///
+/// A smaller swatch and font than the single-row form: what makes this exist is
+/// Exp 2's half-width panel, where six entries laid out in one row give each
+/// about 60 px and the labels collide. Rows are as tall as the area divides
+/// into, so the caller sizes the strip by `rows * ~18 px`.
+///
+/// # Panics
+///
+/// Panics if the legend has more than `i32::MAX` rows or columns.
+///
+/// # Errors
+///
+/// Returns drawing backend errors.
+pub fn draw_legend_grid<DB: DrawingBackend>(
+    area: &DrawingArea<DB, Shift>,
+    entries: &[LegendEntry],
+    cols: usize,
+) -> Res
+where
+    DB::ErrorType: 'static,
+{
+    const SWATCH: i32 = 18;
+
+    if entries.is_empty() || cols == 0 {
+        return Ok(());
+    }
+    let (width, height) = area.dim_in_pixel();
+    let font = ("sans-serif", 12).into_font().color(&OK_BLACK);
+    let rows = entries.len().div_ceil(cols);
+    let slot = i32::try_from(width).unwrap_or(i32::MAX) / i32::try_from(cols).unwrap_or(i32::MAX);
+    let row_height =
+        i32::try_from(height).unwrap_or(i32::MAX) / i32::try_from(rows).unwrap_or(i32::MAX);
+    for (i, e) in entries.iter().enumerate() {
+        let col = i32::try_from(i % cols).expect("a legend has fewer than 2^31 columns");
+        let row = i32::try_from(i / cols).expect("a legend has fewer than 2^31 rows");
+        let x0 = col * slot + 6;
+        let y = row * row_height + row_height / 2;
+        match e.dash {
+            // Tile the pattern across the swatch, clipped to its width.
+            Some((dash, gap)) if dash > 0 && gap > 0 => {
+                let mut dash_start = x0;
+                while dash_start < x0 + SWATCH {
+                    let dash_end = (dash_start + dash).min(x0 + SWATCH);
+                    area.draw(&PathElement::new(
+                        vec![(dash_start, y), (dash_end, y)],
+                        e.color.stroke_width(3),
+                    ))?;
+                    dash_start = dash_end + gap;
+                }
+            }
+            _ => area.draw(&PathElement::new(
+                vec![(x0, y), (x0 + SWATCH, y)],
+                e.color.stroke_width(3),
+            ))?,
+        }
+        area.draw(&Text::new(
+            e.label.clone(),
+            (x0 + SWATCH + 5, y),
+            font.clone().pos(Pos::new(HPos::Left, VPos::Center)),
+        ))?;
+    }
+    Ok(())
+}
+
 // ─── Loading & shared data helpers ────────────────────────────────────────────
 
 /// Map every (setting, dataset, n, geometry) to its list of trial records.
@@ -429,33 +545,96 @@ pub fn finite_xy(records: &[TrialRecord], xm: &str, ym: &str) -> (Vec<f64>, Vec<
     (xs, ys)
 }
 
-/// Median of y in log-spaced x bins, for bins with ≥ `min_per_bin` points — the
-/// trend curve through a cloud of independent cells.
+/// How a binned axis is spaced: which edges [`BinScale::edges`] lays down, and
+/// where in a bin [`binned_median_on`] draws its median.
 ///
-/// `min_per_bin` is the guard against reading a trend off two or three cells: a
-/// median over that few flips on a single point, and on a log axis the sparse
-/// tail bins are exactly where that happens. Callers set it from how many cells
-/// they expect per bin, never below 2.
-pub fn binned_median(
+/// The two have to agree. A geometric bin centre on a linear axis puts the
+/// point in the wrong place, and on a bin whose lower edge is near zero it
+/// collapses the centre onto that edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinScale {
+    /// Equal ratios. Non-positive values cannot be placed and are dropped.
+    Log,
+    /// Equal widths.
+    Linear,
+}
+
+impl BinScale {
+    /// `n_bins + 1` edges spanning the usable values of *x*, or `None` when
+    /// they do not span a range at all — none usable, or every one of them
+    /// equal.
+    ///
+    /// Split out of [`binned_median`] so that several *y* series can be binned
+    /// on **one** set of edges. Deriving the edges per series is wrong the
+    /// moment two series drop different rows (a metric a diverged trial did not
+    /// record): the two polylines are then sampled at different x positions and
+    /// cannot be read against each other, which is exactly what Exp 2 overlays
+    /// them to do.
+    #[must_use]
+    pub fn edges(self, x: &[f64], n_bins: usize) -> Option<Vec<f64>> {
+        let usable: Vec<f64> = x
+            .iter()
+            .copied()
+            .filter(|v| v.is_finite() && (self == BinScale::Linear || *v > 0.0))
+            .collect();
+        // Ruled out first so neither fold below can return an infinity, which
+        // is what would leave `hi` a NaN and the comparison undecidable.
+        let (Some(&first), Some(&last)) = (usable.first(), usable.last()) else {
+            return None;
+        };
+        let x_min = usable.iter().copied().fold(first, f64::min);
+        let x_max = usable.iter().copied().fold(last, f64::max);
+        let (lo, hi) = match self {
+            BinScale::Log => (x_min.log10(), x_max.log10()),
+            BinScale::Linear => (x_min, x_max),
+        };
+        if hi <= lo {
+            return None;
+        }
+        Some(
+            (0..=n_bins)
+                .map(|i| {
+                    let t = lo + (hi - lo) * count_to_f64(i) / count_to_f64(n_bins);
+                    match self {
+                        BinScale::Log => 10f64.powf(t),
+                        BinScale::Linear => t,
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// Where in a bin its median is drawn: the geometric mean of the edges on a
+    /// log axis, the arithmetic mean on a linear one. Either way it is the
+    /// point that sits mid-bin *as the axis renders it*.
+    fn centre(self, a: f64, b: f64) -> f64 {
+        match self {
+            BinScale::Log => (a * b).sqrt(),
+            BinScale::Linear => (a + b) / 2.0,
+        }
+    }
+}
+
+/// Median of *y* per bin of *edges*, for bins holding at least `min_per_bin`
+/// points, drawn at the bin centre *scale* defines.
+///
+/// *scale* must be the one *edges* came from — see [`BinScale`].
+///
+/// Bins are closed at both ends, so a point sitting exactly on an interior edge
+/// counts in the two bins that share it. That is deliberate — the alternative
+/// drops a point from the last bin — and it is invisible on continuous data.
+///
+/// `x` and `y` are read pairwise, so they must be the same length; a shorter
+/// one simply truncates the pairing.
+#[must_use]
+pub fn binned_median_on(
+    edges: &[f64],
+    scale: BinScale,
     x: &[f64],
     y: &[f64],
-    n_bins: usize,
     min_per_bin: usize,
 ) -> (Vec<f64>, Vec<f64>) {
     let min_per_bin = min_per_bin.max(2);
-    if x.len() < min_per_bin {
-        return (Vec::new(), Vec::new());
-    }
-    let x_min = x.iter().copied().fold(f64::INFINITY, f64::min);
-    let x_max = x.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let (lo, hi) = (x_min.log10(), x_max.log10());
-    if hi <= lo {
-        let mean = x.iter().sum::<f64>() / count_to_f64(x.len());
-        return (vec![mean], median(y).into_iter().collect());
-    }
-    let edges: Vec<f64> = (0..=n_bins)
-        .map(|i| 10f64.powf(lo + (hi - lo) * count_to_f64(i) / count_to_f64(n_bins)))
-        .collect();
     let mut centres = Vec::new();
     let mut meds = Vec::new();
     for w in edges.windows(2) {
@@ -469,11 +648,42 @@ pub fn binned_median(
         // `median` is None only on an empty slice, which the length test rules
         // out; `if let` keeps that a fact of the code rather than an unwrap.
         if let (true, Some(m)) = (vals.len() >= min_per_bin, median(&vals)) {
-            centres.push((a * b).sqrt());
+            centres.push(scale.centre(a, b));
             meds.push(m);
         }
     }
     (centres, meds)
+}
+
+/// Median of y in log-spaced x bins, for bins with ≥ `min_per_bin` points — the
+/// trend curve through a cloud of independent cells.
+///
+/// [`BinScale::edges`] followed by [`binned_median_on`]. Callers overlaying more
+/// than one series must call those two directly, so every series lands on the
+/// same edges.
+///
+/// `min_per_bin` is the guard against reading a trend off two or three cells: a
+/// median over that few flips on a single point, and on a log axis the sparse
+/// tail bins are exactly where that happens. Callers set it from how many cells
+/// they expect per bin, never below 2.
+#[must_use]
+pub fn binned_median(
+    x: &[f64],
+    y: &[f64],
+    n_bins: usize,
+    min_per_bin: usize,
+) -> (Vec<f64>, Vec<f64>) {
+    let min_per_bin = min_per_bin.max(2);
+    if x.len() < min_per_bin {
+        return (Vec::new(), Vec::new());
+    }
+    let Some(edges) = BinScale::Log.edges(x, n_bins) else {
+        // One x value (or none on a log axis): there is no axis to spread the
+        // set over, so report it as the single point it is.
+        let mean = x.iter().sum::<f64>() / count_to_f64(x.len());
+        return (vec![mean], median(y).into_iter().collect());
+    };
+    binned_median_on(&edges, BinScale::Log, x, y, min_per_bin)
 }
 
 /// Indices of the lower convex hull chain, sorted by x ascending.
@@ -586,6 +796,98 @@ pub fn snap_to_decades((lo, hi): (f64, f64)) -> (f64, f64) {
     )
 }
 
+/// A linear axis whose ticks are computed so the last one is not lost.
+///
+/// plotters' own f64 key points walk the axis by *adding* the step: with
+/// `2.6 + 0.2 + 0.2 + 0.2 = 3.2000000000000006` the accumulated value overshoots
+/// the exact `3.2` it compares against by more than `f64::EPSILON`, and the
+/// tick at the right end of the axis is dropped. Exp 2's spherical panel lost
+/// its `3.2` that way. Here every tick is an integer multiple of the step, so
+/// the k-th tick is `k · step` however many precede it.
+///
+/// The step is the smallest of `1, 2, 5 × 10^e` that fits at most `max` ticks
+/// inside the range, the same 1-2-5 ladder plotters climbs. It is its own
+/// [`Ranged`] coordinate rather than a `with_key_points` binding because
+/// plotters 0.3.7 gives that combinator no `ValueFormatter` over an f64 range,
+/// so `configure_mesh` will not accept it. Label the axis with
+/// [`LinearTicks::label`], which prints exactly the decimals the step needs —
+/// `k · step` is `3.2000000000000004`, and the default formatter would say so.
+#[derive(Debug, Clone)]
+pub struct LinearTicks {
+    range: std::ops::Range<f64>,
+    ticks: Vec<f64>,
+    /// Decimals the step needs: one for `0.2`, none for `10`.
+    decimals: usize,
+}
+
+impl LinearTicks {
+    /// Up to `max` ticks inside `(lo, hi)`; none if the range is not finite or
+    /// has no width — the axis still builds, unlabelled.
+    #[must_use]
+    pub fn new((lo, hi): (f64, f64), max: usize) -> Self {
+        let mut out = Self {
+            range: lo..hi,
+            ticks: Vec::new(),
+            decimals: 0,
+        };
+        let span = hi - lo;
+        if !(span.is_finite() && span > 0.0) || max == 0 {
+            return out;
+        }
+        let exponent = (span / count_to_f64(max)).log10().floor();
+        // Climb the ladder until the tick count fits. `10` is the next decade's
+        // `1`, and the coarsest step that can be needed: one decade up, at most
+        // `max` ticks always fit.
+        for mantissa in [1.0, 2.0, 5.0, 10.0] {
+            let step = mantissa * 10f64.powf(exponent);
+            let k_lo = (lo / step).ceil();
+            let k_hi = (hi / step).floor();
+            if k_hi - k_lo + 1.0 <= count_to_f64(max) {
+                out.decimals = usize::try_from(-to_i32(step.log10().floor())).unwrap_or(0);
+                let mut k = k_lo;
+                while k <= k_hi {
+                    // `ceil` of a slightly negative lower bound is -0.0, and
+                    // `-0.0 * step` would print as "-0".
+                    let v = k * step;
+                    out.ticks.push(if v == 0.0 { 0.0 } else { v });
+                    k += 1.0;
+                }
+                return out;
+            }
+        }
+        out
+    }
+
+    /// The tick positions, in axis order.
+    #[must_use]
+    pub fn ticks(&self) -> &[f64] {
+        &self.ticks
+    }
+
+    /// The tick's label, at the step's own precision.
+    #[must_use]
+    pub fn label(&self, v: &f64) -> String {
+        format!("{:.*}", self.decimals, v)
+    }
+}
+
+impl Ranged for LinearTicks {
+    type FormatOption = plotters::coord::ranged1d::DefaultFormatting;
+    type ValueType = f64;
+
+    fn map(&self, value: &f64, limit: (i32, i32)) -> i32 {
+        RangedCoordf64::from(self.range.clone()).map(value, limit)
+    }
+
+    fn key_points<Hint: plotters::coord::ranged1d::KeyPointHint>(&self, _hint: Hint) -> Vec<f64> {
+        self.ticks.clone()
+    }
+
+    fn range(&self) -> std::ops::Range<f64> {
+        self.range.clone()
+    }
+}
+
 /// Tick label for a log axis.
 ///
 /// plotters accumulates float error while walking decades, handing the default
@@ -614,4 +916,165 @@ pub fn log_tick(v: &f64) -> String {
         };
     }
     format!("{v:.3}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The split has to be behaviour-preserving on the input `binned_median`
+    /// was written for: positive, spanning several decades.
+    #[test]
+    fn the_split_binner_reproduces_binned_median() {
+        let x: Vec<f64> = (0..400)
+            .map(|i| 10f64.powf(-3.0 + f64::from(i) / 80.0))
+            .collect();
+        let y: Vec<f64> = x.iter().map(|v| v.log10() * 0.1 + 0.5).collect();
+
+        let (want_x, want_y) = binned_median(&x, &y, 10, 4);
+        let edges = BinScale::Log
+            .edges(&x, 10)
+            .expect("five decades span a log range");
+        let (got_x, got_y) = binned_median_on(&edges, BinScale::Log, &x, &y, 4);
+
+        assert_eq!(want_x, got_x);
+        assert_eq!(want_y, got_y);
+        assert!(!got_x.is_empty(), "400 points over 10 bins fill every bin");
+    }
+
+    /// The property the split exists for: two series that dropped different
+    /// rows still land on the same bin centres, so their polylines are sampled
+    /// at the same x and can be overlaid.
+    #[test]
+    fn two_series_of_different_length_share_bin_centres() {
+        let x: Vec<f64> = (0..400)
+            .map(|i| 10f64.powf(-3.0 + f64::from(i) / 80.0))
+            .collect();
+        let y: Vec<f64> = x.iter().map(|_| 0.5).collect();
+        let edges = BinScale::Log
+            .edges(&x, 8)
+            .expect("five decades span a log range");
+
+        // The second series is missing every third trial, as a metric a
+        // diverged trial did not record would be.
+        let thinned: Vec<(f64, f64)> = x
+            .iter()
+            .zip(&y)
+            .enumerate()
+            .filter(|(i, _)| i % 3 != 0)
+            .map(|(_, (a, b))| (*a, *b))
+            .collect();
+        let tx: Vec<f64> = thinned.iter().map(|p| p.0).collect();
+        let ty: Vec<f64> = thinned.iter().map(|p| p.1).collect();
+
+        let (full_centres, _) = binned_median_on(&edges, BinScale::Log, &x, &y, 4);
+        let (thin_centres, _) = binned_median_on(&edges, BinScale::Log, &tx, &ty, 4);
+        assert_eq!(full_centres, thin_centres);
+
+        // …which is exactly what deriving the edges per series would break.
+        let (_, own_edges_y) = binned_median(&tx, &ty, 8, 4);
+        let own = BinScale::Log
+            .edges(&tx, 8)
+            .expect("the thinned series still spans decades");
+        assert_ne!(
+            own, edges,
+            "the thinned series has its own min, hence its own edges"
+        );
+        assert_eq!(own_edges_y.len(), thin_centres.len());
+    }
+
+    #[test]
+    fn log_bin_edges_rejects_a_range_it_cannot_place() {
+        assert!(BinScale::Log.edges(&[], 4).is_none(), "nothing to span");
+        assert!(
+            BinScale::Log.edges(&[-1.0, 0.0], 4).is_none(),
+            "no positive value"
+        );
+        assert!(
+            BinScale::Log.edges(&[3.0, 3.0, 3.0], 4).is_none(),
+            "one x, no axis"
+        );
+        assert!(BinScale::Log.edges(&[1.0, 100.0], 4).is_some());
+    }
+
+    /// The linear arm spaces its edges by width, keeps the non-positive values
+    /// a log axis has to drop, and draws each median at the arithmetic centre.
+    #[test]
+    fn linear_bins_are_equal_width_and_centred_arithmetically() {
+        let edges = BinScale::Linear
+            .edges(&[0.0, 4.0], 4)
+            .expect("two distinct values span a linear range");
+        assert_eq!(edges, vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+        // Zero and negatives are values on a linear axis and not on a log
+        // one, which is why the two arms disagree about the same input: Log
+        // drops the 0.0 and is left with a single point to span.
+        assert!(BinScale::Log.edges(&[0.0, 4.0], 4).is_none());
+        assert!(BinScale::Log.edges(&[0.0, 1.0, 4.0], 4).is_some());
+        assert!(BinScale::Linear.edges(&[-2.0, 2.0], 4).is_some());
+        assert!(BinScale::Log.edges(&[-2.0, 0.0], 4).is_none());
+
+        let x = [0.5, 0.6, 0.7, 3.5, 3.6, 3.7];
+        let y = [1.0, 2.0, 3.0, 10.0, 20.0, 30.0];
+        let (centres, meds) = binned_median_on(&edges, BinScale::Linear, &x, &y, 3);
+        assert_eq!(centres, vec![0.5, 3.5], "arithmetic, not geometric");
+        assert_eq!(meds, vec![2.0, 20.0]);
+
+        // The same bin under the log rule would be drawn somewhere else.
+        assert!((BinScale::Log.centre(1.0, 4.0) - 2.0).abs() < 1e-12);
+        assert!((BinScale::Linear.centre(1.0, 4.0) - 2.5).abs() < 1e-12);
+    }
+
+    /// The case plotters gets wrong: four 0.2 steps from 2.6 land on 3.2, which
+    /// its accumulating walk overshoots and drops. The spherical Exp 2 axis.
+    #[test]
+    fn linear_ticks_keep_the_last_tick() {
+        let t = LinearTicks::new((2.46, 3.27), 4);
+        let labels: Vec<String> = t.ticks().iter().map(|v| t.label(v)).collect();
+        assert_eq!(labels, ["2.6", "2.8", "3.0", "3.2"]);
+
+        // Hyperbolic linear panel: whole tens, no decimals, and the padded
+        // lower bound just below zero must not produce a "-0".
+        let t = LinearTicks::new((-1.1, 37.0), 4);
+        let labels: Vec<String> = t.ticks().iter().map(|v| t.label(v)).collect();
+        assert_eq!(labels, ["0", "10", "20", "30"]);
+
+        // Never more than asked for, and a degenerate range builds unlabelled.
+        for hi in [3.0, 3.21, 3.5, 4.0, 9.9] {
+            assert!(
+                LinearTicks::new((2.46, hi), 4).ticks().len() <= 4,
+                "hi={hi}"
+            );
+        }
+        assert!(LinearTicks::new((1.0, 1.0), 4).ticks().is_empty());
+    }
+
+    /// Two metrics sharing a colour would be unreadable, and the style tables
+    /// are indexed by position, so they must be as long as the objective list.
+    #[test]
+    fn metric_style_tables_cover_the_objectives() {
+        assert_eq!(METRIC_PALETTE.len(), OBJECTIVES.len());
+        assert_eq!(METRIC_DASH.len(), OBJECTIVES.len());
+    }
+
+    #[test]
+    fn metric_colors_are_distinct() {
+        let rgb = |c: RGBColor| (c.0, c.1, c.2);
+        for (i, a) in OBJECTIVES.iter().enumerate() {
+            assert_ne!(
+                rgb(metric_color(a.name())),
+                rgb(OK_GREY),
+                "{} is an objective and must not fall through to the grey default",
+                a.name()
+            );
+            for b in &OBJECTIVES[i + 1..] {
+                assert_ne!(
+                    rgb(metric_color(a.name())),
+                    rgb(metric_color(b.name())),
+                    "{} and {} share a colour",
+                    a.name(),
+                    b.name()
+                );
+            }
+        }
+    }
 }
