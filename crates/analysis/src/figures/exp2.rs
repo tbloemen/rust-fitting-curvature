@@ -1,10 +1,29 @@
 //! Experiment 2 (`metric-results`) — what effect does curvature have on the
 //! established visualisation metrics?
 //!
-//! [`MetricVsKappa`] is the figure this module draws: **κ on x, the metric
-//! reading on y, every metric bounded in `[0, 1]` overlaid on one pair of
-//! axes, one figure per embedding geometry.** Two figures, not three — see
-//! *No Euclidean panel* below.
+//! [`MetricTrend`] is the figure this module draws: **curvature on x, the
+//! metric reading on y, every metric bounded in `[0, 1]` overlaid on one pair
+//! of axes, one figure per embedding geometry.** Two figures per x axis, not
+//! three — see *No Euclidean panel* below.
+//!
+//! ### Two x axes
+//!
+//! "Curvature" is two different numbers here, and the figure is drawn once
+//! against each ([`XAxis`]):
+//!
+//! * **`|K|`**, the `curvature_magnitude` hyperparameter — what the optimiser
+//!   *chose*, log-searched over `1e-6..5` (`config/params.json`);
+//! * **`κ = |K|·R_rms²`**, the dimensionless embedding curvature — what the
+//!   embedding *ended up at* once its spread is folded in
+//!   (`TrialRecord::kappa`, thesis `@eq:kappa`).
+//!
+//! Neither reads for the other. κ is the quantity the thesis argues is
+//! comparable across embeddings; `|K|` is the knob a practitioner turns. And on
+//! the sphere κ is blind to `|K|` altogether — `crates/analysis/CLAUDE.md`
+//! § *One κ, one gauge* — so the `|K|` panel is the only one of the two on
+//! which the spherical trials actually move. The two share every other choice
+//! below and a filename that differs only in its slug, `metric_vs_kappa` or
+//! `metric_vs_curvature`.
 //!
 //! ### What is drawn, and from which trials
 //!
@@ -18,18 +37,18 @@
 //! * *`all_off` only*, so the auxiliary loss weights are pinned at zero and do
 //!   not vary along with κ. Pooling every setting would mix two effects.
 //!
-//! Each curve is the **median of its metric in κ bins**, drawn only where a bin
+//! Each curve is the **median of its metric in x bins**, drawn only where a bin
 //! holds at least [`MIN_PER_BIN`] trials. Every curve is binned on one shared
 //! set of edges ([`super::BinScale::edges`] once, then
 //! [`super::binned_median_on`] per metric), so the overlaid lines are sampled at
-//! the same κ positions and can be read against each other — which is the whole
+//! the same x positions and can be read against each other — which is the whole
 //! reason they share a panel.
 //!
 //! ### Two axis scales, two files
 //!
 //! The bins and the axis are one choice ([`super::BinScale`]), because a
 //! geometric bin centre drawn on a linear axis lands in the wrong place. A
-//! geometry whose κ spans a decade or more is rendered **twice**: once
+//! geometry whose x spans a decade or more is rendered **twice**: once
 //! logarithmic, which is the natural reading of a quantity covering seven
 //! decades, and once linear, which shows where the trials actually sit — 64% of
 //! the hyperbolic corpus is below κ = 1.8, and the log axis deliberately
@@ -38,8 +57,10 @@
 //!
 //! Below a decade there is only the linear rendering, and it carries no suffix:
 //! it is that geometry's only figure, and a suffix would imply a log companion
-//! that does not exist. That is the spherical panel — plotters finds no key
-//! points inside a sub-decade log range and drew no x ticks at all.
+//! that does not exist. That is the spherical κ panel — plotters finds no key
+//! points inside a sub-decade log range and drew no x ticks at all. The
+//! spherical `|K|` panel spans the searched decades like the hyperbolic ones
+//! and gets the pair; the rule is data-driven, not per geometry.
 //!
 //! ### Which metrics count as "0 to 1"
 //!
@@ -69,12 +90,12 @@
 //! — the same metrics' *distributions* at κ = 0 — not this one with another
 //! argument.
 //!
-//! The spherical panel **is** drawn, and its κ window is a factor of ~1.4 rather
-//! than the hyperbolic seven decades. That is not a plotting failure: it is the
-//! pole mismatch between `Sphere::center` and `lift_pca_to_manifold` documented
-//! in `crates/analysis/CLAUDE.md` § *One κ, one gauge*, which pins spherical κ
-//! at `mean(θ²)` and makes it blind to `|K|`. Reading the two panels side by
-//! side is how that shows.
+//! The spherical κ panel **is** drawn, and its κ window is a factor of ~1.4
+//! rather than the hyperbolic seven decades. That is not a plotting failure: it
+//! is the pole mismatch between `Sphere::center` and `lift_pca_to_manifold`
+//! documented in `crates/analysis/CLAUDE.md` § *One κ, one gauge*, which pins
+//! spherical κ at `mean(θ²)` and makes it blind to `|K|`. Reading it beside the
+//! spherical `|K|` panel is how that shows.
 //!
 //! ### Layout
 //!
@@ -83,7 +104,9 @@
 //! panel carries the legend: it is its own file, [`MetricLegend`], a portrait
 //! canvas exactly [`PANEL`] tall, meant to be set at the **left** of a pair so
 //! the row reads legend, hyperbolic, spherical. Every canvas in the row is the
-//! same height, so the pair lines up without any alignment trick.
+//! same height, so the pair lines up without any alignment trick. One legend
+//! serves both x axes — the curves are the same metrics in the same colours
+//! whichever way the trials are binned — so it carries no axis slug.
 //!
 //! ### Not this module's other two figures
 //!
@@ -108,11 +131,57 @@ use crate::records::TrialRecord;
 use crate::style_mesh;
 
 /// The loss-weight setting the panels draw from: the baseline, where every
-/// auxiliary weight is zero, so κ is the only thing varying with the metric.
+/// auxiliary weight is zero, so curvature is the only thing varying with the
+/// metric.
 const SETTING: &str = "all_off";
 
-/// Log-spaced κ bins across the panel's whole range.
+/// Bins across the panel's whole range, spaced as the axis is.
 const N_BINS: usize = 30;
+
+/// Which curvature a [`MetricTrend`] panel puts on x — see *Two x axes* in the
+/// module doc. It decides the value read off each trial, the axis title and
+/// the filename slug, and nothing else: binning, scale choice and drawing are
+/// the same code for both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum XAxis {
+    /// `κ = |K|·R_rms²`, the embedding curvature ([`TrialRecord::kappa`]).
+    Kappa,
+    /// `|K|`, the `curvature_magnitude` hyperparameter the search chose.
+    Curvature,
+}
+
+impl XAxis {
+    /// The x value of one trial, or `None` where the record does not carry it.
+    fn value(self, record: &TrialRecord) -> Option<f64> {
+        match self {
+            Self::Kappa => record.kappa(),
+            // The same `|curvature|` fallback `kappa()` uses. Only Euclidean
+            // sweeps omit `curvature_magnitude`, and Euclidean has no panel
+            // here, so it is robustness rather than a path any panel takes.
+            Self::Curvature => record
+                .curvature_magnitude
+                .or_else(|| record.curvature.map(f64::abs)),
+        }
+    }
+
+    /// The axis title. Greek resolves in both backends; arrows and geometric
+    /// shapes do not, so the orientation is stated in words on the y axis, and
+    /// the magnitude bars are ASCII.
+    fn desc(self) -> &'static str {
+        match self {
+            Self::Kappa => "κ",
+            Self::Curvature => "|K|",
+        }
+    }
+
+    /// The filename slug: `exp2_metric_vs_<tag>_…`.
+    fn tag(self) -> &'static str {
+        match self {
+            Self::Kappa => "kappa",
+            Self::Curvature => "curvature",
+        }
+    }
+}
 
 /// Trials a bin needs before its median is drawn. The pooled corpus is ~9,000
 /// trials per (geometry, N) over 24 bins, so a bin at this floor is already a
@@ -148,17 +217,19 @@ struct Series {
     label: String,
     color: RGBColor,
     dash: Option<(i32, i32)>,
-    /// `(κ, median reading)` at each bin centre that cleared [`MIN_PER_BIN`].
+    /// `(x, median reading)` at each bin centre that cleared [`MIN_PER_BIN`].
     points: Vec<(f64, f64)>,
 }
 
-/// Every `[0, 1]`-bounded metric against κ, for one embedding geometry.
-pub struct MetricVsKappa {
+/// Every `[0, 1]`-bounded metric against one curvature ([`XAxis`]), for one
+/// embedding geometry.
+pub struct MetricTrend {
+    x: XAxis,
     geometry: &'static str,
     n: usize,
     series: Vec<Series>,
     x_range: (f64, f64),
-    /// How the κ axis is spaced, and how the bins behind `series` were laid
+    /// How the x axis is spaced, and how the bins behind `series` were laid
     /// down — the two are the same choice, so they are one field.
     scale: BinScale,
     /// Whether this is the linear rendering of a geometry whose natural axis is
@@ -166,17 +237,19 @@ pub struct MetricVsKappa {
     alternate: bool,
 }
 
-impl MetricVsKappa {
-    /// One panel per curved geometry, in [`CURVED`] order; a geometry with no
-    /// binnable trials is absent from the result rather than returned empty,
-    /// the same contract `exp4::R2Bars::panels` has.
+impl MetricTrend {
+    /// One panel per curved geometry, in [`CURVED`] order, with *x* on the x
+    /// axis; a geometry with no binnable trials is absent from the result
+    /// rather than returned empty, the same contract `exp4::R2Bars::panels`
+    /// has.
     #[must_use]
-    pub fn panels(cells: &CellMap, n: usize) -> Vec<MetricVsKappa> {
-        let mut out: Vec<MetricVsKappa> = Vec::new();
+    pub fn panels(cells: &CellMap, n: usize, x: XAxis) -> Vec<MetricTrend> {
+        let mut out: Vec<MetricTrend> = Vec::new();
         for geometry in CURVED {
-            // κ is the x axis, so a trial without one is not a point on this
-            // figure at all. The `> 0` is the log axis' requirement, not a
-            // quality filter: κ = 0 is Euclidean, which has no panel here.
+            // A trial without an x value is not a point on this figure at
+            // all. The `> 0` is the log axis' requirement, not a quality
+            // filter: κ = 0 is Euclidean, which has no panel here, and |K| is
+            // searched from 1e-6 up.
             let kept: Vec<(f64, &TrialRecord)> = cells
                 .iter()
                 .filter(|(cell, _)| {
@@ -184,28 +257,28 @@ impl MetricVsKappa {
                 })
                 .flat_map(|(_, records)| records.iter())
                 .filter_map(|r| {
-                    r.kappa()
-                        .filter(|k| k.is_finite() && *k > 0.0)
-                        .map(|k| (k, r))
+                    x.value(r)
+                        .filter(|v| v.is_finite() && *v > 0.0)
+                        .map(|v| (v, r))
                 })
                 .collect();
 
-            let kappas: Vec<f64> = kept.iter().map(|(k, _)| *k).collect();
+            let xs: Vec<f64> = kept.iter().map(|(v, _)| *v).collect();
             // **A log axis needs a decade to label.** plotters derives a log
             // scale's key points from its endpoints and finds none inside a
-            // window narrower than one decade, so the spherical panel — whose κ
-            // is pinned to a factor of ~1.4 by the wrong-pole gauge — came out
+            // window narrower than one decade, so the spherical κ panel —
+            // pinned to a factor of ~1.4 by the wrong-pole gauge — came out
             // with no x ticks at all. Below a decade the axis is linear, which
             // is also the honest rendering: nothing about that window is
             // multiplicative.
-            let natural = match padded_log_range(&kappas, 0.0) {
+            let natural = match padded_log_range(&xs, 0.0) {
                 Some((lo, hi)) if hi / lo >= 10.0 => BinScale::Log,
                 _ => BinScale::Linear,
             };
 
             // Where the natural axis is logarithmic, the linear rendering of
             // the same trials is drawn as well, as a second file. Seven decades
-            // of κ compressed onto equal-width bins is a different reading of
+            // of x compressed onto equal-width bins is a different reading of
             // the same corpus — it shows where the trials actually *are*, which
             // the log axis deliberately flattens — and neither is a substitute
             // for the other.
@@ -215,7 +288,7 @@ impl MetricVsKappa {
             };
             for &scale in scales {
                 if let Some(panel) =
-                    Self::panel(geometry, n, &kept, &kappas, scale, scale != natural)
+                    Self::panel(x, geometry, n, &kept, &xs, scale, scale != natural)
                 {
                     out.push(panel);
                 }
@@ -226,14 +299,15 @@ impl MetricVsKappa {
 
     /// One panel at one axis scale, or `None` when nothing bins.
     fn panel(
+        x: XAxis,
         geometry: &'static str,
         n: usize,
         kept: &[(f64, &TrialRecord)],
-        kappas: &[f64],
+        xs: &[f64],
         scale: BinScale,
         alternate: bool,
-    ) -> Option<MetricVsKappa> {
-        let edges = scale.edges(kappas, N_BINS)?;
+    ) -> Option<MetricTrend> {
+        let edges = scale.edges(xs, N_BINS)?;
         let series: Vec<Series> = OBJECTIVES
             .iter()
             .filter_map(|&metric| Series::build(metric, &edges, scale, kept))
@@ -259,7 +333,8 @@ impl MetricVsKappa {
             BinScale::Linear => padded_range(&drawn, 0.03).unwrap_or(span),
         };
 
-        Some(MetricVsKappa {
+        Some(MetricTrend {
+            x,
             geometry,
             n,
             series,
@@ -269,7 +344,7 @@ impl MetricVsKappa {
         })
     }
 
-    /// Always true for a panel [`MetricVsKappa::panels`] returned; kept so the
+    /// Always true for a panel [`MetricTrend::panels`] returned; kept so the
     /// driver reads the same as every other figure's.
     #[must_use]
     pub fn has_data(&self) -> bool {
@@ -288,7 +363,7 @@ impl Series {
     ) -> Option<Series> {
         let (xs, ys): (Vec<f64>, Vec<f64>) = kept
             .iter()
-            .filter_map(|(k, r)| reading(metric, r).map(|v| (*k, v)))
+            .filter_map(|(x, r)| reading(metric, r).map(|v| (*x, v)))
             .unzip();
         let (centres, medians) = binned_median_on(edges, scale, &xs, &ys, MIN_PER_BIN);
         if centres.is_empty() {
@@ -346,13 +421,18 @@ fn label(metric: Metric) -> String {
     }
 }
 
-impl Figure for MetricVsKappa {
+impl Figure for MetricTrend {
     fn name(&self) -> String {
-        // Only the *alternate* rendering is marked. The spherical panel is
-        // linear too, but it is that geometry's only figure — a suffix there
-        // would imply a log companion that does not exist.
+        // Only the *alternate* rendering is marked. The spherical κ panel is
+        // linear too, but it is that geometry's only figure on that axis — a
+        // suffix there would imply a log companion that does not exist.
         let axis = if self.alternate { "_linear" } else { "" };
-        format!("exp2_metric_vs_kappa_{}{axis}_N{}", self.geometry, self.n)
+        format!(
+            "exp2_metric_vs_{}_{}{axis}_N{}",
+            self.x.tag(),
+            self.geometry,
+            self.n
+        )
     }
 
     fn size(&self) -> (u32, u32) {
@@ -387,7 +467,7 @@ impl Figure for MetricVsKappa {
         if self.scale == BinScale::Log {
             let mut chart = builder.build_cartesian_2d((lo..hi).log_scale(), 0.0f64..1.0f64)?;
             style_mesh!(chart.configure_mesh())
-                .x_desc(X_DESC)
+                .x_desc(self.x.desc())
                 .y_desc(Y_DESC)
                 .x_label_formatter(&log_tick)
                 // A hint, not a count: plotters walks decades on a log axis and
@@ -405,7 +485,7 @@ impl Figure for MetricVsKappa {
             let ticks = LinearTicks::new((lo, hi), 4);
             let mut chart = builder.build_cartesian_2d(ticks.clone(), 0.0f64..1.0f64)?;
             style_mesh!(chart.configure_mesh())
-                .x_desc(X_DESC)
+                .x_desc(self.x.desc())
                 .y_desc(Y_DESC)
                 .x_label_formatter(&|v| ticks.label(v))
                 .y_labels(5)
@@ -416,17 +496,14 @@ impl Figure for MetricVsKappa {
     }
 }
 
-/// The κ axis title. Greek resolves in both backends; arrows and geometric
-/// shapes do not, so the orientation is stated in words on the y axis.
-const X_DESC: &str = "κ";
 /// Every series is oriented so higher is better — `normalized_stress` is drawn
 /// as `1 - stress` — and the axis says so, because that is the one thing about
 /// this figure a reader cannot recover from the curves.
 const Y_DESC: &str = "metric";
 
-impl MetricVsKappa {
+impl MetricTrend {
     /// Draw every series onto *chart*. Generic over the x coordinate so the log
-    /// and linear branches of [`MetricVsKappa::draw`] share one body.
+    /// and linear branches of [`MetricTrend::draw`] share one body.
     fn draw_curves<DB, X, Y>(&self, chart: &mut ChartContext<DB, Cartesian2d<X, Y>>) -> Res
     where
         DB: DrawingBackend,
@@ -457,8 +534,9 @@ impl MetricVsKappa {
     }
 }
 
-/// The legend shared by every [`MetricVsKappa`] panel at one N, as its own
-/// portrait file: [`LEGEND_WIDTH`] wide, [`PANEL`] tall, one entry per row.
+/// The legend shared by every [`MetricTrend`] panel at one N, on both x axes,
+/// as its own portrait file: [`LEGEND_WIDTH`] wide, [`PANEL`] tall, one entry
+/// per row.
 ///
 /// It is the union of the panels' series, in [`OBJECTIVES`] order — the order
 /// the curves are drawn in — so a metric that bins on one geometry and not
@@ -470,9 +548,9 @@ pub struct MetricLegend {
 
 impl MetricLegend {
     /// The legend for *panels*, which should be everything
-    /// [`MetricVsKappa::panels`] returned at *n*.
+    /// [`MetricTrend::panels`] returned at *n*, over every [`XAxis`].
     #[must_use]
-    pub fn from_panels(panels: &[MetricVsKappa], n: usize) -> Self {
+    pub fn from_panels(panels: &[MetricTrend], n: usize) -> Self {
         let entries = OBJECTIVES
             .iter()
             .filter_map(|&metric| {
@@ -496,7 +574,7 @@ impl MetricLegend {
 
 impl Figure for MetricLegend {
     fn name(&self) -> String {
-        format!("exp2_metric_vs_kappa_legend_N{}", self.n)
+        format!("exp2_metric_legend_N{}", self.n)
     }
 
     fn size(&self) -> (u32, u32) {
@@ -523,7 +601,7 @@ impl Figure for MetricLegend {
 /// **A skeleton: nothing is drawn yet**, so [`MetricPanels::has_data`] returns
 /// `false` and the driver's "figures with no data are skipped" rule keeps an
 /// empty SVG off disk. See the module doc for what the results chapter asks of
-/// it — it is not [`MetricVsKappa`], which answers a different question about
+/// it — it is not [`MetricTrend`], which answers a different question about
 /// the same section.
 pub struct MetricPanels<'a> {
     #[expect(dead_code, reason = "read once the figure is drawn")]

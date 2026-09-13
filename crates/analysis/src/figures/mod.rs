@@ -1040,7 +1040,10 @@ mod tests {
 
         // Never more than asked for, and a degenerate range builds unlabelled.
         for hi in [3.0, 3.21, 3.5, 4.0, 9.9] {
-            assert!(LinearTicks::new((2.46, hi), 4).ticks().len() <= 4, "hi={hi}");
+            assert!(
+                LinearTicks::new((2.46, hi), 4).ticks().len() <= 4,
+                "hi={hi}"
+            );
         }
         assert!(LinearTicks::new((1.0, 1.0), 4).ticks().is_empty());
     }

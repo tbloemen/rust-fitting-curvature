@@ -127,18 +127,22 @@ fn main() -> Result<()> {
         }
     }
 
-    // Exp 2 draws one metric-vs-κ panel per curved geometry; `panels` returns
-    // only the ones with data, so there is no guard on the loop. Their shared
-    // legend is a separate file, built from the same panels so it names
-    // exactly the curves they draw. Its other two figures are still skeletons,
-    // dispatched beside it so the slot is visible here rather than absent.
-    // Everything lands under `<out-dir>/experiment_2`: the panels and the
-    // legend are set together as one row, and a directory keeps that set
-    // from being spread among the other experiments' files.
+    // Exp 2 draws one metric-trend panel per curved geometry and per x axis —
+    // κ, the embedding curvature, and |K|, the searched hyperparameter;
+    // `panels` returns only the ones with data, so there is no guard on the
+    // loop. Their shared legend is a separate file, built from all of the
+    // panels so it names exactly the curves they draw. Its other two figures
+    // are still skeletons, dispatched beside it so the slot is visible here
+    // rather than absent. Everything lands under `<out-dir>/experiment_2`:
+    // the panels and the legend are set together as one row, and a directory
+    // keeps that set from being spread among the other experiments' files.
     if args.exp.contains(&2) {
         let exp2_dir = args.out_dir.join("experiment_2");
         for n in &args.n {
-            let panels = exp2::MetricVsKappa::panels(&cells, *n);
+            let mut panels = Vec::new();
+            for x in [exp2::XAxis::Kappa, exp2::XAxis::Curvature] {
+                panels.extend(exp2::MetricTrend::panels(&cells, *n, x));
+            }
             for fig in &panels {
                 save(fig, &exp2_dir, space)?;
             }
