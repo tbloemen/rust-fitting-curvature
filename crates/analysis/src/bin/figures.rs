@@ -142,6 +142,10 @@ fn main() -> Result<()> {
             let mut panels = Vec::new();
             for x in [exp2::XAxis::Kappa, exp2::XAxis::Curvature] {
                 panels.extend(exp2::MetricTrend::panels(&cells, *n, x));
+                // The unbounded metrics: one panel each, no legend.
+                for fig in exp2::UnboundedTrend::panels(&cells, *n, x) {
+                    save(&fig, &exp2_dir, space)?;
+                }
             }
             for fig in &panels {
                 save(fig, &exp2_dir, space)?;
