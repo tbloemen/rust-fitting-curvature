@@ -430,17 +430,6 @@ impl Figure for MetricDependence {
                 .color(&OK_BLACK)
                 .pos(Pos::new(HPos::Center, VPos::Center)),
         ))?;
-        title.draw(&Text::new(
-            format!(
-                "median over {} datasets, n = {} / {} trials",
-                self.n_datasets, self.n_used, self.n_total
-            ),
-            (centre, 30),
-            ("sans-serif", 12)
-                .into_font()
-                .color(&RGBColor(60, 60, 60))
-                .pos(Pos::new(HPos::Center, VPos::Center)),
-        ))?;
 
         let x_axis = CategoryAxis::new(&self.labels, false);
         let y_axis = CategoryAxis::new(&self.labels, true);
@@ -475,42 +464,18 @@ impl Figure for MetricDependence {
 
                 let ink = text_on(rho);
                 let value = rho.map_or_else(|| "n/a".to_string(), |r| format!("{r:.2}"));
-                let spread = self.range[i][j].map(|(lo, hi)| format!("[{lo:.2}, {hi:.2}]"));
-                // Two lines per cell: the median, and the range the datasets
-                // span. The diagonal is 1.00 by definition and its range is
-                // not information, so it carries only the one line.
-                let (dy_value, dy_range) = if i == j || spread.is_none() {
-                    (0, 0)
-                } else {
-                    (-7, 8)
-                };
                 let centre = (x0 + 0.5, y0 + 0.5);
                 chart.draw_series(std::iter::once(
                     EmptyElement::at(centre)
                         + Text::new(
                             value,
-                            (0, dy_value),
+                            (0, 0),
                             ("sans-serif", 12)
                                 .into_font()
                                 .color(&ink)
                                 .pos(Pos::new(HPos::Center, VPos::Center)),
                         ),
                 ))?;
-                if i != j {
-                    if let Some(spread) = spread {
-                        chart.draw_series(std::iter::once(
-                            EmptyElement::at(centre)
-                                + Text::new(
-                                    spread,
-                                    (0, dy_range),
-                                    ("sans-serif", 9)
-                                        .into_font()
-                                        .color(&ink)
-                                        .pos(Pos::new(HPos::Center, VPos::Center)),
-                                ),
-                        ))?;
-                    }
-                }
             }
         }
         Ok(())
