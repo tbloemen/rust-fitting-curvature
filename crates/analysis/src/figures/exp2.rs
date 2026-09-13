@@ -100,8 +100,8 @@ use fitting_core::metrics::Metric;
 
 use super::{
     binned_median_on, draw_legend_grid, log_tick, metric_color, metric_dash, padded_log_range,
-    padded_range, snap_to_decades, BinScale, CellMap, Figure, LegendEntry, ObjectiveSpace, Res,
-    CURVED, OBJECTIVES, OK_BLACK,
+    padded_range, BinScale, CellMap, Figure, LegendEntry, LinearTicks, ObjectiveSpace, Res, CURVED,
+    OBJECTIVES, OK_BLACK,
 };
 use crate::objectives::is_minimized_metric;
 use crate::records::TrialRecord;
@@ -128,13 +128,13 @@ const MIN_PER_BIN: usize = 20;
 /// *not* halve the text: at ~80 mm on the page `style_mesh!`'s 13 px tick
 /// labels land at roughly 8 pt, against Exp 1's ~6 pt. That is what a
 /// half-width figure wants — it is read at half the size.
-const PANEL: (u32, u32) = (370, 225);
+const PANEL: (u32, u32) = (370, 300);
 
 /// Width of the [`MetricLegend`] canvas. One column of the metrics' full wire
 /// names at the 12 px [`draw_legend_grid`] font: `1-normalized_stress` is the
 /// longest at ~125 px of text, plus the 18 px swatch and its gutters. Narrower
 /// than [`PANEL`] is tall, so the canvas is portrait.
-const LEGEND_WIDTH: u32 = 170;
+const LEGEND_WIDTH: u32 = 130;
 
 /// Height of one legend row. [`draw_legend_grid`] divides whatever area it is
 /// given evenly between its rows, so the legend hands it a block of exactly
@@ -242,12 +242,21 @@ impl MetricVsKappa {
             return None;
         }
 
+        // The axis spans the *drawn* points, not the trials: a curve stops at
+        // the last bin that cleared MIN_PER_BIN, and the sparse tail beyond it
+        // — there are trials there, just too few per bin to take a median of
+        // — would otherwise read as empty axis. Padded a little in the axis'
+        // own metric so the end points do not sit on the frame; not snapped to
+        // whole decades, which would reopen exactly that gap. plotters puts a
+        // log axis' ticks on powers of ten whatever the endpoints are.
+        let drawn: Vec<f64> = series
+            .iter()
+            .flat_map(|s| s.points.iter().map(|p| p.0))
+            .collect();
         let span = (edges[0], edges[edges.len() - 1]);
         let x_range = match scale {
-            // Pad in decades, then widen to whole ones so the ticks land on
-            // powers of ten.
-            BinScale::Log => snap_to_decades(padded_log_range(kappas, 0.03).unwrap_or(span)),
-            BinScale::Linear => padded_range(kappas, 0.03).unwrap_or(span),
+            BinScale::Log => padded_log_range(&drawn, 0.03).unwrap_or(span),
+            BinScale::Linear => padded_range(&drawn, 0.03).unwrap_or(span),
         };
 
         Some(MetricVsKappa {
@@ -391,11 +400,14 @@ impl Figure for MetricVsKappa {
                 .draw()?;
             self.draw_curves(&mut chart)?;
         } else {
-            let mut chart = builder.build_cartesian_2d(lo..hi, 0.0f64..1.0f64)?;
+            // Own ticks rather than plotters': its float walk drops the tick at
+            // the right end of the axis — see `LinearTicks`.
+            let ticks = LinearTicks::new((lo, hi), 4);
+            let mut chart = builder.build_cartesian_2d(ticks.clone(), 0.0f64..1.0f64)?;
             style_mesh!(chart.configure_mesh())
                 .x_desc(X_DESC)
                 .y_desc(Y_DESC)
-                .x_labels(4)
+                .x_label_formatter(&|v| ticks.label(v))
                 .y_labels(5)
                 .draw()?;
             self.draw_curves(&mut chart)?;

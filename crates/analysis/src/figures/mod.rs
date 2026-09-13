@@ -26,10 +26,10 @@
 //!
 //! **Some κ and log-axis helpers below still have no caller and are kept on
 //! purpose.** `KappaData`, [`load_kappa_data`], [`median_front_kappa`],
-//! [`binned_median`], [`convex_lower_hull`] and [`all_datasets`] were written
-//! for figures Exp 2 and Exp 3 will need again. Do not sweep them out as dead
-//! code. The rest of that list now has one: Exp 2's κ axis reads
-//! [`padded_log_range`], [`snap_to_decades`], [`log_tick`], [`CURVED`] and the
+//! [`binned_median`], [`convex_lower_hull`], [`snap_to_decades`] and
+//! [`all_datasets`] were written for figures Exp 2 and Exp 3 will need again.
+//! Do not sweep them out as dead code. The rest of that list now has one:
+//! Exp 2's κ axis reads [`padded_log_range`], [`log_tick`], [`CURVED`] and the
 //! two halves of the binner, [`BinScale::edges`] and [`binned_median_on`].
 
 pub mod exp1;
@@ -41,6 +41,7 @@ use fitting_core::cast::{count_to_f64, to_i32};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use plotters::coord::types::RangedCoordf64;
 use plotters::coord::Shift;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
@@ -795,6 +796,98 @@ pub fn snap_to_decades((lo, hi): (f64, f64)) -> (f64, f64) {
     )
 }
 
+/// A linear axis whose ticks are computed so the last one is not lost.
+///
+/// plotters' own f64 key points walk the axis by *adding* the step: with
+/// `2.6 + 0.2 + 0.2 + 0.2 = 3.2000000000000006` the accumulated value overshoots
+/// the exact `3.2` it compares against by more than `f64::EPSILON`, and the
+/// tick at the right end of the axis is dropped. Exp 2's spherical panel lost
+/// its `3.2` that way. Here every tick is an integer multiple of the step, so
+/// the k-th tick is `k · step` however many precede it.
+///
+/// The step is the smallest of `1, 2, 5 × 10^e` that fits at most `max` ticks
+/// inside the range, the same 1-2-5 ladder plotters climbs. It is its own
+/// [`Ranged`] coordinate rather than a `with_key_points` binding because
+/// plotters 0.3.7 gives that combinator no `ValueFormatter` over an f64 range,
+/// so `configure_mesh` will not accept it. Label the axis with
+/// [`LinearTicks::label`], which prints exactly the decimals the step needs —
+/// `k · step` is `3.2000000000000004`, and the default formatter would say so.
+#[derive(Debug, Clone)]
+pub struct LinearTicks {
+    range: std::ops::Range<f64>,
+    ticks: Vec<f64>,
+    /// Decimals the step needs: one for `0.2`, none for `10`.
+    decimals: usize,
+}
+
+impl LinearTicks {
+    /// Up to `max` ticks inside `(lo, hi)`; none if the range is not finite or
+    /// has no width — the axis still builds, unlabelled.
+    #[must_use]
+    pub fn new((lo, hi): (f64, f64), max: usize) -> Self {
+        let mut out = Self {
+            range: lo..hi,
+            ticks: Vec::new(),
+            decimals: 0,
+        };
+        let span = hi - lo;
+        if !(span.is_finite() && span > 0.0) || max == 0 {
+            return out;
+        }
+        let exponent = (span / count_to_f64(max)).log10().floor();
+        // Climb the ladder until the tick count fits. `10` is the next decade's
+        // `1`, and the coarsest step that can be needed: one decade up, at most
+        // `max` ticks always fit.
+        for mantissa in [1.0, 2.0, 5.0, 10.0] {
+            let step = mantissa * 10f64.powf(exponent);
+            let k_lo = (lo / step).ceil();
+            let k_hi = (hi / step).floor();
+            if k_hi - k_lo + 1.0 <= count_to_f64(max) {
+                out.decimals = usize::try_from(-to_i32(step.log10().floor())).unwrap_or(0);
+                let mut k = k_lo;
+                while k <= k_hi {
+                    // `ceil` of a slightly negative lower bound is -0.0, and
+                    // `-0.0 * step` would print as "-0".
+                    let v = k * step;
+                    out.ticks.push(if v == 0.0 { 0.0 } else { v });
+                    k += 1.0;
+                }
+                return out;
+            }
+        }
+        out
+    }
+
+    /// The tick positions, in axis order.
+    #[must_use]
+    pub fn ticks(&self) -> &[f64] {
+        &self.ticks
+    }
+
+    /// The tick's label, at the step's own precision.
+    #[must_use]
+    pub fn label(&self, v: &f64) -> String {
+        format!("{:.*}", self.decimals, v)
+    }
+}
+
+impl Ranged for LinearTicks {
+    type FormatOption = plotters::coord::ranged1d::DefaultFormatting;
+    type ValueType = f64;
+
+    fn map(&self, value: &f64, limit: (i32, i32)) -> i32 {
+        RangedCoordf64::from(self.range.clone()).map(value, limit)
+    }
+
+    fn key_points<Hint: plotters::coord::ranged1d::KeyPointHint>(&self, _hint: Hint) -> Vec<f64> {
+        self.ticks.clone()
+    }
+
+    fn range(&self) -> std::ops::Range<f64> {
+        self.range.clone()
+    }
+}
+
 /// Tick label for a log axis.
 ///
 /// plotters accumulates float error while walking decades, handing the default
@@ -929,6 +1022,27 @@ mod tests {
         // The same bin under the log rule would be drawn somewhere else.
         assert!((BinScale::Log.centre(1.0, 4.0) - 2.0).abs() < 1e-12);
         assert!((BinScale::Linear.centre(1.0, 4.0) - 2.5).abs() < 1e-12);
+    }
+
+    /// The case plotters gets wrong: four 0.2 steps from 2.6 land on 3.2, which
+    /// its accumulating walk overshoots and drops. The spherical Exp 2 axis.
+    #[test]
+    fn linear_ticks_keep_the_last_tick() {
+        let t = LinearTicks::new((2.46, 3.27), 4);
+        let labels: Vec<String> = t.ticks().iter().map(|v| t.label(v)).collect();
+        assert_eq!(labels, ["2.6", "2.8", "3.0", "3.2"]);
+
+        // Hyperbolic linear panel: whole tens, no decimals, and the padded
+        // lower bound just below zero must not produce a "-0".
+        let t = LinearTicks::new((-1.1, 37.0), 4);
+        let labels: Vec<String> = t.ticks().iter().map(|v| t.label(v)).collect();
+        assert_eq!(labels, ["0", "10", "20", "30"]);
+
+        // Never more than asked for, and a degenerate range builds unlabelled.
+        for hi in [3.0, 3.21, 3.5, 4.0, 9.9] {
+            assert!(LinearTicks::new((2.46, hi), 4).ticks().len() <= 4, "hi={hi}");
+        }
+        assert!(LinearTicks::new((1.0, 1.0), 4).ticks().is_empty());
     }
 
     /// Two metrics sharing a colour would be unreadable, and the style tables
