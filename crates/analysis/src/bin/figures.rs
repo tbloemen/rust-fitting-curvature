@@ -128,18 +128,28 @@ fn main() -> Result<()> {
     }
 
     // Exp 2 draws one metric-vs-κ panel per curved geometry; `panels` returns
-    // only the ones with data, so there is no guard on the loop. Its other two
-    // figures are still skeletons, dispatched beside it so the slot is visible
-    // here rather than absent.
+    // only the ones with data, so there is no guard on the loop. Their shared
+    // legend is a separate file, built from the same panels so it names
+    // exactly the curves they draw. Its other two figures are still skeletons,
+    // dispatched beside it so the slot is visible here rather than absent.
+    // Everything lands under `<out-dir>/experiment_2`: the panels and the
+    // legend are set together as one row, and a directory keeps that set
+    // from being spread among the other experiments' files.
     if args.exp.contains(&2) {
+        let exp2_dir = args.out_dir.join("experiment_2");
         for n in &args.n {
-            for fig in exp2::MetricVsKappa::panels(&cells, *n) {
-                save(&fig, &args.out_dir, space)?;
+            let panels = exp2::MetricVsKappa::panels(&cells, *n);
+            for fig in &panels {
+                save(fig, &exp2_dir, space)?;
+            }
+            let legend = exp2::MetricLegend::from_panels(&panels, *n);
+            if legend.has_data() {
+                save(&legend, &exp2_dir, space)?;
             }
 
             let fig = exp2::MetricPanels::new(&cells, *n, space);
             if fig.has_data() {
-                save(&fig, &args.out_dir, space)?;
+                save(&fig, &exp2_dir, space)?;
             }
         }
     }

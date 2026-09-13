@@ -30,7 +30,7 @@
 //! for figures Exp 2 and Exp 3 will need again. Do not sweep them out as dead
 //! code. The rest of that list now has one: Exp 2's κ axis reads
 //! [`padded_log_range`], [`snap_to_decades`], [`log_tick`], [`CURVED`] and the
-//! two halves of the binner, [`log_bin_edges`] and [`binned_median_on`].
+//! two halves of the binner, [`BinScale::edges`] and [`binned_median_on`].
 
 pub mod exp1;
 pub mod exp2;
@@ -544,42 +544,80 @@ pub fn finite_xy(records: &[TrialRecord], xm: &str, ym: &str) -> (Vec<f64>, Vec<
     (xs, ys)
 }
 
-/// `n_bins + 1` log-spaced bin edges spanning the finite, positive values of
-/// *x*, or `None` when they do not span a range at all — none positive, or every
-/// one of them equal.
+/// How a binned axis is spaced: which edges [`BinScale::edges`] lays down, and
+/// where in a bin [`binned_median_on`] draws its median.
 ///
-/// Split out of [`binned_median`] so that several *y* series can be binned on
-/// **one** set of edges. Deriving the edges per series is wrong the moment two
-/// series drop different rows (a metric a diverged trial did not record): the
-/// two polylines are then sampled at different x positions and cannot be read
-/// against each other, which is exactly what Exp 2 overlays them to do.
-#[must_use]
-pub fn log_bin_edges(x: &[f64], n_bins: usize) -> Option<Vec<f64>> {
-    let positive: Vec<f64> = x
-        .iter()
-        .copied()
-        .filter(|v| v.is_finite() && *v > 0.0)
-        .collect();
-    // Ruled out first so neither fold below can return an infinity, which is
-    // what would leave `hi` a NaN and the comparison undecidable.
-    let (Some(&first), Some(&last)) = (positive.first(), positive.last()) else {
-        return None;
-    };
-    let x_min = positive.iter().copied().fold(first, f64::min);
-    let x_max = positive.iter().copied().fold(last, f64::max);
-    let (lo, hi) = (x_min.log10(), x_max.log10());
-    if hi <= lo {
-        return None;
+/// The two have to agree. A geometric bin centre on a linear axis puts the
+/// point in the wrong place, and on a bin whose lower edge is near zero it
+/// collapses the centre onto that edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinScale {
+    /// Equal ratios. Non-positive values cannot be placed and are dropped.
+    Log,
+    /// Equal widths.
+    Linear,
+}
+
+impl BinScale {
+    /// `n_bins + 1` edges spanning the usable values of *x*, or `None` when
+    /// they do not span a range at all — none usable, or every one of them
+    /// equal.
+    ///
+    /// Split out of [`binned_median`] so that several *y* series can be binned
+    /// on **one** set of edges. Deriving the edges per series is wrong the
+    /// moment two series drop different rows (a metric a diverged trial did not
+    /// record): the two polylines are then sampled at different x positions and
+    /// cannot be read against each other, which is exactly what Exp 2 overlays
+    /// them to do.
+    #[must_use]
+    pub fn edges(self, x: &[f64], n_bins: usize) -> Option<Vec<f64>> {
+        let usable: Vec<f64> = x
+            .iter()
+            .copied()
+            .filter(|v| v.is_finite() && (self == BinScale::Linear || *v > 0.0))
+            .collect();
+        // Ruled out first so neither fold below can return an infinity, which
+        // is what would leave `hi` a NaN and the comparison undecidable.
+        let (Some(&first), Some(&last)) = (usable.first(), usable.last()) else {
+            return None;
+        };
+        let x_min = usable.iter().copied().fold(first, f64::min);
+        let x_max = usable.iter().copied().fold(last, f64::max);
+        let (lo, hi) = match self {
+            BinScale::Log => (x_min.log10(), x_max.log10()),
+            BinScale::Linear => (x_min, x_max),
+        };
+        if hi <= lo {
+            return None;
+        }
+        Some(
+            (0..=n_bins)
+                .map(|i| {
+                    let t = lo + (hi - lo) * count_to_f64(i) / count_to_f64(n_bins);
+                    match self {
+                        BinScale::Log => 10f64.powf(t),
+                        BinScale::Linear => t,
+                    }
+                })
+                .collect(),
+        )
     }
-    Some(
-        (0..=n_bins)
-            .map(|i| 10f64.powf(lo + (hi - lo) * count_to_f64(i) / count_to_f64(n_bins)))
-            .collect(),
-    )
+
+    /// Where in a bin its median is drawn: the geometric mean of the edges on a
+    /// log axis, the arithmetic mean on a linear one. Either way it is the
+    /// point that sits mid-bin *as the axis renders it*.
+    fn centre(self, a: f64, b: f64) -> f64 {
+        match self {
+            BinScale::Log => (a * b).sqrt(),
+            BinScale::Linear => (a + b) / 2.0,
+        }
+    }
 }
 
 /// Median of *y* per bin of *edges*, for bins holding at least `min_per_bin`
-/// points; bin centres are the geometric mean of the two edges.
+/// points, drawn at the bin centre *scale* defines.
+///
+/// *scale* must be the one *edges* came from — see [`BinScale`].
 ///
 /// Bins are closed at both ends, so a point sitting exactly on an interior edge
 /// counts in the two bins that share it. That is deliberate — the alternative
@@ -590,6 +628,7 @@ pub fn log_bin_edges(x: &[f64], n_bins: usize) -> Option<Vec<f64>> {
 #[must_use]
 pub fn binned_median_on(
     edges: &[f64],
+    scale: BinScale,
     x: &[f64],
     y: &[f64],
     min_per_bin: usize,
@@ -608,7 +647,7 @@ pub fn binned_median_on(
         // `median` is None only on an empty slice, which the length test rules
         // out; `if let` keeps that a fact of the code rather than an unwrap.
         if let (true, Some(m)) = (vals.len() >= min_per_bin, median(&vals)) {
-            centres.push((a * b).sqrt());
+            centres.push(scale.centre(a, b));
             meds.push(m);
         }
     }
@@ -618,7 +657,7 @@ pub fn binned_median_on(
 /// Median of y in log-spaced x bins, for bins with ≥ `min_per_bin` points — the
 /// trend curve through a cloud of independent cells.
 ///
-/// [`log_bin_edges`] followed by [`binned_median_on`]. Callers overlaying more
+/// [`BinScale::edges`] followed by [`binned_median_on`]. Callers overlaying more
 /// than one series must call those two directly, so every series lands on the
 /// same edges.
 ///
@@ -637,13 +676,13 @@ pub fn binned_median(
     if x.len() < min_per_bin {
         return (Vec::new(), Vec::new());
     }
-    let Some(edges) = log_bin_edges(x, n_bins) else {
+    let Some(edges) = BinScale::Log.edges(x, n_bins) else {
         // One x value (or none on a log axis): there is no axis to spread the
         // set over, so report it as the single point it is.
         let mean = x.iter().sum::<f64>() / count_to_f64(x.len());
         return (vec![mean], median(y).into_iter().collect());
     };
-    binned_median_on(&edges, x, y, min_per_bin)
+    binned_median_on(&edges, BinScale::Log, x, y, min_per_bin)
 }
 
 /// Indices of the lower convex hull chain, sorted by x ascending.
@@ -800,8 +839,10 @@ mod tests {
         let y: Vec<f64> = x.iter().map(|v| v.log10() * 0.1 + 0.5).collect();
 
         let (want_x, want_y) = binned_median(&x, &y, 10, 4);
-        let edges = log_bin_edges(&x, 10).expect("five decades span a log range");
-        let (got_x, got_y) = binned_median_on(&edges, &x, &y, 4);
+        let edges = BinScale::Log
+            .edges(&x, 10)
+            .expect("five decades span a log range");
+        let (got_x, got_y) = binned_median_on(&edges, BinScale::Log, &x, &y, 4);
 
         assert_eq!(want_x, got_x);
         assert_eq!(want_y, got_y);
@@ -817,7 +858,9 @@ mod tests {
             .map(|i| 10f64.powf(-3.0 + f64::from(i) / 80.0))
             .collect();
         let y: Vec<f64> = x.iter().map(|_| 0.5).collect();
-        let edges = log_bin_edges(&x, 8).expect("five decades span a log range");
+        let edges = BinScale::Log
+            .edges(&x, 8)
+            .expect("five decades span a log range");
 
         // The second series is missing every third trial, as a metric a
         // diverged trial did not record would be.
@@ -831,13 +874,15 @@ mod tests {
         let tx: Vec<f64> = thinned.iter().map(|p| p.0).collect();
         let ty: Vec<f64> = thinned.iter().map(|p| p.1).collect();
 
-        let (full_centres, _) = binned_median_on(&edges, &x, &y, 4);
-        let (thin_centres, _) = binned_median_on(&edges, &tx, &ty, 4);
+        let (full_centres, _) = binned_median_on(&edges, BinScale::Log, &x, &y, 4);
+        let (thin_centres, _) = binned_median_on(&edges, BinScale::Log, &tx, &ty, 4);
         assert_eq!(full_centres, thin_centres);
 
         // …which is exactly what deriving the edges per series would break.
         let (_, own_edges_y) = binned_median(&tx, &ty, 8, 4);
-        let own = log_bin_edges(&tx, 8).expect("the thinned series still spans decades");
+        let own = BinScale::Log
+            .edges(&tx, 8)
+            .expect("the thinned series still spans decades");
         assert_ne!(
             own, edges,
             "the thinned series has its own min, hence its own edges"
@@ -847,16 +892,43 @@ mod tests {
 
     #[test]
     fn log_bin_edges_rejects_a_range_it_cannot_place() {
-        assert!(log_bin_edges(&[], 4).is_none(), "nothing to span");
+        assert!(BinScale::Log.edges(&[], 4).is_none(), "nothing to span");
         assert!(
-            log_bin_edges(&[-1.0, 0.0], 4).is_none(),
+            BinScale::Log.edges(&[-1.0, 0.0], 4).is_none(),
             "no positive value"
         );
         assert!(
-            log_bin_edges(&[3.0, 3.0, 3.0], 4).is_none(),
+            BinScale::Log.edges(&[3.0, 3.0, 3.0], 4).is_none(),
             "one x, no axis"
         );
-        assert!(log_bin_edges(&[1.0, 100.0], 4).is_some());
+        assert!(BinScale::Log.edges(&[1.0, 100.0], 4).is_some());
+    }
+
+    /// The linear arm spaces its edges by width, keeps the non-positive values
+    /// a log axis has to drop, and draws each median at the arithmetic centre.
+    #[test]
+    fn linear_bins_are_equal_width_and_centred_arithmetically() {
+        let edges = BinScale::Linear
+            .edges(&[0.0, 4.0], 4)
+            .expect("two distinct values span a linear range");
+        assert_eq!(edges, vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+        // Zero and negatives are values on a linear axis and not on a log
+        // one, which is why the two arms disagree about the same input: Log
+        // drops the 0.0 and is left with a single point to span.
+        assert!(BinScale::Log.edges(&[0.0, 4.0], 4).is_none());
+        assert!(BinScale::Log.edges(&[0.0, 1.0, 4.0], 4).is_some());
+        assert!(BinScale::Linear.edges(&[-2.0, 2.0], 4).is_some());
+        assert!(BinScale::Log.edges(&[-2.0, 0.0], 4).is_none());
+
+        let x = [0.5, 0.6, 0.7, 3.5, 3.6, 3.7];
+        let y = [1.0, 2.0, 3.0, 10.0, 20.0, 30.0];
+        let (centres, meds) = binned_median_on(&edges, BinScale::Linear, &x, &y, 3);
+        assert_eq!(centres, vec![0.5, 3.5], "arithmetic, not geometric");
+        assert_eq!(meds, vec![2.0, 20.0]);
+
+        // The same bin under the log rule would be drawn somewhere else.
+        assert!((BinScale::Log.centre(1.0, 4.0) - 2.0).abs() < 1e-12);
+        assert!((BinScale::Linear.centre(1.0, 4.0) - 2.5).abs() < 1e-12);
     }
 
     /// Two metrics sharing a colour would be unreadable, and the style tables

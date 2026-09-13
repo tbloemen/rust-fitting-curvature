@@ -18,12 +18,28 @@
 //! * *`all_off` only*, so the auxiliary loss weights are pinned at zero and do
 //!   not vary along with κ. Pooling every setting would mix two effects.
 //!
-//! Each curve is the **median of its metric in log-spaced κ bins**, drawn only
-//! where a bin holds at least [`MIN_PER_BIN`] trials. Every curve is binned on
-//! one shared set of edges ([`super::log_bin_edges`] once, then
+//! Each curve is the **median of its metric in κ bins**, drawn only where a bin
+//! holds at least [`MIN_PER_BIN`] trials. Every curve is binned on one shared
+//! set of edges ([`super::BinScale::edges`] once, then
 //! [`super::binned_median_on`] per metric), so the overlaid lines are sampled at
 //! the same κ positions and can be read against each other — which is the whole
 //! reason they share a panel.
+//!
+//! ### Two axis scales, two files
+//!
+//! The bins and the axis are one choice ([`super::BinScale`]), because a
+//! geometric bin centre drawn on a linear axis lands in the wrong place. A
+//! geometry whose κ spans a decade or more is rendered **twice**: once
+//! logarithmic, which is the natural reading of a quantity covering seven
+//! decades, and once linear, which shows where the trials actually sit — 64% of
+//! the hyperbolic corpus is below κ = 1.8, and the log axis deliberately
+//! flattens that. Neither substitutes for the other, so both are written and
+//! the linear one carries a `_linear` in its filename.
+//!
+//! Below a decade there is only the linear rendering, and it carries no suffix:
+//! it is that geometry's only figure, and a suffix would imply a log companion
+//! that does not exist. That is the spherical panel — plotters finds no key
+//! points inside a sub-decade log range and drew no x ticks at all.
 //!
 //! ### Which metrics count as "0 to 1"
 //!
@@ -63,10 +79,11 @@
 //! ### Layout
 //!
 //! Each panel is half of Exp 1's canvas ([`PANEL`]), so two of them occupy the
-//! width one Exp 1 figure does and sit side by side at the A4 text width. Only
-//! the first carries the legend; it gets an extra [`LEGEND_STRIP`] of canvas
-//! **at the top** for it, which leaves the two plot areas the same height — so
-//! set the pair **bottom-aligned** and the axes line up.
+//! width one Exp 1 figure does and sit side by side at the A4 text width. No
+//! panel carries the legend: it is its own file, [`MetricLegend`], a portrait
+//! canvas exactly [`PANEL`] tall, meant to be set at the **left** of a pair so
+//! the row reads legend, hyperbolic, spherical. Every canvas in the row is the
+//! same height, so the pair lines up without any alignment trick.
 //!
 //! ### Not this module's other two figures
 //!
@@ -82,9 +99,9 @@ use plotters::prelude::*;
 use fitting_core::metrics::Metric;
 
 use super::{
-    binned_median_on, draw_legend_grid, log_bin_edges, log_tick, metric_color, metric_dash,
-    padded_log_range, snap_to_decades, CellMap, Figure, LegendEntry, ObjectiveSpace, Res, CURVED,
-    OBJECTIVES, OK_BLACK,
+    binned_median_on, draw_legend_grid, log_tick, metric_color, metric_dash, padded_log_range,
+    padded_range, snap_to_decades, BinScale, CellMap, Figure, LegendEntry, ObjectiveSpace, Res,
+    CURVED, OBJECTIVES, OK_BLACK,
 };
 use crate::objectives::is_minimized_metric;
 use crate::records::TrialRecord;
@@ -95,7 +112,7 @@ use crate::style_mesh;
 const SETTING: &str = "all_off";
 
 /// Log-spaced κ bins across the panel's whole range.
-const N_BINS: usize = 24;
+const N_BINS: usize = 30;
 
 /// Trials a bin needs before its median is drawn. The pooled corpus is ~9,000
 /// trials per (geometry, N) over 24 bins, so a bin at this floor is already a
@@ -113,12 +130,21 @@ const MIN_PER_BIN: usize = 20;
 /// half-width figure wants — it is read at half the size.
 const PANEL: (u32, u32) = (370, 225);
 
-/// Extra canvas, on top, for the one panel that carries the legend. Two rows of
-/// entries at the 12 px [`draw_legend_grid`] font.
-const LEGEND_STRIP: u32 = 40;
+/// Width of the [`MetricLegend`] canvas. One column of the metrics' full wire
+/// names at the 12 px [`draw_legend_grid`] font: `1-normalized_stress` is the
+/// longest at ~125 px of text, plus the 18 px swatch and its gutters. Narrower
+/// than [`PANEL`] is tall, so the canvas is portrait.
+const LEGEND_WIDTH: u32 = 170;
+
+/// Height of one legend row. [`draw_legend_grid`] divides whatever area it is
+/// given evenly between its rows, so the legend hands it a block of exactly
+/// this many pixels per entry and centres that block on the canvas, rather
+/// than letting five entries drift apart over [`PANEL`]'s full height.
+const LEGEND_ROW: u32 = 20;
 
 /// One metric's trend curve.
 struct Series {
+    metric: Metric,
     label: String,
     color: RGBColor,
     dash: Option<(i32, i32)>,
@@ -132,8 +158,12 @@ pub struct MetricVsKappa {
     n: usize,
     series: Vec<Series>,
     x_range: (f64, f64),
-    /// Whether this panel draws the shared legend. Only the first does.
-    legend: bool,
+    /// How the κ axis is spaced, and how the bins behind `series` were laid
+    /// down — the two are the same choice, so they are one field.
+    scale: BinScale,
+    /// Whether this is the linear rendering of a geometry whose natural axis is
+    /// logarithmic, which is the only thing the filename has to distinguish.
+    alternate: bool,
 }
 
 impl MetricVsKappa {
@@ -161,35 +191,73 @@ impl MetricVsKappa {
                 .collect();
 
             let kappas: Vec<f64> = kept.iter().map(|(k, _)| *k).collect();
-            let Some(edges) = log_bin_edges(&kappas, N_BINS) else {
-                continue;
+            // **A log axis needs a decade to label.** plotters derives a log
+            // scale's key points from its endpoints and finds none inside a
+            // window narrower than one decade, so the spherical panel — whose κ
+            // is pinned to a factor of ~1.4 by the wrong-pole gauge — came out
+            // with no x ticks at all. Below a decade the axis is linear, which
+            // is also the honest rendering: nothing about that window is
+            // multiplicative.
+            let natural = match padded_log_range(&kappas, 0.0) {
+                Some((lo, hi)) if hi / lo >= 10.0 => BinScale::Log,
+                _ => BinScale::Linear,
             };
 
-            let series: Vec<Series> = OBJECTIVES
-                .iter()
-                .filter_map(|&metric| Series::build(metric, &edges, &kept))
-                .collect();
-            if series.is_empty() {
-                continue;
+            // Where the natural axis is logarithmic, the linear rendering of
+            // the same trials is drawn as well, as a second file. Seven decades
+            // of κ compressed onto equal-width bins is a different reading of
+            // the same corpus — it shows where the trials actually *are*, which
+            // the log axis deliberately flattens — and neither is a substitute
+            // for the other.
+            let scales: &[BinScale] = match natural {
+                BinScale::Log => &[BinScale::Log, BinScale::Linear],
+                BinScale::Linear => &[BinScale::Linear],
+            };
+            for &scale in scales {
+                if let Some(panel) =
+                    Self::panel(geometry, n, &kept, &kappas, scale, scale != natural)
+                {
+                    out.push(panel);
+                }
             }
-
-            // Pad in decades, then widen to whole ones so the ticks land on
-            // powers of ten. `snap_to_decades` leaves a sub-decade span alone,
-            // which is what keeps the spherical panel's narrow window narrow
-            // instead of stretching it across a full decade it does not fill.
-            let x_range = snap_to_decades(
-                padded_log_range(&kappas, 0.03).unwrap_or((edges[0], edges[edges.len() - 1])),
-            );
-
-            out.push(MetricVsKappa {
-                geometry,
-                n,
-                series,
-                x_range,
-                legend: out.is_empty(),
-            });
         }
         out
+    }
+
+    /// One panel at one axis scale, or `None` when nothing bins.
+    fn panel(
+        geometry: &'static str,
+        n: usize,
+        kept: &[(f64, &TrialRecord)],
+        kappas: &[f64],
+        scale: BinScale,
+        alternate: bool,
+    ) -> Option<MetricVsKappa> {
+        let edges = scale.edges(kappas, N_BINS)?;
+        let series: Vec<Series> = OBJECTIVES
+            .iter()
+            .filter_map(|&metric| Series::build(metric, &edges, scale, kept))
+            .collect();
+        if series.is_empty() {
+            return None;
+        }
+
+        let span = (edges[0], edges[edges.len() - 1]);
+        let x_range = match scale {
+            // Pad in decades, then widen to whole ones so the ticks land on
+            // powers of ten.
+            BinScale::Log => snap_to_decades(padded_log_range(kappas, 0.03).unwrap_or(span)),
+            BinScale::Linear => padded_range(kappas, 0.03).unwrap_or(span),
+        };
+
+        Some(MetricVsKappa {
+            geometry,
+            n,
+            series,
+            x_range,
+            scale,
+            alternate,
+        })
     }
 
     /// Always true for a panel [`MetricVsKappa::panels`] returned; kept so the
@@ -203,16 +271,22 @@ impl MetricVsKappa {
 impl Series {
     /// One metric's binned trend, or `None` when the sweeps do not carry it or
     /// no bin cleared [`MIN_PER_BIN`].
-    fn build(metric: Metric, edges: &[f64], kept: &[(f64, &TrialRecord)]) -> Option<Series> {
+    fn build(
+        metric: Metric,
+        edges: &[f64],
+        scale: BinScale,
+        kept: &[(f64, &TrialRecord)],
+    ) -> Option<Series> {
         let (xs, ys): (Vec<f64>, Vec<f64>) = kept
             .iter()
             .filter_map(|(k, r)| reading(metric, r).map(|v| (*k, v)))
             .unzip();
-        let (centres, medians) = binned_median_on(edges, &xs, &ys, MIN_PER_BIN);
+        let (centres, medians) = binned_median_on(edges, scale, &xs, &ys, MIN_PER_BIN);
         if centres.is_empty() {
             return None;
         }
         Some(Series {
+            metric,
             label: label(metric),
             color: metric_color(metric.name()),
             dash: metric_dash(metric.name()),
@@ -248,9 +322,13 @@ fn reading(metric: Metric, record: &TrialRecord) -> Option<f64> {
     })
 }
 
-/// The series label: the registry's abbreviation, marked as flipped where the
-/// metric is minimised. ASCII hyphen, not U+2212 — the bitmap backend renders
-/// anything outside Latin-1 + Greek as tofu.
+/// The series label: the metric's wire name, marked as flipped where the metric
+/// is minimised. The full name rather than `Metric::short()` — a thesis figure
+/// is read once and slowly, and `1-normalized_stress` says what `1-stress` only
+/// implies. It is what sizes [`LEGEND_COLS`].
+///
+/// ASCII hyphen, not U+2212 — the bitmap backend renders anything outside
+/// Latin-1 + Greek as tofu.
 fn label(metric: Metric) -> String {
     if is_minimized_metric(metric) {
         format!("1-{}", metric.name())
@@ -261,33 +339,26 @@ fn label(metric: Metric) -> String {
 
 impl Figure for MetricVsKappa {
     fn name(&self) -> String {
-        format!("exp2_metric_vs_kappa_{}_N{}", self.geometry, self.n)
+        // Only the *alternate* rendering is marked. The spherical panel is
+        // linear too, but it is that geometry's only figure — a suffix there
+        // would imply a log companion that does not exist.
+        let axis = if self.alternate { "_linear" } else { "" };
+        format!("exp2_metric_vs_kappa_{}{axis}_N{}", self.geometry, self.n)
     }
 
     fn size(&self) -> (u32, u32) {
-        let (w, h) = PANEL;
-        (w, h + if self.legend { LEGEND_STRIP } else { 0 })
+        PANEL
     }
 
     fn draw<DB: DrawingBackend>(&self, root: &DrawingArea<DB, Shift>) -> Res
     where
         DB::ErrorType: 'static,
     {
-        // The strip comes off the top, so both panels' plot areas are PANEL.1
-        // tall and line up when the pair is set bottom-aligned.
-        let plot = if self.legend {
-            let (strip, plot) = root.split_vertically(LEGEND_STRIP);
-            let entries: Vec<LegendEntry> = self.series.iter().map(Series::legend_entry).collect();
-            draw_legend_grid(&strip, &entries, 3)?;
-            plot
-        } else {
-            root.clone()
-        };
-
         // The geometry is the one identifying thing drawn: two of these are
         // read side by side and have to be tellable apart. N, setting and
-        // objective space stay in the filename, as Exp 1's do.
-        let mut builder = ChartBuilder::on(&plot);
+        // objective space stay in the filename, as Exp 1's do. The legend is
+        // [`MetricLegend`], a separate file.
+        let mut builder = ChartBuilder::on(root);
         builder
             .margin(6)
             .margin_right(12)
@@ -302,13 +373,9 @@ impl Figure for MetricVsKappa {
             .y_label_area_size(46);
 
         let (lo, hi) = self.x_range;
-        // **A log axis needs a decade to label.** plotters derives a log
-        // scale's key points from its endpoints and finds none inside a window
-        // narrower than one decade, so the spherical panel — whose κ is pinned
-        // to a factor of ~1.4 by the wrong-pole gauge — came out with no x
-        // ticks at all. Below a decade the axis is linear, which is also the
-        // honest rendering: nothing about that window is multiplicative.
-        if hi / lo >= 10.0 {
+        // The bins behind `series` were laid down on this same scale, so the
+        // medians sit mid-bin as this axis renders them.
+        if self.scale == BinScale::Log {
             let mut chart = builder.build_cartesian_2d((lo..hi).log_scale(), 0.0f64..1.0f64)?;
             style_mesh!(chart.configure_mesh())
                 .x_desc(X_DESC)
@@ -343,7 +410,7 @@ const X_DESC: &str = "κ";
 /// Every series is oriented so higher is better — `normalized_stress` is drawn
 /// as `1 - stress` — and the axis says so, because that is the one thing about
 /// this figure a reader cannot recover from the curves.
-const Y_DESC: &str = "higher is better";
+const Y_DESC: &str = "metric";
 
 impl MetricVsKappa {
     /// Draw every series onto *chart*. Generic over the x coordinate so the log
@@ -375,6 +442,65 @@ impl MetricVsKappa {
             }
         }
         Ok(())
+    }
+}
+
+/// The legend shared by every [`MetricVsKappa`] panel at one N, as its own
+/// portrait file: [`LEGEND_WIDTH`] wide, [`PANEL`] tall, one entry per row.
+///
+/// It is the union of the panels' series, in [`OBJECTIVES`] order — the order
+/// the curves are drawn in — so a metric that bins on one geometry and not
+/// another is still listed, and a metric the sweeps never wrote is not.
+pub struct MetricLegend {
+    n: usize,
+    entries: Vec<LegendEntry>,
+}
+
+impl MetricLegend {
+    /// The legend for *panels*, which should be everything
+    /// [`MetricVsKappa::panels`] returned at *n*.
+    #[must_use]
+    pub fn from_panels(panels: &[MetricVsKappa], n: usize) -> Self {
+        let entries = OBJECTIVES
+            .iter()
+            .filter_map(|&metric| {
+                panels
+                    .iter()
+                    .flat_map(|p| p.series.iter())
+                    .find(|s| s.metric == metric)
+                    .map(Series::legend_entry)
+            })
+            .collect();
+        Self { n, entries }
+    }
+
+    /// False when no panel had a series to name — in which case there are no
+    /// panels either, and a legend on its own would label nothing.
+    #[must_use]
+    pub fn has_data(&self) -> bool {
+        !self.entries.is_empty()
+    }
+}
+
+impl Figure for MetricLegend {
+    fn name(&self) -> String {
+        format!("exp2_metric_vs_kappa_legend_N{}", self.n)
+    }
+
+    fn size(&self) -> (u32, u32) {
+        (LEGEND_WIDTH, PANEL.1)
+    }
+
+    fn draw<DB: DrawingBackend>(&self, root: &DrawingArea<DB, Shift>) -> Res
+    where
+        DB::ErrorType: 'static,
+    {
+        // A block of LEGEND_ROW per entry, centred vertically; the grid
+        // helper would otherwise space five rows over the full panel height.
+        let rows = u32::try_from(self.entries.len()).unwrap_or(u32::MAX);
+        let block = rows.saturating_mul(LEGEND_ROW).min(PANEL.1);
+        let pad = (PANEL.1 - block) / 2;
+        draw_legend_grid(&root.margin(pad, pad, 0, 0), &self.entries, 1)
     }
 }
 
