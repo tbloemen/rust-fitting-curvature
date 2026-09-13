@@ -18,7 +18,7 @@ use std::str::FromStr;
 
 use clap::Parser;
 
-use fitting_analysis::figures::{self, exp1, exp2, exp3, exp4, save};
+use fitting_analysis::figures::{self, exp1, exp2, exp2_dependence, exp3, exp4, save};
 use fitting_analysis::objectives::ObjectiveSpace;
 use fitting_analysis::{Error, Result};
 
@@ -131,13 +131,16 @@ fn main() -> Result<()> {
     // κ, the embedding curvature, and |K|, the searched hyperparameter;
     // `panels` returns only the ones with data, so there is no guard on the
     // loop. Their shared legend is a separate file, built from all of the
-    // panels so it names exactly the curves they draw. Its other two figures
-    // are still skeletons, dispatched beside it so the slot is visible here
-    // rather than absent. Everything lands under `<out-dir>/experiment_2`:
-    // the panels and the legend are set together as one row, and a directory
-    // keeps that set from being spread among the other experiments' files.
+    // panels so it names exactly the curves they draw. The metric-dependence
+    // heatmap is one panel per geometry from the same cells, with its ρ
+    // colourbar written once per run; the dataset-by-metric panel is still a
+    // skeleton, dispatched beside them so the slot is visible here rather than
+    // absent. Everything lands under `<out-dir>/experiment_2`: the panels and
+    // the legend are set together as one row, and a directory keeps that set
+    // from being spread among the other experiments' files.
     if args.exp.contains(&2) {
         let exp2_dir = args.out_dir.join("experiment_2");
+        let mut any_dependence = false;
         for n in &args.n {
             let mut panels = Vec::new();
             for x in [exp2::XAxis::Kappa, exp2::XAxis::Curvature] {
@@ -155,10 +158,18 @@ fn main() -> Result<()> {
                 save(&legend, &exp2_dir, space)?;
             }
 
+            for fig in exp2_dependence::MetricDependence::panels(&cells, *n) {
+                save(&fig, &exp2_dir, space)?;
+                any_dependence = true;
+            }
+
             let fig = exp2::MetricPanels::new(&cells, *n, space);
             if fig.has_data() {
                 save(&fig, &exp2_dir, space)?;
             }
+        }
+        if any_dependence {
+            save(&exp2_dependence::DependenceColorbar, &exp2_dir, space)?;
         }
     }
 

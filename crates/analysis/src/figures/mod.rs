@@ -17,7 +17,10 @@
 //!   thesis table cannot disagree.
 //! * **Exp 2** — the metric-response trends: every `[0,1]` metric overlaid
 //!   against κ and against |K|, and one panel per unbounded metric on its own
-//!   y axis. The module doc lists the two figures still to draw.
+//!   y axis ([`exp2::MetricTrend`], [`exp2::UnboundedTrend`]); and the
+//!   Spearman metric-dependence heatmap
+//!   ([`exp2_dependence::MetricDependence`]). The dataset-by-metric panel is
+//!   still a skeleton.
 //! * **Exp 3** — a skeleton; see the module doc.
 //! * **Exp 4** — stacked Pareto fronts, one panel per (dataset, geometry) and
 //!   one curve per loss-weight setting; and the R2 levels of the same settings
@@ -35,6 +38,7 @@
 
 pub mod exp1;
 pub mod exp2;
+pub mod exp2_dependence;
 pub mod exp3;
 pub mod exp4;
 

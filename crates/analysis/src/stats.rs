@@ -132,6 +132,42 @@ pub fn spearman(x: &[f64], y: &[f64]) -> Option<(f64, f64)> {
     Some((rho, p))
 }
 
+/// Pairwise Spearman ρ between every two of *columns*, each a variable over
+/// the same observations.
+///
+/// Symmetric, with `1.0` on the diagonal and `None` wherever [`spearman`] is
+/// undefined for the pair — a constant column, or fewer than three
+/// observations. Each pair is computed once and mirrored, and the p-value is
+/// discarded: a correlation matrix is read for the ρ, and at the ~1000
+/// observations per cell it is drawn from, every ρ past ±0.1 is significant
+/// anyway.
+///
+/// # Panics
+///
+/// Panics if the columns are not all the same length — the caller has already
+/// aligned them by observation, and a ragged input is a bug there, not a
+/// value to carry.
+#[must_use]
+pub fn spearman_matrix(columns: &[Vec<f64>]) -> Vec<Vec<Option<f64>>> {
+    let k = columns.len();
+    if let Some(first) = columns.first() {
+        assert!(
+            columns.iter().all(|c| c.len() == first.len()),
+            "spearman_matrix: columns must be the same length"
+        );
+    }
+    let mut out = vec![vec![None; k]; k];
+    for i in 0..k {
+        out[i][i] = Some(1.0);
+        for j in (i + 1)..k {
+            let rho = spearman(&columns[i], &columns[j]).map(|(rho, _)| rho);
+            out[i][j] = rho;
+            out[j][i] = rho;
+        }
+    }
+    out
+}
+
 /// Sizes of runs of equal values (tie groups) in *xs*.
 fn tie_group_sizes(xs: &[f64]) -> Vec<usize> {
     let mut v = xs.to_vec();
