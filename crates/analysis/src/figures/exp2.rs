@@ -141,13 +141,17 @@
 //! serves both x axes — the curves are the same metrics in the same colours
 //! whichever way the trials are binned — so it carries no axis slug.
 //!
-//! ### Not this module's other two figures
+//! ### Not this module's other figures
 //!
-//! [`MetricPanels`] below is still a skeleton. The results chapter asks for two
-//! further figures under `<metric-results>` — a dataset-by-metric panel grouped
-//! by metric family over synthetic *and* real datasets, and the Spearman
-//! metric-dependence heatmap of `<metric-dependence>`, asking whether the
-//! metrics order the same visualisations the same way. Neither is drawn yet.
+//! The Spearman metric-dependence heatmap of `<metric-dependence>` — whether
+//! the metrics order the same visualisations the same way — is
+//! [`super::exp2_dependence::MetricDependence`], drawn from the same
+//! population ([`SETTING`], every trial) and reading metrics through the same
+//! [`reading`], so the two figures cannot disagree about orientation or about
+//! which trials count. [`MetricPanels`] below is still a skeleton: the
+//! dataset-by-metric panel grouped by metric family over synthetic *and* real
+//! datasets that the results chapter asks for under `<metric-results>` is not
+//! drawn yet.
 
 use plotters::coord::Shift;
 use plotters::prelude::*;
@@ -165,8 +169,8 @@ use crate::style_mesh;
 
 /// The loss-weight setting the panels draw from: the baseline, where every
 /// auxiliary weight is zero, so curvature is the only thing varying with the
-/// metric.
-const SETTING: &str = "all_off";
+/// metric. `exp2_dependence` draws from the same one.
+pub(super) const SETTING: &str = "all_off";
 
 /// Bins across the panel's whole range, spaced as the axis is.
 const N_BINS: usize = 30;
@@ -454,7 +458,7 @@ impl Series {
 /// that did not measure an objective must score badly rather than vanish, and
 /// wrong for a trend curve, where it would draw a metric the sweeps never wrote
 /// as a flat line at zero. Here absent stays absent and the metric is dropped.
-fn reading(metric: Metric, record: &TrialRecord) -> Option<f64> {
+pub(super) fn reading(metric: Metric, record: &TrialRecord) -> Option<f64> {
     let v = record.metrics.get(metric)?;
     if !v.is_finite() {
         return None;
@@ -473,11 +477,22 @@ fn reading(metric: Metric, record: &TrialRecord) -> Option<f64> {
 ///
 /// ASCII hyphen, not U+2212 — the bitmap backend renders anything outside
 /// Latin-1 + Greek as tofu.
-fn label(metric: Metric) -> String {
+pub(super) fn label(metric: Metric) -> String {
+    flipped(metric, metric.name())
+}
+
+/// [`label`] on the registry abbreviation (`1-stress`), for an axis that has to
+/// fit nine of them — the dependence heatmap's.
+pub(super) fn short_label(metric: Metric) -> String {
+    flipped(metric, metric.short())
+}
+
+/// *name*, prefixed `1-` where the metric is minimised.
+fn flipped(metric: Metric, name: &str) -> String {
     if is_minimized_metric(metric) {
-        format!("1-{}", metric.name())
+        format!("1-{name}")
     } else {
-        metric.name().to_string()
+        name.to_string()
     }
 }
 

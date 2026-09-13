@@ -5,7 +5,7 @@
 
 use fitting_analysis::stats::{
     chi2_sf, friedman, holm_against_control, mean, median, normal_sf, pearson, quantile, rankdata,
-    spearman, student_t_sf,
+    spearman, spearman_matrix, student_t_sf,
 };
 use fitting_core::cast::count_to_f64;
 use std::cmp::Ordering;
@@ -73,6 +73,40 @@ fn spearman_perfect_anticorrelation_is_significant() {
 #[test]
 fn spearman_needs_three_points() {
     assert!(spearman(&[1.0, 2.0], &[2.0, 1.0]).is_none());
+}
+
+#[test]
+fn spearman_matrix_is_symmetric_with_unit_diagonal() {
+    // Column 0 against column 1 is the `spearman_matches_scipy` pair; column 2
+    // is column 0 reversed, so its ρ against column 0 is exactly -1.
+    let columns = vec![
+        vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+        vec![2.0, 1.0, 4.0, 3.0, 7.0, 5.0, 6.0],
+        vec![7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0],
+    ];
+    let m = spearman_matrix(&columns);
+    assert_eq!(m.len(), 3);
+    for (i, row) in m.iter().enumerate() {
+        assert_eq!(row.len(), 3);
+        assert_eq!(row[i], Some(1.0));
+        for j in 0..3 {
+            assert_eq!(row[j], m[j][i], "ρ[{i}][{j}] != ρ[{j}][{i}]");
+        }
+    }
+    assert_close(m[0][1].unwrap(), 0.821_428_571_428_571_5, 1e-12);
+    assert_close(m[0][2].unwrap(), -1.0, 1e-12);
+    assert_close(m[1][2].unwrap(), -0.821_428_571_428_571_5, 1e-12);
+}
+
+#[test]
+fn spearman_matrix_marks_a_constant_column_undefined() {
+    let columns = vec![vec![1.0, 2.0, 3.0], vec![5.0, 5.0, 5.0]];
+    let m = spearman_matrix(&columns);
+    assert_eq!(m[0][0], Some(1.0));
+    assert_eq!(m[1][1], Some(1.0));
+    assert_eq!(m[0][1], None);
+    assert_eq!(m[1][0], None);
+    assert!(spearman_matrix(&[]).is_empty());
 }
 
 #[test]
