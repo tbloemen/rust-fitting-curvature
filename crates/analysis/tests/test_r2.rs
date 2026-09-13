@@ -424,3 +424,52 @@ fn a_diverged_trial_scores_worst_rather_than_vanishing() {
     let bad = cell_summary(&[diverged], &w);
     assert!(bad.r2[REGION_ALL] > good.r2[REGION_ALL]);
 }
+
+// ─── The legacy space's projected-only metric regions ────────────────────────
+
+#[test]
+fn legacy_projected_metric_regions_sit_inside_the_projected_surface() {
+    use fitting_analysis::objectives::METRIC_PAIRS;
+    use fitting_analysis::r2::{projected_region_labels, projected_region_name, REGION_PROJECTED};
+
+    let space = ObjectiveSpace::Legacy10;
+    let w = Weights::new(space);
+    let half = u8::try_from(w.s.div_ceil(2)).expect("s is at most 255");
+    let surface = w.region(REGION_PROJECTED).expect("projected surface");
+
+    // The projected surface: every manifold axis at zero.
+    assert_eq!(surface.indices.len(), compositions(w.s, METRIC_PAIRS.len()));
+
+    for (i, (projected, _)) in METRIC_PAIRS.iter().enumerate() {
+        let name = projected_region_name(projected.name());
+        let region = w.region(&name).unwrap_or_else(|| panic!("region {name}"));
+        // A subset of the surface, with the half-mass rule on the metric's
+        // projected reading: at s = 5 over five projected axes, 3+2, 4+1, 5+0
+        // split over the other four axes — 10 + 4 + 1 = 15 vectors.
+        let expected: usize = (usize::from(half)..=w.s)
+            .map(|t| compositions(w.s - t, METRIC_PAIRS.len() - 1))
+            .sum();
+        assert_eq!(region.indices.len(), expected, "region {name}");
+        for &v in &region.indices {
+            assert!(
+                surface.indices.contains(&v),
+                "{name} admits {:?}, off the surface",
+                w.counts[v]
+            );
+            assert!(
+                w.counts[v][2 * i] >= half,
+                "{name} admits {:?}",
+                w.counts[v]
+            );
+        }
+    }
+
+    // The figure's column set: the surface first, then the five, all built.
+    let labels = projected_region_labels(space);
+    assert_eq!(labels.len(), 1 + METRIC_PAIRS.len());
+    assert_eq!(labels[0].0, REGION_PROJECTED);
+    for (name, _) in &labels {
+        assert!(w.region(name).is_some(), "label without region: {name}");
+    }
+    assert!(projected_region_labels(ObjectiveSpace::Current6).is_empty());
+}

@@ -154,6 +154,14 @@ fn fill(dim: usize, remaining: u8, counts: &mut Vec<u8>, out: &mut Vec<Vec<u8>>)
 pub const REGION_MANIFOLD: &str = "manifold";
 pub const REGION_PROJECTED: &str = "projected";
 
+/// The name of the projected-only region of one metric: the vectors of
+/// [`REGION_PROJECTED`] that also place at least half their mass on that
+/// metric's projected reading. [`ObjectiveSpace::Legacy10`] only.
+#[must_use]
+pub fn projected_region_name(metric: &str) -> String {
+    format!("{REGION_PROJECTED}:{metric}")
+}
+
 /// The preference regions of *space*, in report order.
 ///
 /// The two spaces do not share a region set, and cannot: a region is a subset
@@ -168,15 +176,23 @@ pub const REGION_PROJECTED: &str = "projected";
 ///   placing at least half their mass on that metric's two objectives, its
 ///   projected and manifold readings together), then the two **surface**
 ///   regions: the vectors supported entirely on the manifold objectives, and
-///   entirely on the projected ones. This is the set the sweeps under
-///   `results/` were reported under, reconstructed exactly — eight regions, not
-///   thirteen, because a legacy region is per *metric*, never per objective.
+///   entirely on the projected ones. Those eight are the set the sweeps under
+///   `results/` were reported under, reconstructed exactly. After them come
+///   the five **projected-only** metric regions ([`projected_region_name`]):
+///   the vectors of the projected surface that place at least half their mass
+///   on one metric's projected reading — what an analyst who cares about that
+///   metric *on the page* would see, which the metric-pair region cannot
+///   separate from the manifold reading. There is no manifold counterpart:
+///   the thesis judges the page, and the manifold surface is reported only as
+///   a whole.
 ///
 /// The surface regions use "supported entirely on" rather than "at least half":
 /// each holds five objectives, which is wide enough for that rule to admit a
 /// meaningful set. The current space's families hold two, where it would admit
 /// six vectors — too thin for a mean to say anything, which is why they use the
-/// half-mass rule instead.
+/// half-mass rule instead. A projected-only metric region is the half-mass
+/// rule applied *inside* the projected surface, and holds 15 of its 126
+/// vectors at `s = 5`.
 fn build_regions(space: ObjectiveSpace, counts: &[Vec<u8>], s: usize) -> Vec<Region> {
     let half = u8::try_from(s.div_ceil(2)).expect("s is at most 255, so half is at most 128"); // 3 of 5: "at least half the mass"
     let mut regions = vec![Region {
@@ -224,12 +240,18 @@ fn build_regions(space: ObjectiveSpace, counts: &[Vec<u8>], s: usize) -> Vec<Reg
                     c.iter().enumerate().all(|(j, &l)| j % 2 == 1 || l == 0)
                 }),
             });
+            let on_projected = |c: &[u8]| c.iter().enumerate().all(|(j, &l)| j % 2 == 0 || l == 0);
             regions.push(Region {
                 name: REGION_PROJECTED.to_string(),
-                indices: select(counts, |c| {
-                    c.iter().enumerate().all(|(j, &l)| j % 2 == 0 || l == 0)
-                }),
+                indices: select(counts, on_projected),
             });
+            for (i, (projected, _)) in METRIC_PAIRS.iter().enumerate() {
+                let p = 2 * i;
+                regions.push(Region {
+                    name: projected_region_name(projected.name()),
+                    indices: select(counts, |c| on_projected(c) && c[p] >= half),
+                });
+            }
         }
     }
 
@@ -270,9 +292,42 @@ pub fn region_labels(space: ObjectiveSpace) -> Vec<(String, String)> {
             );
             out.push((REGION_MANIFOLD.to_string(), "W_man".to_string()));
             out.push((REGION_PROJECTED.to_string(), "W_proj".to_string()));
+            // The projected-only metric regions, marked `(p)` to tell them
+            // from the metric-pair regions of the same metric.
+            out.extend(METRIC_PAIRS.iter().map(|(p, _)| {
+                (
+                    projected_region_name(p.name()),
+                    format!("W_{}(p)", p.short()),
+                )
+            }));
         }
     }
     out
+}
+
+/// The regions of the projected surface, as `(name, axis label)`: the surface
+/// as a whole, then one per metric. Empty outside
+/// [`ObjectiveSpace::Legacy10`], which is the only space with a surface to
+/// restrict to — the current space *is* the projected surface, and its
+/// [`region_labels`] already say what these would.
+#[must_use]
+pub fn projected_region_labels(space: ObjectiveSpace) -> Vec<(String, String)> {
+    match space {
+        ObjectiveSpace::Current6 => Vec::new(),
+        ObjectiveSpace::Legacy10 => {
+            let names: Vec<String> = std::iter::once(REGION_PROJECTED.to_string())
+                .chain(
+                    METRIC_PAIRS
+                        .iter()
+                        .map(|(p, _)| projected_region_name(p.name())),
+                )
+                .collect();
+            region_labels(space)
+                .into_iter()
+                .filter(|(name, _)| names.contains(name))
+                .collect()
+        }
+    }
 }
 
 /// Abbreviations for the family labels; the full names do not fit an axis.

@@ -416,6 +416,17 @@ const HEAD_ROOM: f64 = 0.16;
 /// Returns `Err` if the file is present but malformed. A missing file returns
 /// an empty `Vec`.
 pub fn load_deltas(path: &Path) -> Result<Vec<DeltaRow>> {
+    load_table(path)
+}
+
+/// Any stage table the figures read back: absent is an empty `Vec`, since
+/// every such table is a separate `r2` run and the figures that need it are
+/// then simply not written; present but malformed is an error.
+///
+/// # Errors
+///
+/// Returns `Err` if the file is present but malformed.
+pub fn load_table<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Vec<T>> {
     match load_jsonl(path) {
         Ok(rows) => Ok(rows),
         Err(Error::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {

@@ -148,10 +148,13 @@
 //! [`super::exp2_dependence::MetricDependence`], drawn from the same
 //! population ([`SETTING`], every trial) and reading metrics through the same
 //! [`reading`], so the two figures cannot disagree about orientation or about
-//! which trials count. [`MetricPanels`] below is still a skeleton: the
-//! dataset-by-metric panel grouped by metric family over synthetic *and* real
-//! datasets that the results chapter asks for under `<metric-results>` is not
-//! drawn yet.
+//! which trials count. The dataset-by-metric comparison of the three corpora
+//! that `<metric-results>` asks for is
+//! [`super::exp2_region_gain::RegionGain`]: the curved-versus-Euclidean R2
+//! gain under every preference region, drawn from the stage-1 table rather
+//! than from the trials, because a corpus is a front and the region-restricted
+//! indicator is the crate's one principled way to reduce a front to a number
+//! per metric.
 
 use plotters::coord::Shift;
 use plotters::prelude::*;
@@ -161,7 +164,7 @@ use fitting_core::metrics::{Metric, Space, ALL};
 use super::{
     binned_median_on, draw_legend_grid, geometry_color, log_tick, metric_color, metric_dash,
     padded_log_range, padded_range, BinScale, CellMap, Figure, LegendEntry, LinearTicks, LogTicks,
-    ObjectiveSpace, Res, CURVED, OBJECTIVES, OK_BLACK,
+    Res, CURVED, OBJECTIVES, OK_BLACK,
 };
 use crate::objectives::is_minimized_metric;
 use crate::records::TrialRecord;
@@ -938,53 +941,6 @@ where
         chart.draw_series(LineSeries::new(run.iter().copied(), color.stroke_width(2)))?;
     }
     Ok(())
-}
-
-// ─── Skeletons ───────────────────────────────────────────────────────────────
-
-/// Metric readings across the three embedding geometries, one panel per metric.
-///
-/// **A skeleton: nothing is drawn yet**, so [`MetricPanels::has_data`] returns
-/// `false` and the driver's "figures with no data are skipped" rule keeps an
-/// empty SVG off disk. See the module doc for what the results chapter asks of
-/// it — it is not [`MetricTrend`], which answers a different question about
-/// the same section.
-pub struct MetricPanels<'a> {
-    #[expect(dead_code, reason = "read once the figure is drawn")]
-    cells: &'a CellMap,
-    n: usize,
-    #[expect(dead_code, reason = "read once the figure is drawn")]
-    space: ObjectiveSpace,
-}
-
-impl<'a> MetricPanels<'a> {
-    #[must_use]
-    pub fn new(cells: &'a CellMap, n: usize, space: ObjectiveSpace) -> Self {
-        Self { cells, n, space }
-    }
-
-    /// Always `false` while this is a skeleton.
-    #[must_use]
-    pub fn has_data(&self) -> bool {
-        false
-    }
-}
-
-impl Figure for MetricPanels<'_> {
-    fn name(&self) -> String {
-        format!("exp2_metric_panels_N{}", self.n)
-    }
-
-    fn size(&self) -> (u32, u32) {
-        (1500, 1000)
-    }
-
-    fn draw<DB: DrawingBackend>(&self, _root: &DrawingArea<DB, Shift>) -> Res
-    where
-        DB::ErrorType: 'static,
-    {
-        Ok(())
-    }
 }
 
 #[cfg(test)]
