@@ -128,13 +128,6 @@ impl Columns {
             Self::Projected => "projected_",
         }
     }
-
-    fn title_suffix(self) -> &'static str {
-        match self {
-            Self::Full => "",
-            Self::Projected => ", projected readings only",
-        }
-    }
 }
 
 /// The per-region R2 gain of one curved geometry over the Euclidean corpus.
@@ -282,11 +275,7 @@ impl Figure for RegionGain {
         let (width, _) = title.dim_in_pixel();
         let centre = to_i32(f64::from(width) / 2.0);
         title.draw(&Text::new(
-            format!(
-                "{} vs {BASELINE_GEOMETRY}{}",
-                self.geometry,
-                self.columns.title_suffix()
-            ),
+            format!("{} vs {BASELINE_GEOMETRY}", self.geometry),
             (centre, 12),
             ("sans-serif", 15)
                 .into_font()
