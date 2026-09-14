@@ -473,3 +473,183 @@ fn legacy_projected_metric_regions_sit_inside_the_projected_surface() {
     }
     assert!(projected_region_labels(ObjectiveSpace::Current6).is_empty());
 }
+
+// ─── The projected-only legacy space, `obj5` ─────────────────────────────────
+//
+// `Projected5` is how the thesis reports the legacy sweeps: the five projected
+// readings, scored as if the search had carried nothing else. Its numbers are
+// not new — they are the legacy `projected` surface region and the
+// `projected:<m>` regions, which is what the identity test below pins — but
+// they are now the *whole* result rather than one column of it.
+
+/// A record with independent projected and manifold readings, so that the
+/// two surfaces disagree the way a curved embedding's do.
+fn record_with_surfaces(rng: &mut fitting_core::rng::Rng) -> TrialRecord {
+    let mut m = MetricValues::MISSING;
+    for metric in fitting_core::metrics::ALL {
+        m.set(*metric, MetricValue::measured(rng.uniform()));
+    }
+    TrialRecord {
+        metrics: m,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn projected5_is_the_objectives_without_distance_consistency() {
+    use fitting_core::metrics::DISTANCE_CONSISTENCY;
+    let space = ObjectiveSpace::Projected5;
+    assert_eq!(space.len(), N_METRIC_PAIRS);
+    let expected: Vec<_> = OBJECTIVES
+        .iter()
+        .filter(|m| **m != DISTANCE_CONSISTENCY)
+        .collect();
+    let got: Vec<_> = space.metrics().iter().collect();
+    assert_eq!(got, expected, "obj5 keeps OBJECTIVES order, minus the unmeasured sixth");
+    // Every one of them is the projected member of a legacy pair.
+    for metric in space.metrics() {
+        assert!(
+            METRIC_PAIRS.iter().any(|(p, _)| p == metric),
+            "{metric} has no manifold twin, so the legacy search never carried it"
+        );
+    }
+}
+
+#[test]
+fn every_space_round_trips_through_its_tag_and_the_cli() {
+    for space in ObjectiveSpace::ALL {
+        assert_eq!(ObjectiveSpace::from_tag(space.tag()), Some(space));
+        assert_eq!(space.tag().parse::<ObjectiveSpace>(), Ok(space));
+        assert_eq!(space.to_string(), space.tag());
+    }
+    assert_eq!("obj5".parse::<ObjectiveSpace>(), Ok(ObjectiveSpace::Projected5));
+    assert_eq!("projected5".parse::<ObjectiveSpace>(), Ok(ObjectiveSpace::Projected5));
+    assert!("obj7".parse::<ObjectiveSpace>().is_err());
+}
+
+#[test]
+fn families_agree_with_the_constant_and_drop_singletons() {
+    use fitting_analysis::objectives::families;
+    // On the current space the derived grouping is the constant, exactly.
+    let derived = families(ObjectiveSpace::Current6);
+    let constant: Vec<(&str, Vec<usize>)> = FAMILIES
+        .iter()
+        .map(|(name, members)| (*name, members.to_vec()))
+        .collect();
+    assert_eq!(derived, constant);
+
+    // On obj5 the label-aware family holds only `neighborhood_hit`, whose
+    // region would be the objective's own; it is dropped rather than
+    // duplicated. The other two survive with two members each.
+    let five = families(ObjectiveSpace::Projected5);
+    assert_eq!(
+        five.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+        vec!["structure", "distance"]
+    );
+    for (name, members) in &five {
+        assert_eq!(members.len(), 2, "family {name}");
+    }
+    // Every member index is inside the space, and the families are disjoint.
+    let mut all: Vec<usize> = five.iter().flat_map(|(_, m)| m.iter().copied()).collect();
+    all.sort_unstable();
+    all.dedup();
+    assert_eq!(all.len(), 4);
+    assert!(all.iter().all(|&j| j < ObjectiveSpace::Projected5.len()));
+
+    // The legacy space is not organised by family at all.
+    assert!(families(ObjectiveSpace::Legacy10).is_empty());
+}
+
+#[test]
+fn projected5_regions_match_the_combinatorics() {
+    use fitting_analysis::objectives::families;
+    use fitting_analysis::r2::{projected_region_labels, region_labels};
+
+    let space = ObjectiveSpace::Projected5;
+    let w = Weights::new(space);
+    let k = space.len();
+    let half = w.s.div_ceil(2);
+    // `region_size` is fixed to `SPACE`'s width; restate it for five axes.
+    let size = |m: usize| -> usize {
+        (half..=w.s)
+            .map(|t| compositions(t, m) * compositions(w.s - t, k - m))
+            .sum()
+    };
+
+    // C(9, 4) = 126 vectors at s = 5 over five axes.
+    assert_eq!(w.vectors.len(), compositions(w.s, k));
+    assert_eq!(w.region(REGION_ALL).unwrap().indices.len(), w.vectors.len());
+
+    // all, two families, five objectives — in that order, labelled to match.
+    let names: Vec<&str> = w.regions.iter().map(|r| r.name.as_str()).collect();
+    let mut expected = vec![REGION_ALL];
+    let fams = families(space);
+    expected.extend(fams.iter().map(|(n, _)| *n));
+    expected.extend(space.metrics().iter().map(|m| m.name()));
+    assert_eq!(names, expected);
+    let labels = region_labels(space);
+    assert_eq!(
+        labels.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+        names
+    );
+    assert_eq!(
+        labels.iter().map(|(_, l)| l.as_str()).collect::<Vec<_>>(),
+        vec!["W_all", "W_struct", "W_dist", "W_trust", "W_cont", "W_stress", "W_shep", "W_nh"]
+    );
+
+    for (family, members) in &fams {
+        assert_eq!(w.region(family).unwrap().indices.len(), size(members.len()), "region {family}");
+    }
+    for objective in space.metrics() {
+        assert_eq!(
+            w.region(objective.name()).unwrap().indices.len(),
+            size(1),
+            "region {objective}"
+        );
+    }
+    // The space is the projected surface; there is nothing to restrict to.
+    assert!(projected_region_labels(space).is_empty());
+}
+
+/// The load-bearing identity: scoring a legacy cell in `obj5` gives, region
+/// for region, the numbers the legacy `projected` and `projected:<m>` regions
+/// already gave it. Two facts make it exact rather than approximate — the R2
+/// minimum is attained on the front, and the obj5 front is the subset of the
+/// legacy front that is non-dominated on the projected axes — so a legacy
+/// weight vector supported only on projected axes sees the same minimum over
+/// either front.
+#[test]
+fn projected5_reproduces_the_legacy_projected_regions_exactly() {
+    use fitting_analysis::r2::{projected_region_name, REGION_PROJECTED};
+
+    let mut rng = fitting_core::rng::Rng::new(0x5EED_0B15);
+    let records: Vec<TrialRecord> = (0..200).map(|_| record_with_surfaces(&mut rng)).collect();
+
+    let legacy = cell_summary(&records, &Weights::new(ObjectiveSpace::Legacy10));
+    let five = cell_summary(&records, &Weights::new(ObjectiveSpace::Projected5));
+
+    // The fronts genuinely differ, or the test would be checking nothing.
+    assert!(five.n_front < legacy.n_front, "obj5 front should be smaller");
+    assert!(five.front.iter().all(|i| legacy.front.contains(i)), "obj5 front ⊆ legacy front");
+
+    let close = |a: f64, b: f64| (a - b).abs() <= 1e-12;
+    assert!(
+        close(five.r2[REGION_ALL], legacy.r2[REGION_PROJECTED]),
+        "all: {} vs projected: {}",
+        five.r2[REGION_ALL],
+        legacy.r2[REGION_PROJECTED]
+    );
+    for metric in ObjectiveSpace::Projected5.metrics() {
+        let name = metric.name();
+        let twin = projected_region_name(name);
+        assert!(
+            close(five.r2[name], legacy.r2[&twin]),
+            "{name}: {} vs {twin}: {}",
+            five.r2[name],
+            legacy.r2[&twin]
+        );
+    }
+    // And `all` in obj5 is *not* `all` in the legacy space: the manifold axes
+    // are gone, and that is the whole point of the space.
+    assert!(!close(five.r2[REGION_ALL], legacy.r2[REGION_ALL]));
+}

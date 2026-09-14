@@ -100,14 +100,29 @@ SETTING_ORDER = [BASELINE, "centering_only", "global_only", "norm_only", "all_fr
 # split the header row; everything else treats a region as just a column.
 FAMILY_REGIONS = ("structure", "distance", "class_separation", "manifold", "projected")
 
-# The two objective spaces build different region sets (see
+# The objective spaces build different region sets (see
 # `crates/analysis/src/r2.rs::build_regions`), so the columns depend on which
 # space wrote the table.  `obj6` is the current projected-only search; `obj10`
 # is the legacy projected+manifold one every sweep under `results/` was run in,
-# whose regions are per *metric pair* plus the two evaluation surfaces.  The
-# group header calls both middle blocks "Family", which is what they are: a
+# whose regions are per *metric pair* plus the two evaluation surfaces; `obj5`
+# is the legacy sweeps scored on their five projected readings only, which is
+# the space the thesis reports them in -- it has no label-aware family region,
+# because that family holds one objective there and would only repeat W_nh.
+# The group header calls both middle blocks "Family", which is what they are: a
 # region over more than one objective.
 REGIONS_BY_SPACE = {
+    "obj5": [
+        ("all", '$W_"all"$'),
+        # families
+        ("structure", '$W_"struct"$'),
+        ("distance", '$W_"dist"$'),
+        # objectives
+        ("trustworthiness", '$W_"trust"$'),
+        ("continuity", '$W_"cont"$'),
+        ("normalized_stress", '$W_"stress"$'),
+        ("shepard_goodness", '$W_"shep"$'),
+        ("neighborhood_hit", '$W_"nh"$'),
+    ],
     "obj6": [
         ("all", '$W_"all"$'),
         # families

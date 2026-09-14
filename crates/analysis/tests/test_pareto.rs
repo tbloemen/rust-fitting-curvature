@@ -332,3 +332,37 @@ fn step_polyline_passes_through_degenerate_fronts() {
     assert!(step_polyline(&[]).is_empty());
     assert_eq!(step_polyline(&[(0.9, 0.3)]), vec![(0.9, 0.3)]);
 }
+
+/// `Projected5` is the legacy space with its manifold axes dropped, so a row
+/// dominated on ten axes is dominated on the five — its front is a subset of
+/// the legacy front — while a row kept only for a manifold reading is gone.
+#[test]
+fn projected5_front_is_a_subset_of_the_legacy_front() {
+    use fitting_core::metrics::ALL;
+    let mut rng = fitting_core::rng::Rng::new(7);
+    let records: Vec<TrialRecord> = (0..150)
+        .map(|_| {
+            let mut m = MetricValues::MISSING;
+            for metric in ALL {
+                m.set(*metric, MetricValue::measured(rng.uniform()));
+            }
+            TrialRecord {
+                metrics: m,
+                ..Default::default()
+            }
+        })
+        .collect();
+    let legacy = pareto_front_records(&records, ObjectiveSpace::Legacy10);
+    let five = pareto_front_records(&records, ObjectiveSpace::Projected5);
+    assert!(!five.is_empty() && five.len() < legacy.len());
+    let legacy_rows: Vec<_> = legacy
+        .iter()
+        .map(|r| oriented_row(r, ObjectiveSpace::Legacy10))
+        .collect();
+    for r in &five {
+        assert!(legacy_rows.contains(&oriented_row(r, ObjectiveSpace::Legacy10)));
+    }
+    // Five wide, in OBJECTIVES order, no sixth.
+    let row = oriented_row(&record_at(0.4), ObjectiveSpace::Projected5);
+    assert_eq!(row, vec![0.4; 5]);
+}

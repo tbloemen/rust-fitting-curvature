@@ -74,6 +74,23 @@ static LEGACY_OBJECTIVES: LazyLock<Vec<Metric>> = LazyLock::new(|| {
         .collect()
 });
 
+/// The five projected objectives of the legacy sweeps: [`OBJECTIVES`] minus
+/// `distance_consistency`, which no sweep under `results/` measured.
+///
+/// This is the space the thesis *reports* the legacy sweeps in — every metric
+/// on the page, every comparison between fronts found on the page — while
+/// [`LEGACY_OBJECTIVES`] is the space they were *searched* in. Membership is
+/// "has a manifold twin", which is exactly the set the legacy search carried
+/// projected readings of; the order is [`OBJECTIVES`]', not the interleaved
+/// legacy one, so the families stay contiguous and `families` can index it.
+static PROJECTED5_OBJECTIVES: LazyLock<Vec<Metric>> = LazyLock::new(|| {
+    OBJECTIVES
+        .iter()
+        .copied()
+        .filter(|m| METRIC_PAIRS.iter().any(|(p, _)| p == m))
+        .collect()
+});
+
 /// Which objective space a set of results is scored in.
 ///
 /// Two spaces have to coexist because the sweeps on disk were not all searched
@@ -93,17 +110,35 @@ static LEGACY_OBJECTIVES: LazyLock<Vec<Metric>> = LazyLock::new(|| {
 /// objective that legacy trials never measured, so it orients to the worst case
 /// for every one of them and contributes a front-independent constant. That is
 /// why this is a choice the analysis makes per run rather than a constant.
+///
+/// [`Self::Projected5`] is the third: the legacy sweeps scored on their
+/// projected axes only, which is how the thesis reports them (every metric
+/// is read on the page, every comparison is between fronts). It drops the
+/// manifold axes but adds nothing the trials never measured, so unlike
+/// `Current6` it carries no front-independent constant. Its fronts are
+/// subsets of the legacy ones — a trial dominated on the ten axes is
+/// dominated on the five — and, because the R2 minimum is attained on the
+/// front, its `all` region equals the legacy `projected` surface region
+/// exactly, and its per-objective regions equal the legacy `projected:<m>`
+/// ones. `test_r2.rs` pins both identities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ObjectiveSpace {
     /// Ten objectives: the five paired metrics, projected and manifold.
     Legacy10,
     /// Six projected objectives — what the optimizer searches today.
     Current6,
+    /// Five projected objectives: the legacy sweeps' projected readings only.
+    ///
+    /// Never detected — a legacy file detects as [`Self::Legacy10`], the
+    /// space it was searched in — so this is always a forced choice
+    /// (`--objectives obj5`). Reporting in it is a decision, and the flag is
+    /// where that decision is recorded.
+    Projected5,
 }
 
 impl ObjectiveSpace {
-    /// Both spaces, for exhaustive iteration in tests and CLI parsing.
-    pub const ALL: [Self; 2] = [Self::Legacy10, Self::Current6];
+    /// Every space, for exhaustive iteration in tests and CLI parsing.
+    pub const ALL: [Self; 3] = [Self::Legacy10, Self::Current6, Self::Projected5];
 
     /// The objectives of this space, in scoring order.
     #[must_use]
@@ -111,6 +146,19 @@ impl ObjectiveSpace {
         match self {
             Self::Legacy10 => &LEGACY_OBJECTIVES,
             Self::Current6 => OBJECTIVES,
+            Self::Projected5 => &PROJECTED5_OBJECTIVES,
+        }
+    }
+
+    /// True when every objective of this space is a projected reading, so
+    /// the preference regions are `all`, the families and one per objective
+    /// (see `r2::build_regions`); false for the one space with a manifold
+    /// surface to separate.
+    #[must_use]
+    pub fn is_projected_only(self) -> bool {
+        match self {
+            Self::Legacy10 => false,
+            Self::Current6 | Self::Projected5 => true,
         }
     }
 
@@ -137,6 +185,7 @@ impl ObjectiveSpace {
         match self {
             Self::Legacy10 => "obj10",
             Self::Current6 => "obj6",
+            Self::Projected5 => "obj5",
         }
     }
 
@@ -146,6 +195,7 @@ impl ObjectiveSpace {
         match self {
             Self::Legacy10 => "10 objectives (projected + manifold)",
             Self::Current6 => "6 objectives (projected only)",
+            Self::Projected5 => "5 objectives (projected only, legacy sweeps)",
         }
     }
 
@@ -208,8 +258,9 @@ impl std::str::FromStr for ObjectiveSpace {
         match s.to_ascii_lowercase().as_str() {
             "obj10" | "legacy10" | "legacy" | "10" => Ok(Self::Legacy10),
             "obj6" | "current6" | "current" | "6" => Ok(Self::Current6),
+            "obj5" | "projected5" | "projected" | "5" => Ok(Self::Projected5),
             other => Err(format!(
-                "unknown objective space `{other}`; expected obj10 (legacy10) or obj6 (current6)"
+                "unknown objective space `{other}`; expected obj10 (legacy10), obj6 (current6) or obj5 (projected5)"
             )),
         }
     }
@@ -258,6 +309,38 @@ pub const FAMILIES: [(&str, &[usize]); 3] = [
     ("distance", &[2, 3]),
     ("class_separation", &[4, 5]),
 ];
+
+/// The preference families of a projected-only *space*, as
+/// `(name, indices into space.metrics())`, in registry order.
+///
+/// [`FAMILIES`] restated for any space: the members are grouped by
+/// `Metric::family()` rather than listed, so a space with fewer objectives
+/// gets the families it can support. A family holding a **single** objective
+/// is dropped, because its "at least half the mass" region would be the same
+/// set of vectors as that objective's own region — the duplication
+/// `class_separation` had while it held only `neighborhood_hit`. In
+/// [`ObjectiveSpace::Projected5`] that is again the label-aware family, since
+/// `distance_consistency` is absent; on [`ObjectiveSpace::Current6`] this
+/// returns [`FAMILIES`] exactly (`families_agree_with_the_constant` pins it).
+///
+/// Empty for [`ObjectiveSpace::Legacy10`], whose regions are per metric pair
+/// and per surface, not per family.
+#[must_use]
+pub fn families(space: ObjectiveSpace) -> Vec<(&'static str, Vec<usize>)> {
+    if !space.is_projected_only() {
+        return Vec::new();
+    }
+    let mut out: Vec<(&'static str, Vec<usize>)> = Vec::new();
+    for (j, metric) in space.metrics().iter().enumerate() {
+        let name = metric.family().name();
+        match out.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, members)) => members.push(j),
+            None => out.push((name, vec![j])),
+        }
+    }
+    out.retain(|(_, members)| members.len() > 1);
+    out
+}
 
 /// The metrics that have both a projected and a manifold reading, as
 /// `(projected, manifold)`.

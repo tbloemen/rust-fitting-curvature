@@ -468,6 +468,20 @@ pub fn load_all_cells(
     Ok((cells, space))
 }
 
+/// Every cell reduced to its Pareto front in *space*.
+///
+/// The corpus a thesis figure describes is the front, not the sweep, so the
+/// figures that pool trials (`exp2`, `exp2_dependence`) take this rather than
+/// the sweep `CellMap`. Reduced once, here, so the front and the space it was
+/// found in are decided in one place.
+#[must_use]
+pub fn front_cells(cells: &CellMap, space: ObjectiveSpace) -> CellMap {
+    cells
+        .iter()
+        .map(|(cell, records)| (cell.clone(), pareto_front_records(records, space)))
+        .collect()
+}
+
 /// One `kappa_data` row: the data-intrinsic curvature under each fitted geometry.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct KappaData {

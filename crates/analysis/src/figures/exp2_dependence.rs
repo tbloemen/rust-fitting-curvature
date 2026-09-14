@@ -25,11 +25,16 @@
 //!
 //! ### Population
 //!
-//! The same as [`super::exp2::MetricTrend`]'s, on purpose: **every trial of
-//! the `all_off` cells** ([`super::exp2::SETTING`]) — all trials, not front
-//! points, because the question is how the metrics rank the searched corpus,
-//! not what the search kept; and the baseline setting only, so the auxiliary
-//! loss weights do not vary underneath the ranking.
+//! The same as [`super::exp2::MetricTrend`]'s, on purpose: **the Pareto
+//! front of every `all_off` cell** ([`super::exp2::SETTING`]) — front points,
+//! not every trial, because the thesis compares corpora and a corpus is the
+//! front, so the ranking asked about is the ranking of the corpus; and the
+//! baseline setting only, so the auxiliary loss weights do not vary underneath
+//! the ranking. The reduction happens in `bin/figures.rs`, in the scoring
+//! space, before the `CellMap` reaches [`MetricDependence::panels`]. A front is
+//! a few hundred points where a sweep is a thousand, so [`MIN_TRIALS`] now
+//! bites: a dataset cell whose front has fewer complete points contributes
+//! nothing, and the panel's `n = used / total` line shows it.
 //!
 //! Collapsed embeddings are **not** filtered out. They are finite readings of
 //! a real trial — 14% of the hyperbolic corpus (`crates/analysis/CLAUDE.md`

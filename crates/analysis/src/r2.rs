@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::objectives::{oriented_matrix, ObjectiveSpace, Row, FAMILIES, METRIC_PAIRS};
+use crate::objectives::{families, oriented_matrix, ObjectiveSpace, Row, METRIC_PAIRS};
 use crate::pareto::pareto_front_mask;
 use crate::records::TrialRecord;
 
@@ -167,11 +167,14 @@ pub fn projected_region_name(metric: &str) -> String {
 /// The two spaces do not share a region set, and cannot: a region is a subset
 /// of a simplex whose dimension is the space's.
 ///
-/// * [`ObjectiveSpace::Current6`] — `all`, one per [`FAMILIES`] family, then one
-///   per objective. Both kinds use the same "at least half the mass" rule, which
-///   at `s = 5` means an integer count of 3 or more: over the 252 vectors of the
-///   6-objective simplex that admits 66 for a two-objective family and 21 for a
-///   single objective.
+/// * [`ObjectiveSpace::Current6`] and [`ObjectiveSpace::Projected5`] — `all`,
+///   one per [`families`] family, then one per objective. Both kinds use the
+///   same "at least half the mass" rule, which at `s = 5` means an integer
+///   count of 3 or more: over the 252 vectors of the 6-objective simplex that
+///   admits 66 for a two-objective family and 21 for a single objective; over
+///   the 126 vectors of the 5-objective simplex, 35 and 15. `Projected5` has
+///   two families rather than three, because its label-aware family holds
+///   one objective and would only duplicate that objective's region.
 /// * [`ObjectiveSpace::Legacy10`] — `all`, one per *metric pair* (the vectors
 ///   placing at least half their mass on that metric's two objectives, its
 ///   projected and manifold readings together), then the two **surface**
@@ -201,8 +204,8 @@ fn build_regions(space: ObjectiveSpace, counts: &[Vec<u8>], s: usize) -> Vec<Reg
     }];
 
     match space {
-        ObjectiveSpace::Current6 => {
-            for (name, members) in FAMILIES {
+        ObjectiveSpace::Current6 | ObjectiveSpace::Projected5 => {
+            for (name, members) in families(space) {
                 regions.push(Region {
                     name: name.to_string(),
                     // `u16` because a family may hold more than two objectives
@@ -269,11 +272,11 @@ fn build_regions(space: ObjectiveSpace, counts: &[Vec<u8>], s: usize) -> Vec<Reg
 pub fn region_labels(space: ObjectiveSpace) -> Vec<(String, String)> {
     let mut out = vec![(REGION_ALL.to_string(), "W_all".to_string())];
     match space {
-        ObjectiveSpace::Current6 => {
+        ObjectiveSpace::Current6 | ObjectiveSpace::Projected5 => {
             out.extend(
-                FAMILIES
-                    .iter()
-                    .map(|(family, _)| ((*family).to_string(), format!("W_{}", short(family)))),
+                families(space)
+                    .into_iter()
+                    .map(|(family, _)| (family.to_string(), format!("W_{}", short(family)))),
             );
             out.extend(
                 space
@@ -308,12 +311,12 @@ pub fn region_labels(space: ObjectiveSpace) -> Vec<(String, String)> {
 /// The regions of the projected surface, as `(name, axis label)`: the surface
 /// as a whole, then one per metric. Empty outside
 /// [`ObjectiveSpace::Legacy10`], which is the only space with a surface to
-/// restrict to — the current space *is* the projected surface, and its
+/// restrict to — a projected-only space *is* the projected surface, and its
 /// [`region_labels`] already say what these would.
 #[must_use]
 pub fn projected_region_labels(space: ObjectiveSpace) -> Vec<(String, String)> {
     match space {
-        ObjectiveSpace::Current6 => Vec::new(),
+        ObjectiveSpace::Current6 | ObjectiveSpace::Projected5 => Vec::new(),
         ObjectiveSpace::Legacy10 => {
             let names: Vec<String> = std::iter::once(REGION_PROJECTED.to_string())
                 .chain(
