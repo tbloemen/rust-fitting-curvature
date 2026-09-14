@@ -19,8 +19,9 @@
 //!   against κ and against |K|, and one panel per unbounded metric on its own
 //!   y axis ([`exp2::MetricTrend`], [`exp2::UnboundedTrend`]); and the
 //!   Spearman metric-dependence heatmap
-//!   ([`exp2_dependence::MetricDependence`]). The dataset-by-metric panel is
-//!   still a skeleton.
+//!   ([`exp2_dependence::MetricDependence`]); and the curved-versus-Euclidean
+//!   R2 gain under every preference region, datasets by regions, read back
+//!   from the stage-1 table ([`exp2_region_gain::RegionGain`]).
 //! * **Exp 3** — a skeleton; see the module doc.
 //! * **Exp 4** — stacked Pareto fronts, one panel per (dataset, geometry) and
 //!   one curve per loss-weight setting; and the R2 levels of the same settings
@@ -39,6 +40,7 @@
 pub mod exp1;
 pub mod exp2;
 pub mod exp2_dependence;
+pub mod exp2_region_gain;
 pub mod exp3;
 pub mod exp4;
 

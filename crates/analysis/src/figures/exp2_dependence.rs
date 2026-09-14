@@ -114,8 +114,9 @@ pub const MIN_TRIALS: usize = 30;
 const PANEL: (u32, u32) = (560, 580);
 
 /// Height of the strip above the chart carrying the geometry and the
-/// population line.
-const TITLE_STRIP: u32 = 40;
+/// population line. Shared with the other Exp 2 heatmap
+/// ([`super::exp2_region_gain::RegionGain`]) so the two set at one height.
+pub(super) const TITLE_STRIP: u32 = 40;
 
 /// Canvas of the colourbar: as wide as a panel, one strip tall.
 const COLORBAR: (u32, u32) = (PANEL.0, 64);
@@ -316,16 +317,25 @@ impl MetricDependence {
     }
 }
 
-/// The fill for a correlation: `OK_BLUE` at −1, white at 0, `OK_VERMILLION`
-/// at +1, mixed linearly in RGB; `OK_GREY` for an undefined ρ. Colourblind-safe
-/// ends, and the same two hues the geometry palette uses for hyperbolic and
-/// spherical — a reader who has seen those panels already knows them.
+/// The fill for a correlation: [`diverging_color`] over `[-1, 1]`, which is ρ's
+/// own range, so no scaling is needed.
 #[must_use]
 pub fn rho_color(rho: Option<f64>) -> RGBColor {
-    let Some(rho) = rho.filter(|r| r.is_finite()) else {
+    diverging_color(rho)
+}
+
+/// The diverging ramp every Exp 2 heatmap is filled on: `OK_BLUE` at −1,
+/// white at 0, `OK_VERMILLION` at +1, mixed linearly in RGB and clamped
+/// outside; `OK_GREY` for an undefined value. Colourblind-safe ends, and the
+/// same two hues the geometry palette uses for hyperbolic and spherical — a
+/// reader who has seen those panels already knows them. A figure whose values
+/// are not in `[-1, 1]` divides by its own scale first.
+#[must_use]
+pub fn diverging_color(t: Option<f64>) -> RGBColor {
+    let Some(t) = t.filter(|t| t.is_finite()) else {
         return OK_GREY;
     };
-    let t = rho.clamp(-1.0, 1.0);
+    let t = t.clamp(-1.0, 1.0);
     let end = if t < 0.0 { OK_BLUE } else { OK_VERMILLION };
     let a = t.abs();
     let mix = |c: u8| {
@@ -336,10 +346,10 @@ pub fn rho_color(rho: Option<f64>) -> RGBColor {
     RGBColor(mix(end.0), mix(end.1), mix(end.2))
 }
 
-/// The text colour on a [`rho_color`] fill: white once the fill is saturated
-/// enough that black would not read.
-fn text_on(rho: Option<f64>) -> RGBColor {
-    match rho {
+/// The text colour on a [`diverging_color`] fill at *t*: white once the fill
+/// is saturated enough that black would not read.
+pub(super) fn text_on(t: Option<f64>) -> RGBColor {
+    match t {
         Some(r) if r.abs() > 0.6 => WHITE,
         _ => OK_BLACK,
     }
@@ -351,13 +361,13 @@ fn text_on(rho: Option<f64>) -> RGBColor {
 /// custom key points, and the mesh will not label a half-integer otherwise.
 /// Reversed when `top_down`, so row 0 of the matrix is at the top.
 #[derive(Clone)]
-struct CategoryAxis {
+pub(super) struct CategoryAxis {
     labels: Vec<String>,
     range: std::ops::Range<f64>,
 }
 
 impl CategoryAxis {
-    fn new(labels: &[String], top_down: bool) -> Self {
+    pub(super) fn new(labels: &[String], top_down: bool) -> Self {
         let k = count_to_f64(labels.len());
         Self {
             labels: labels.to_vec(),
@@ -368,7 +378,7 @@ impl CategoryAxis {
     /// The name of the slot *v* falls in; empty off the axis. By reference
     /// because that is the signature `x_label_formatter` hands over.
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    fn label(&self, v: &f64) -> String {
+    pub(super) fn label(&self, v: &f64) -> String {
         // The floor of a tick at `i + 0.5`, which is where the mesh asks.
         let i = v.floor();
         if i < 0.0 {

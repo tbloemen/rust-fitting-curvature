@@ -18,7 +18,9 @@ use std::str::FromStr;
 
 use clap::Parser;
 
-use fitting_analysis::figures::{self, exp1, exp2, exp2_dependence, exp3, exp4, save};
+use fitting_analysis::figures::{
+    self, exp1, exp2, exp2_dependence, exp2_region_gain, exp3, exp4, save,
+};
 use fitting_analysis::objectives::ObjectiveSpace;
 use fitting_analysis::{Error, Result};
 
@@ -79,6 +81,13 @@ struct Args {
     /// simply not written.
     #[arg(long)]
     r2_delta: Option<PathBuf>,
+
+    /// The stage-1 table written by `r2 stats`, plotted as Experiment 2's
+    /// per-region gain heatmaps under `<out-dir>/experiment_2`. Absent is not
+    /// an error — it is a separate `r2` run — and the heatmaps are then simply
+    /// not written.
+    #[arg(long)]
+    r2_local: Option<PathBuf>,
 }
 
 /// A figure with no data behind it is skipped, not an error: the sweep grid is
@@ -133,13 +142,20 @@ fn main() -> Result<()> {
     // loop. Their shared legend is a separate file, built from all of the
     // panels so it names exactly the curves they draw. The metric-dependence
     // heatmap is one panel per geometry from the same cells, with its ρ
-    // colourbar written once per run; the dataset-by-metric panel is still a
-    // skeleton, dispatched beside them so the slot is visible here rather than
-    // absent. Everything lands under `<out-dir>/experiment_2`: the panels and
+    // colourbar written once per run. The per-region gain heatmap is the one
+    // Exp 2 figure built from a table rather than from `cells` — the stage-1
+    // R2 table, so it carries the numbers the thesis tables carry — one panel
+    // per curved geometry and a colourbar per N, since its scale is the
+    // data's. Everything lands under `<out-dir>/experiment_2`: the panels and
     // the legend are set together as one row, and a directory keeps that set
     // from being spread among the other experiments' files.
     if args.exp.contains(&2) {
         let exp2_dir = args.out_dir.join("experiment_2");
+        let r2_local = args
+            .r2_local
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(format!("results/r2_local_{}.jsonl", space.tag())));
+        let local_rows = exp4::load_table(&r2_local)?;
         let mut any_dependence = false;
         for n in &args.n {
             let mut panels = Vec::new();
@@ -163,9 +179,19 @@ fn main() -> Result<()> {
                 any_dependence = true;
             }
 
-            let fig = exp2::MetricPanels::new(&cells, *n, space);
-            if fig.has_data() {
-                save(&fig, &exp2_dir, space)?;
+            // Twice: over every region, and over the projected surface's
+            // regions alone (legacy space only — `panels` is empty otherwise).
+            for columns in [
+                exp2_region_gain::Columns::Full,
+                exp2_region_gain::Columns::Projected,
+            ] {
+                let gains = exp2_region_gain::RegionGain::panels(&local_rows, *n, space, columns);
+                for fig in &gains {
+                    save(fig, &exp2_dir, space)?;
+                }
+                if let Some(bar) = exp2_region_gain::RegionGainColorbar::from_panels(&gains, *n) {
+                    save(&bar, &exp2_dir, space)?;
+                }
             }
         }
         if any_dependence {
