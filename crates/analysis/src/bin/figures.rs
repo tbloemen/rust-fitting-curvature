@@ -142,7 +142,10 @@ fn main() -> Result<()> {
     // loop. Their shared legend is a separate file, built from all of the
     // panels so it names exactly the curves they draw. The metric-dependence
     // heatmap is one panel per geometry from the same cells, with its ρ
-    // colourbar written once per run. The per-region gain heatmap is the one
+    // colourbar written once per run. Both read the **Pareto front** of each
+    // cell, reduced here once in the scoring space: the thesis compares
+    // corpora, and a corpus is the front, so a trial the search discarded is
+    // not part of what either figure describes. The per-region gain heatmap is the one
     // Exp 2 figure built from a table rather than from `cells` — the stage-1
     // R2 table, so it carries the numbers the thesis tables carry — one panel
     // per curved geometry and a colourbar per N, since its scale is the
@@ -156,13 +159,14 @@ fn main() -> Result<()> {
             .clone()
             .unwrap_or_else(|| PathBuf::from(format!("results/r2_local_{}.jsonl", space.tag())));
         let local_rows = exp4::load_table(&r2_local)?;
+        let fronts = figures::front_cells(&cells, space);
         let mut any_dependence = false;
         for n in &args.n {
             let mut panels = Vec::new();
             for x in [exp2::XAxis::Kappa, exp2::XAxis::Curvature] {
-                panels.extend(exp2::MetricTrend::panels(&cells, *n, x));
+                panels.extend(exp2::MetricTrend::panels(&fronts, *n, x));
                 // The unbounded metrics: one panel each, no legend.
-                for fig in exp2::UnboundedTrend::panels(&cells, *n, x) {
+                for fig in exp2::UnboundedTrend::panels(&fronts, *n, x) {
                     save(&fig, &exp2_dir, space)?;
                 }
             }
@@ -174,7 +178,7 @@ fn main() -> Result<()> {
                 save(&legend, &exp2_dir, space)?;
             }
 
-            for fig in exp2_dependence::MetricDependence::panels(&cells, *n) {
+            for fig in exp2_dependence::MetricDependence::panels(&fronts, *n) {
                 save(&fig, &exp2_dir, space)?;
                 any_dependence = true;
             }

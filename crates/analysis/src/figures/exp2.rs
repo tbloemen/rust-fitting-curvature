@@ -29,13 +29,18 @@
 //!
 //! ### What is drawn, and from which trials
 //!
-//! The crate's own rule is that a panel must say what population it draws from,
-//! because a front-point distribution describes the searched corpus rather than
-//! an unbiased sample. This one draws **every trial of the `all_off` cells** at
-//! the given N and geometry, pooled over all datasets:
+//! The crate's own rule is that a panel must say what population it draws from.
+//! This one draws **the Pareto front of every `all_off` cell** at the given N
+//! and geometry, pooled over all datasets:
 //!
-//! * *all trials*, not front points — the question is how a metric responds to
-//!   κ, not what the search chose to keep;
+//! * *front points*, not every trial — the thesis compares visualisation
+//!   corpora, and a corpus *is* the non-dominated set, so a trial the search
+//!   discarded is not part of what the figure describes. The reduction is
+//!   not done here: `bin/figures.rs` passes a `CellMap` already reduced to
+//!   fronts in the scoring space, so the front and the space are decided in
+//!   one place and this module only pools. (It drew every trial until
+//!   2026-09-14, on the argument that the response of a metric to κ is a
+//!   property of the trial population; the methods chapter says otherwise.)
 //! * *`all_off` only*, so the auxiliary loss weights are pinned at zero and do
 //!   not vary along with κ. Pooling every setting would mix two effects.
 //!
@@ -146,7 +151,7 @@
 //! The Spearman metric-dependence heatmap of `<metric-dependence>` — whether
 //! the metrics order the same visualisations the same way — is
 //! [`super::exp2_dependence::MetricDependence`], drawn from the same
-//! population ([`SETTING`], every trial) and reading metrics through the same
+//! population ([`SETTING`], front points) and reading metrics through the same
 //! [`reading`], so the two figures cannot disagree about orientation or about
 //! which trials count. The dataset-by-metric comparison of the three corpora
 //! that `<metric-results>` asks for is
