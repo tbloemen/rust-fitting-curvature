@@ -173,13 +173,14 @@ fn main() -> Result<()> {
         }
     }
 
-    // Exp 3 is still a skeleton: dispatched so the slot is visible, and
-    // `has_data` reports false until the figure is actually drawn.
+    // Exp 3: κ against |K| over the pooled Pareto fronts, one panel per curved
+    // geometry; `panels` returns only the ones with data. Under its own
+    // directory, as Exp 2's panels are.
     if args.exp.contains(&3) {
+        let exp3_dir = args.out_dir.join("experiment_3");
         for n in &args.n {
-            let fig = exp3::KappaLanding::new(&cells, *n, space);
-            if fig.has_data() {
-                save(&fig, &args.out_dir, space)?;
+            for fig in exp3::KappaLanding::panels(&cells, *n, space) {
+                save(&fig, &exp3_dir, space)?;
             }
         }
     }
