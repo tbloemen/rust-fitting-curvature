@@ -505,7 +505,10 @@ fn projected5_is_the_objectives_without_distance_consistency() {
         .filter(|m| **m != DISTANCE_CONSISTENCY)
         .collect();
     let got: Vec<_> = space.metrics().iter().collect();
-    assert_eq!(got, expected, "obj5 keeps OBJECTIVES order, minus the unmeasured sixth");
+    assert_eq!(
+        got, expected,
+        "obj5 keeps OBJECTIVES order, minus the unmeasured sixth"
+    );
     // Every one of them is the projected member of a legacy pair.
     for metric in space.metrics() {
         assert!(
@@ -522,8 +525,14 @@ fn every_space_round_trips_through_its_tag_and_the_cli() {
         assert_eq!(space.tag().parse::<ObjectiveSpace>(), Ok(space));
         assert_eq!(space.to_string(), space.tag());
     }
-    assert_eq!("obj5".parse::<ObjectiveSpace>(), Ok(ObjectiveSpace::Projected5));
-    assert_eq!("projected5".parse::<ObjectiveSpace>(), Ok(ObjectiveSpace::Projected5));
+    assert_eq!(
+        "obj5".parse::<ObjectiveSpace>(),
+        Ok(ObjectiveSpace::Projected5)
+    );
+    assert_eq!(
+        "projected5".parse::<ObjectiveSpace>(),
+        Ok(ObjectiveSpace::Projected5)
+    );
     assert!("obj7".parse::<ObjectiveSpace>().is_err());
 }
 
@@ -598,7 +607,11 @@ fn projected5_regions_match_the_combinatorics() {
     );
 
     for (family, members) in &fams {
-        assert_eq!(w.region(family).unwrap().indices.len(), size(members.len()), "region {family}");
+        assert_eq!(
+            w.region(family).unwrap().indices.len(),
+            size(members.len()),
+            "region {family}"
+        );
     }
     for objective in space.metrics() {
         assert_eq!(
@@ -629,8 +642,14 @@ fn projected5_reproduces_the_legacy_projected_regions_exactly() {
     let five = cell_summary(&records, &Weights::new(ObjectiveSpace::Projected5));
 
     // The fronts genuinely differ, or the test would be checking nothing.
-    assert!(five.n_front < legacy.n_front, "obj5 front should be smaller");
-    assert!(five.front.iter().all(|i| legacy.front.contains(i)), "obj5 front ⊆ legacy front");
+    assert!(
+        five.n_front < legacy.n_front,
+        "obj5 front should be smaller"
+    );
+    assert!(
+        five.front.iter().all(|i| legacy.front.contains(i)),
+        "obj5 front ⊆ legacy front"
+    );
 
     let close = |a: f64, b: f64| (a - b).abs() <= 1e-12;
     assert!(
