@@ -189,7 +189,7 @@ pub enum XAxis {
 
 impl XAxis {
     /// The x value of one trial, or `None` where the record does not carry it.
-    fn value(self, record: &TrialRecord) -> Option<f64> {
+    pub(super) fn value(self, record: &TrialRecord) -> Option<f64> {
         match self {
             Self::Kappa => record.kappa(),
             // The same `|curvature|` fallback `kappa()` uses. Only Euclidean
@@ -262,7 +262,7 @@ fn pooled_trials<'a>(
 ///
 /// The same rule serves both axes: x over the trials' κ or |K|, and, for
 /// [`UnboundedTrend`], y over one metric's bin medians.
-fn natural_scale(values: &[f64]) -> BinScale {
+pub(super) fn natural_scale(values: &[f64]) -> BinScale {
     match padded_log_range(values, 0.0) {
         Some((lo, hi)) if hi / lo >= 10.0 => BinScale::Log,
         _ => BinScale::Linear,
@@ -276,7 +276,7 @@ fn natural_scale(values: &[f64]) -> BinScale {
 /// onto equal-width bins is a different reading of the same corpus — it shows
 /// where the trials actually *are*, which the log axis deliberately flattens —
 /// and neither is a substitute for the other.
-fn renderings(natural: BinScale) -> &'static [BinScale] {
+pub(super) fn renderings(natural: BinScale) -> &'static [BinScale] {
     match natural {
         BinScale::Log => &[BinScale::Log, BinScale::Linear],
         BinScale::Linear => &[BinScale::Linear],
@@ -309,7 +309,7 @@ fn x_range_of(drawn: &[f64], edges: &[f64], scale: BinScale) -> (f64, f64) {
 /// *not* halve the text: at ~80 mm on the page `style_mesh!`'s 13 px tick
 /// labels land at roughly 8 pt, against Exp 1's ~6 pt. That is what a
 /// half-width figure wants — it is read at half the size.
-const PANEL: (u32, u32) = (370, 300);
+pub(super) const PANEL: (u32, u32) = (370, 300);
 
 /// Width of the [`MetricLegend`] canvas. One column of the metrics' full wire
 /// names at the 12 px [`draw_legend_grid`] font: `1-normalized_stress` is the
