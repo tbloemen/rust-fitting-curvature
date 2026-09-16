@@ -24,8 +24,10 @@
 //!   from the stage-1 table ([`exp2_region_gain::RegionGain`]).
 //! * **Exp 3** — a skeleton; see the module doc.
 //! * **Exp 4** — stacked Pareto fronts, one panel per (dataset, geometry) and
-//!   one curve per loss-weight setting; and the R2 levels of the same settings
-//!   as grouped bar charts under `<out-dir>/experiment_4`.
+//!   one curve per loss-weight setting; the R2 levels of the same settings
+//!   as grouped bar charts under `<out-dir>/experiment_4`; and the per-setting
+//!   R2 gain over `all_off` as a dot plot, datasets by geometry
+//!   ([`exp4_gain_dots::GainDots`]).
 //!
 //! κ uses **`R_rms`** (`r_rms`), not `R_max` — the thesis definition.
 //!
@@ -44,6 +46,7 @@ pub mod exp2_dumbbell;
 pub mod exp2_region_gain;
 pub mod exp3;
 pub mod exp4;
+pub mod exp4_gain_dots;
 
 use fitting_core::cast::{count_to_f64, to_i32};
 use std::collections::BTreeMap;

@@ -123,7 +123,7 @@ const HEAD_ROOM: f64 = 0.18;
 /// The same abbreviations `DATASET_LABEL` in `scripts/exp1_common.py` uses, so
 /// a group here is findable as a row there. A dataset with no entry falls
 /// through to its own name, which is only ever a little wider.
-fn dataset_label(dataset: &str) -> &str {
+pub(super) fn dataset_label(dataset: &str) -> &str {
     match dataset {
         "hyperbolic_shells" => "hyp. shells",
         "tree" => "tree (layout)",

@@ -339,9 +339,9 @@ impl Pair {
 /// The y axis: slots from the top, one per row plus the headers, reversed so
 /// slot 0 is at the top, with a key point at each row's centre.
 #[derive(Clone)]
-struct SlotAxis {
-    total: f64,
-    centres: Vec<f64>,
+pub(super) struct SlotAxis {
+    pub(super) total: f64,
+    pub(super) centres: Vec<f64>,
 }
 
 impl Ranged for SlotAxis {

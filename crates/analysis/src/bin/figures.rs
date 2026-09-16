@@ -19,7 +19,8 @@ use std::str::FromStr;
 use clap::Parser;
 
 use fitting_analysis::figures::{
-    self, exp1, exp2, exp2_dependence, exp2_dumbbell, exp2_region_gain, exp3, exp4, save,
+    self, exp1, exp2, exp2_dependence, exp2_dumbbell, exp2_region_gain, exp3, exp4, exp4_gain_dots,
+    save,
 };
 use fitting_analysis::objectives::ObjectiveSpace;
 use fitting_analysis::{Error, Result};
@@ -176,6 +177,13 @@ fn main() -> Result<()> {
         for n in &args.n {
             for fig in exp4::R2Bars::panels(&deltas, *n, space) {
                 save(&fig, &bars_dir, space)?;
+            }
+            // The same table as one figure per N: every (dataset, geometry,
+            // setting) gain on one axis. This one the thesis embeds, so it
+            // stays at the top level with the stacked fronts.
+            let fig = exp4_gain_dots::GainDots::new(&deltas, *n);
+            if fig.has_data() {
+                save(&fig, &args.out_dir, space)?;
             }
         }
     }
