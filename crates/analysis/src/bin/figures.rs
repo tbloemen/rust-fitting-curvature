@@ -19,7 +19,7 @@ use std::str::FromStr;
 use clap::Parser;
 
 use fitting_analysis::figures::{
-    self, exp1, exp2, exp2_dependence, exp2_region_gain, exp3, exp4, save,
+    self, exp1, exp2, exp2_dependence, exp2_dumbbell, exp2_region_gain, exp3, exp4, save,
 };
 use fitting_analysis::objectives::ObjectiveSpace;
 use fitting_analysis::{Error, Result};
@@ -246,9 +246,15 @@ fn render_exp2(args: &Args, cells: &figures::CellMap, space: ObjectiveSpace) -> 
             save(&legend, &trend_dir, space)?;
         }
 
-        for fig in exp2_dependence::MetricDependence::panels(&fronts, *n) {
-            save(&fig, &dependence_dir, space)?;
+        let dependence = exp2_dependence::MetricDependence::panels(&fronts, *n);
+        for fig in &dependence {
+            save(fig, &dependence_dir, space)?;
             any_dependence = true;
+        }
+        // The same ρ once more, one row per pair with the geometries side by
+        // side — the rendering the thesis compares across curvature on.
+        if let Some(fig) = exp2_dumbbell::DependenceDumbbell::from_panels(&dependence, *n) {
+            save(&fig, &dependence_dir, space)?;
         }
 
         // Twice: over every region, and over the projected surface's

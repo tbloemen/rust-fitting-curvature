@@ -40,6 +40,7 @@
 pub mod exp1;
 pub mod exp2;
 pub mod exp2_dependence;
+pub mod exp2_dumbbell;
 pub mod exp2_region_gain;
 pub mod exp3;
 pub mod exp4;
@@ -273,6 +274,18 @@ macro_rules! style_mesh {
                     .color(&plotters::style::RGBColor(30, 30, 30)),
             )
     };
+}
+
+/// The backend x of a point given as a fraction of the plotting area's width.
+///
+/// The Exp 1 bar charts and the Exp 2 region-gain heatmap label their columns
+/// in a strip split off *below* the chart, which has no coordinate system of
+/// its own, so a group or column centre has to be placed by pixel. *`plot_px`*
+/// is the chart's horizontal pixel range; the strip's own draw calls are
+/// relative to its top-left, so callers subtract the strip's origin from what
+/// this returns.
+pub(crate) fn plot_x(plot_px: &std::ops::Range<i32>, fraction: f64) -> i32 {
+    plot_px.start + to_i32((f64::from(plot_px.end - plot_px.start) * fraction).round())
 }
 
 /// One legend entry: label, colour, and the line style that identifies the
