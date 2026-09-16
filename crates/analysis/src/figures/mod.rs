@@ -25,9 +25,10 @@
 //! * **Exp 3** — a skeleton; see the module doc.
 //! * **Exp 4** — stacked Pareto fronts, one panel per (dataset, geometry) and
 //!   one curve per loss-weight setting; the R2 levels of the same settings
-//!   as grouped bar charts under `<out-dir>/experiment_4`; and the per-setting
+//!   as grouped bar charts under `<out-dir>/experiment_4`; the per-setting
 //!   R2 gain over `all_off` as a dot plot, datasets by geometry
-//!   ([`exp4_gain_dots::GainDots`]).
+//!   ([`exp4_gain_dots::GainDots`]); and the ε-indicator against `all_off`
+//!   in the same layout ([`exp4_epsilon_dots::EpsilonDots`]).
 //!
 //! κ uses **`R_rms`** (`r_rms`), not `R_max` — the thesis definition.
 //!
@@ -39,6 +40,7 @@
 //! Exp 2's κ axis reads [`padded_log_range`], [`log_tick`], [`CURVED`] and the
 //! two halves of the binner, [`BinScale::edges`] and [`binned_median_on`].
 
+pub mod dot_panels;
 pub mod exp1;
 pub mod exp2;
 pub mod exp2_dependence;
@@ -46,6 +48,7 @@ pub mod exp2_dumbbell;
 pub mod exp2_region_gain;
 pub mod exp3;
 pub mod exp4;
+pub mod exp4_epsilon_dots;
 pub mod exp4_gain_dots;
 
 use fitting_core::cast::{count_to_f64, to_i32};

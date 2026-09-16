@@ -42,7 +42,7 @@ use serde::Serialize;
 
 use fitting_analysis::aggregate::{self, CellRecord};
 use fitting_analysis::cell::{discover_cells, CellFile};
-use fitting_analysis::indicators::epsilon_pair;
+use fitting_analysis::indicators::{epsilon_pair, EpsilonRow};
 use fitting_analysis::objectives::{oriented_matrix, resolve_space, ObjectiveSpace};
 use fitting_analysis::r2::{cell_summary, oriented_objectives, Weights};
 use fitting_analysis::stats;
@@ -357,29 +357,6 @@ fn run_aggregate(args: &AggregateArgs) -> Result<()> {
 }
 
 // ─── The parameter-free cross-check ───────────────────────────────────────────
-
-/// One (dataset, geometry, N, setting) ε comparison against the baseline.
-///
-/// Front sizes are reported next to the indicator because the ε-indicator says
-/// nothing about cardinality: a front of 12 points and one of 230 can score the
-/// same, and the reader has to be able to see which case they are looking at.
-#[derive(Serialize)]
-struct EpsilonRow {
-    dataset: String,
-    geometry: String,
-    n: usize,
-    setting: String,
-    n_front_setting: usize,
-    n_front_baseline: usize,
-    /// `I_ε+(setting, baseline)`.
-    eps_setting_vs_baseline: f64,
-    /// `I_ε+(baseline, setting)`.
-    eps_baseline_vs_setting: f64,
-    /// `eps_baseline_vs_setting − eps_setting_vs_baseline`; positive = improvement.
-    delta_eps: f64,
-    setting_covers_baseline: bool,
-    baseline_covers_setting: bool,
-}
 
 /// How often the ε verdict and the ΔR2 verdict point the same way, per
 /// preference region. Δε carries no region, so it is the same column joined
