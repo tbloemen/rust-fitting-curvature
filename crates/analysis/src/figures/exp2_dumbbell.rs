@@ -86,7 +86,7 @@ const HEADER: f64 = 1.1;
 const LEGEND_STRIP: u32 = 28;
 
 /// Room for the x axis and its description.
-const X_LABEL_AREA: u32 = 0;
+const X_LABEL_AREA: u32 = 46;
 
 /// Room for the row labels and the block headers, which share the area and
 /// are both right-aligned to the axis: the longest header, `structure ×
