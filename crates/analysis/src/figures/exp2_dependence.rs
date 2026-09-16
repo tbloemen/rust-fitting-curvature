@@ -145,6 +145,8 @@ fn projected_metrics() -> Vec<Metric> {
 /// median over these, and no per-dataset file is written.
 #[derive(Debug, Clone)]
 struct CellDependence {
+    /// The metrics on the axes, and their [`short_label`]s, in one order.
+    metrics: Vec<Metric>,
     labels: Vec<String>,
     rho: Vec<Vec<Option<f64>>>,
     /// Trials with every metric in `labels` finite — the rows ρ was taken over.
@@ -183,6 +185,7 @@ impl CellDependence {
         }
         Some(Self {
             labels: metrics.iter().map(|&m| short_label(m)).collect(),
+            metrics,
             rho: spearman_matrix(&columns),
             n_used,
             n_total: records.len(),
@@ -195,11 +198,17 @@ impl CellDependence {
 pub struct MetricDependence {
     geometry: &'static str,
     n: usize,
+    /// The metrics on the axes, in draw order, with their labels alongside;
+    /// the dumbbell rendering groups pairs by `Metric::family`.
+    metrics: Vec<Metric>,
     labels: Vec<String>,
     /// `median[i][j]`, over the datasets whose ρ is defined; `None` if none.
     median: Vec<Vec<Option<f64>>>,
     /// `(min, max)` over the same datasets.
     range: Vec<Vec<Option<(f64, f64)>>>,
+    /// The per-dataset ρ themselves, in cell order — what the median and
+    /// range summarise, for the rendering that draws every one.
+    samples: Vec<Vec<Vec<f64>>>,
     /// Dataset cells that cleared [`MIN_TRIALS`] and so contribute.
     n_datasets: usize,
     /// Complete trials and trials, summed over those cells.
@@ -234,12 +243,13 @@ impl MetricDependence {
     /// intersection is a guard rather than a path anything takes today.
     fn combine(geometry: &'static str, n: usize, per_dataset: &[CellDependence]) -> Option<Self> {
         let first = per_dataset.first()?;
-        let labels: Vec<String> = first
-            .labels
+        let metrics: Vec<Metric> = first
+            .metrics
             .iter()
-            .filter(|l| per_dataset.iter().all(|c| c.labels.contains(l)))
-            .cloned()
+            .copied()
+            .filter(|m| per_dataset.iter().all(|c| c.metrics.contains(m)))
             .collect();
+        let labels: Vec<String> = metrics.iter().map(|&m| short_label(m)).collect();
         if labels.len() < 2 {
             return None;
         }
@@ -262,6 +272,7 @@ impl MetricDependence {
         let k = labels.len();
         let mut median_m = vec![vec![None; k]; k];
         let mut range_m = vec![vec![None; k]; k];
+        let mut samples = vec![vec![Vec::new(); k]; k];
         for i in 0..k {
             for j in 0..k {
                 let rhos: Vec<f64> = per_dataset
@@ -276,14 +287,17 @@ impl MetricDependence {
                     .fold(None, |acc: Option<(f64, f64)>, v| {
                         Some(acc.map_or((v, v), |(lo, hi)| (lo.min(v), hi.max(v))))
                     });
+                samples[i][j] = rhos;
             }
         }
         Some(Self {
             geometry,
             n,
+            metrics,
             labels,
             median: median_m,
             range: range_m,
+            samples,
             n_datasets: per_dataset.len(),
             n_used: per_dataset.iter().map(|c| c.n_used).sum(),
             n_total: per_dataset.iter().map(|c| c.n_total).sum(),
@@ -303,6 +317,18 @@ impl MetricDependence {
         &self.labels
     }
 
+    /// The same metrics as [`labels`](Self::labels), as the registry knows them.
+    #[must_use]
+    pub fn metrics(&self) -> &[Metric] {
+        &self.metrics
+    }
+
+    /// The embedding geometry this panel's ρ were computed on.
+    #[must_use]
+    pub fn geometry(&self) -> &'static str {
+        self.geometry
+    }
+
     /// The drawn value at `(row, col)`.
     #[must_use]
     pub fn median_at(&self, row: usize, col: usize) -> Option<f64> {
@@ -313,6 +339,12 @@ impl MetricDependence {
     #[must_use]
     pub fn range_at(&self, row: usize, col: usize) -> Option<(f64, f64)> {
         self.range[row][col]
+    }
+
+    /// The per-dataset ρ at `(row, col)` that the median and range summarise.
+    #[must_use]
+    pub fn samples_at(&self, row: usize, col: usize) -> &[f64] {
+        &self.samples[row][col]
     }
 
     /// `(datasets, complete trials, trials)` behind the panel.

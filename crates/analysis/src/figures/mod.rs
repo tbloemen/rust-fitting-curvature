@@ -40,6 +40,7 @@
 pub mod exp1;
 pub mod exp2;
 pub mod exp2_dependence;
+pub mod exp2_dumbbell;
 pub mod exp2_region_gain;
 pub mod exp3;
 pub mod exp4;
