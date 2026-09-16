@@ -72,6 +72,25 @@
 //! axis. Every value is also printed in its cell, so the panel reads without
 //! it, and the sign is the finding: a column of small numbers beside a column
 //! of large ones is the decomposition.
+//!
+//! ### Sized for two panels across the page, sharing one row-label column
+//!
+//! The thesis sets the hyperbolic and spherical panels of one N side by side
+//! across the text width, so each is scaled to ~80 mm and every pixel of text
+//! is worth about a third of a point. The 12 px values of the first version
+//! landed at ~4 pt. Three things follow. Every text on the panel is [`FONT`]
+//! (20 px), the size that reads at ~7 pt at that scale. The column labels are
+//! vertical, in a strip of their own under the plot, because eight horizontal
+//! `W_struct`-length labels at that size would need a cell wider than the
+//! page allows. And **only the first panel of an N carries the row labels**:
+//! the panels share their rows (the same datasets in the same order, both
+//! measured from the same Euclidean cells) so the second's label column would
+//! repeat the first's and cost a third of its width. Its canvas is narrower by
+//! exactly [`ROW_LABEL_AREA`], and the cells are the same size in pixels on
+//! both ([`panel_size`]) — so the pair sets at one cell size only if the page
+//! gives the two images widths in the ratio of their canvases, `700 : 500`
+//! for eight regions (`grid(columns: (7fr, 5fr))` in Typst), not two equal
+//! columns.
 
 use plotters::coord::Shift;
 use plotters::prelude::*;
@@ -83,7 +102,8 @@ use fitting_core::cast::{count_to_f64, to_i32};
 use super::exp2::SETTING;
 use super::exp2_dependence::{diverging_color, text_on, CategoryAxis, TITLE_STRIP};
 use super::{
-    Figure, LinearTicks, ObjectiveSpace, Res, CURVED, OK_BLACK, REAL_DATASETS, SYNTH_DATASETS,
+    plot_x, Figure, LinearTicks, ObjectiveSpace, Res, CURVED, OK_BLACK, REAL_DATASETS,
+    SYNTH_DATASETS,
 };
 use crate::aggregate::CellRecord;
 use crate::r2::{projected_region_labels, region_labels};
@@ -95,12 +115,52 @@ const BASELINE_GEOMETRY: &str = "euclidean";
 /// The tables' own scale for R2 and ΔR2.
 const SCALE: f64 = 1000.0;
 
-/// Canvas of one heatmap: eight regions across at ~60 px each behind a label
-/// area wide enough for `hyperbolic_shells`, eight datasets down.
-const PANEL: (u32, u32) = (620, 460);
+/// Text size of the cell values, row labels and column labels: sized for the
+/// thesis layout (module doc), where a panel is scaled to ~80 mm.
+const FONT: u32 = 20;
 
-/// Canvas of the colourbar: as wide as a panel, one strip tall.
-const COLORBAR: (u32, u32) = (PANEL.0, 64);
+/// Text size of the title strip's one line.
+const TITLE_FONT: u32 = 22;
+
+/// The row-label column: `hyperbolic_shells` at [`FONT`] plus the tick gap.
+/// The panel without row labels is narrower by exactly this.
+const ROW_LABEL_AREA: u32 = 200;
+
+/// The strip under the plot holding the vertical column labels: `W_struct`
+/// at [`FONT`] plus a gap to the axis.
+const COL_LABEL_STRIP: u32 = 110;
+
+/// Gap between the plot's bottom edge and the top of a column label.
+const COL_LABEL_GAP: i32 = 6;
+
+/// The axis-label ink `style_mesh!` uses, for the hand-drawn column labels.
+const LABEL_INK: RGBColor = RGBColor(60, 60, 60);
+
+/// Side of one square cell: room for `-10.5` at [`FONT`] with a margin.
+const CELL: u32 = 60;
+
+/// Margin around the chart on every side.
+const MARGIN: u32 = 10;
+
+/// Canvas of the colourbar: as wide as the eight-column panel with its row
+/// labels, one strip tall.
+const COLORBAR: (u32, u32) = (panel_size(8, 8, true).0, 64);
+
+/// Canvas of a panel of `columns × rows` cells: every cell is [`CELL`]
+/// square whatever the table's shape, so a 13-column legacy panel and the
+/// eight-column current one print their values at one size, and the panel
+/// without row labels is narrower by exactly [`ROW_LABEL_AREA`]. Eight by
+/// eight with labels is `700 × 650`; without, `500 × 650`.
+const fn panel_size(columns: usize, rows: usize, row_labels: bool) -> (u32, u32) {
+    // Column and row counts are single digits; the cast cannot truncate.
+    #[allow(clippy::cast_possible_truncation)]
+    let (columns, rows) = (columns as u32, rows as u32);
+    let labels = if row_labels { ROW_LABEL_AREA } else { 0 };
+    (
+        labels + columns * CELL + 2 * MARGIN,
+        TITLE_STRIP + rows * CELL + COL_LABEL_STRIP + 2 * MARGIN,
+    )
+}
 
 /// Which preference regions a [`RegionGain`] panel puts across.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,6 +195,9 @@ pub struct RegionGain {
     geometry: &'static str,
     n: usize,
     columns: Columns,
+    /// Whether the row-label column is drawn: the first panel of an N only
+    /// (module doc), the later ones sharing it across the page.
+    row_labels: bool,
     /// Row labels, in draw order.
     datasets: Vec<String>,
     /// `(region name, axis label)`, in column order.
@@ -195,6 +258,7 @@ impl RegionGain {
                     geometry,
                     n,
                     columns,
+                    row_labels: false,
                     datasets,
                     regions: regions.clone(),
                     gain,
@@ -207,8 +271,9 @@ impl RegionGain {
             .iter()
             .flat_map(|p| p.gain.iter().flatten().flatten())
             .fold(0.0f64, |acc, g| acc.max(g.abs()));
-        for p in &mut panels {
+        for (i, p) in panels.iter_mut().enumerate() {
             p.scale = scale;
+            p.row_labels = i == 0;
         }
         panels
     }
@@ -223,6 +288,13 @@ impl RegionGain {
     #[must_use]
     pub fn datasets(&self) -> &[String] {
         &self.datasets
+    }
+
+    /// Whether this panel draws the row-label column — the first panel of an
+    /// N does, the later ones share it (module doc).
+    #[must_use]
+    pub fn row_labels(&self) -> bool {
+        self.row_labels
     }
 
     /// The regions across, as `(name, axis label)`, in draw order.
@@ -261,7 +333,7 @@ impl Figure for RegionGain {
     }
 
     fn size(&self) -> (u32, u32) {
-        PANEL
+        panel_size(self.regions.len(), self.datasets.len(), self.row_labels)
     }
 
     fn draw<DB: DrawingBackend>(&self, root: &DrawingArea<DB, Shift>) -> Res
@@ -277,29 +349,62 @@ impl Figure for RegionGain {
         title.draw(&Text::new(
             format!("{} vs {BASELINE_GEOMETRY}", self.geometry),
             (centre, 12),
-            ("sans-serif", 15)
+            ("sans-serif", TITLE_FONT)
                 .into_font()
                 .style(FontStyle::Bold)
                 .color(&OK_BLACK)
                 .pos(Pos::new(HPos::Center, VPos::Center)),
         ))?;
 
+        // The column labels get a strip of their own under the plot, drawn by
+        // hand: plotters places a rotated axis label about the anchor of the
+        // unrotated one, which for the bottom axis puts half of it inside the
+        // plot, so the mesh draws no x labels at all.
+        let (_, plot_height) = plot.dim_in_pixel();
+        let (plot, col_strip) = plot.split_vertically(plot_height - COL_LABEL_STRIP);
+
         let columns: Vec<String> = self.regions.iter().map(|(_, l)| l.clone()).collect();
         let x_axis = CategoryAxis::new(&columns, false);
         let y_axis = CategoryAxis::new(&self.datasets, true);
         let mut chart = ChartBuilder::on(&plot)
-            .margin(6)
-            // Room for the last column's label, which is centred on a cell
-            // edge and would otherwise run off the canvas.
-            .margin_right(28)
-            .x_label_area_size(30)
-            .y_label_area_size(110)
+            .margin(MARGIN)
+            .x_label_area_size(0)
+            .y_label_area_size(if self.row_labels { ROW_LABEL_AREA } else { 0 })
             .build_cartesian_2d(x_axis.clone(), y_axis.clone())?;
-        style_mesh!(chart.configure_mesh())
+        let label_font = ("sans-serif", FONT).into_font().color(&LABEL_INK);
+        let y_label = |v: &f64| y_axis.label(v);
+        let mut mesh = chart.configure_mesh();
+        style_mesh!(mesh)
             .disable_mesh()
-            .x_label_formatter(&|v| x_axis.label(v))
-            .y_label_formatter(&|v| y_axis.label(v))
-            .draw()?;
+            .disable_x_axis()
+            .label_style(label_font.clone())
+            .y_label_formatter(&y_label);
+        if !self.row_labels {
+            // Without a label area the tick marks would land on the first
+            // column of cells.
+            mesh.disable_y_axis();
+        }
+        mesh.draw()?;
+
+        // Column labels reading upwards, hanging from the top of the strip.
+        // The anchor is stated in the *text's* frame whatever the rotation
+        // (plotters' `text_anchor` doc): under `Rotate270` `HPos::Right` puts
+        // the text's end at the anchor, so it grows downward from it, and
+        // `VPos::Center` centres it on the column.
+        let plot_px = chart.plotting_area().get_pixel_range().0;
+        let strip_x0 = col_strip.get_pixel_range().0.start;
+        let n_columns = count_to_f64(columns.len());
+        for (j, label) in columns.iter().enumerate() {
+            let centre = plot_x(&plot_px, (count_to_f64(j) + 0.5) / n_columns);
+            col_strip.draw(&Text::new(
+                label.clone(),
+                (centre - strip_x0, COL_LABEL_GAP),
+                label_font
+                    .clone()
+                    .transform(FontTransform::Rotate270)
+                    .pos(Pos::new(HPos::Right, VPos::Center)),
+            ))?;
+        }
 
         for (i, row) in self.gain.iter().enumerate() {
             for (j, &gain) in row.iter().enumerate() {
@@ -328,7 +433,7 @@ impl Figure for RegionGain {
                         + Text::new(
                             value,
                             (0, 0),
-                            ("sans-serif", 12)
+                            ("sans-serif", FONT)
                                 .into_font()
                                 .color(&text_on(t))
                                 .pos(Pos::new(HPos::Center, VPos::Center)),
@@ -532,6 +637,34 @@ mod tests {
         }
         let bar = RegionGainColorbar::from_panels(&panels, 5000).expect("a scale to draw");
         assert!((bar.scale - 50.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn only_the_first_panel_carries_row_labels() {
+        let space = ObjectiveSpace::Legacy10;
+        let rows = records_at(
+            space,
+            &[
+                ("tree", "euclidean", &flat(space, 0.10)),
+                ("tree", "hyperbolic", &flat(space, 0.05)),
+                ("tree", "spherical", &flat(space, 0.11)),
+                ("sphere", "euclidean", &flat(space, 0.10)),
+                ("sphere", "hyperbolic", &flat(space, 0.05)),
+                ("sphere", "spherical", &flat(space, 0.11)),
+            ],
+        );
+        let panels = RegionGain::panels(&rows, 5000, space, Columns::Full);
+        assert_eq!(panels.len(), 2);
+        assert!(panels[0].row_labels());
+        assert!(!panels[1].row_labels());
+        // The second panel shares the first's rows, so dropping its label
+        // column loses nothing — and its canvas is narrower by exactly that.
+        assert_eq!(panels[0].datasets(), panels[1].datasets());
+        let (w, h) = panels[0].size();
+        assert_eq!(panels[1].size(), (w - ROW_LABEL_AREA, h));
+        // The thesis layout's ratio: eight regions by eight datasets.
+        assert_eq!(panel_size(8, 8, true), (700, 650));
+        assert_eq!(panel_size(8, 8, false), (500, 650));
     }
 
     #[test]

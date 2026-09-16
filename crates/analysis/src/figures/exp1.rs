@@ -73,7 +73,7 @@
 //! at all, which is the whole reason it is reported, so there is one ε figure
 //! per (setting, N) where there is one gain figure per (setting, region, N).
 
-use fitting_core::cast::{count_to_f64, to_i32};
+use fitting_core::cast::count_to_f64;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -82,7 +82,8 @@ use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
 
 use super::{
-    draw_legend, geometry_color, Figure, LegendEntry, ObjectiveSpace, Res, OK_BLACK, SYNTH_DATASETS,
+    draw_legend, geometry_color, plot_x, Figure, LegendEntry, ObjectiveSpace, Res, OK_BLACK,
+    SYNTH_DATASETS,
 };
 use crate::cell::truth_of;
 use crate::error::{Error, Result};
@@ -368,17 +369,6 @@ impl MatchedGain {
         let span = if hi - lo > 0.0 { hi - lo } else { 1.0 };
         (lo - span * HEAD_ROOM, hi + span * HEAD_ROOM)
     }
-}
-
-/// The backend x of a point given as a fraction of the plotting area's width.
-///
-/// Both figures label their groups in a strip split off *below* the chart,
-/// which has no coordinate system of its own, so a group centre (or an arm
-/// inside one) has to be placed by pixel. *`plot_px`* is the chart's horizontal
-/// pixel range; the strip's own draw calls are relative to its top-left, so
-/// callers subtract the strip's origin from what this returns.
-fn plot_x(plot_px: &std::ops::Range<i32>, fraction: f64) -> i32 {
-    plot_px.start + to_i32((f64::from(plot_px.end - plot_px.start) * fraction).round())
 }
 
 /// The two geometries that are not *truth*, in [`ARM_ORDER`].
