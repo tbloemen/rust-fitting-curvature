@@ -46,8 +46,7 @@
 //! to explain and nothing on the rule but the exact zeros; it shows how far
 //! the large gains stand from everything else, which the log axis flattens
 //! by design, at the price of the small gains sitting a few pixels from
-//! the rule. Same rows, marks and stems; only the axis and its description
-//! differ.
+//! the rule. Same rows, marks and stems; only the axis differs.
 //!
 //! ### The gutter
 //!
@@ -130,7 +129,7 @@ const WIDTH: u32 = 740;
 const ROW: u32 = 44;
 /// The strip above the panels carrying the legend.
 const LEGEND_STRIP: u32 = 26;
-/// The strip below the panels carrying the shared x description.
+/// The strip below the panels carrying the shared x axis label.
 const DESC_STRIP: u32 = 24;
 /// Room above each panel for the geometry caption.
 const CAPTION: u32 = 22;
@@ -590,23 +589,16 @@ impl Figure for GainDots {
             }
         }
 
-        // The x description once, centred under the three panels.
+        // The x axis label once, centred under the three panels. Only the
+        // quantity: the reading direction, the scale and the rule are the
+        // thesis caption's to state, as on every other figure.
         let (dw, dh) = desc.dim_in_pixel();
         let x = plot_x(
             &(to_i32(f64::from(MARGIN + Y_LABEL_AREA))..to_i32(f64::from(dw - MARGIN))),
             0.5,
         );
-        let description = match self.scale {
-            Scale::Log => {
-                "\u{394}R2 \u{d7} 1000 against all_off, log scale each side of zero \
-                 (right: the setting improves the front; |\u{394}R2| < 1 on the rule)"
-            }
-            Scale::Linear => {
-                "\u{394}R2 \u{d7} 1000 against all_off (right of zero: the setting improves the front)"
-            }
-        };
         desc.draw(&Text::new(
-            description,
+            "\u{394}R2 \u{d7} 1000",
             (x, to_i32(f64::from(dh) / 2.0)),
             ("sans-serif", 13)
                 .into_font()
