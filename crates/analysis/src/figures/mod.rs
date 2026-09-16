@@ -676,6 +676,69 @@ pub fn binned_median_on(
     (centres, meds)
 }
 
+/// One bin's drawn quantiles, at the x position [`BinScale::centre`] puts them
+/// at.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BinBand {
+    /// Where in the bin the three values are drawn.
+    pub centre: f64,
+    /// The bin's median — the trend line's point.
+    pub median: f64,
+    /// First quartile; the band's lower edge.
+    pub lo: f64,
+    /// Third quartile; the band's upper edge.
+    pub hi: f64,
+}
+
+/// Median and interquartile range of *y* per bin of *edges*, **one entry per
+/// bin**: `None` where the bin holds fewer than `min_per_bin` points.
+///
+/// [`binned_median_on`] with a band around the line, and with the skipped bins
+/// still in the result. That last part is the difference that matters: a caller
+/// drawing a polyline needs to tell an unsampled bin from a sampled one, so it
+/// can break the curve there rather than run a straight segment across a range
+/// nothing was measured in. Bin membership, the centre and the `min_per_bin`
+/// floor are all [`binned_median_on`]'s.
+///
+/// **Quartiles, not mean ± SD.** These bins hold bounded, skewed, often bimodal
+/// readings — a collapsed embedding piles every metric at one end — so a
+/// symmetric band around a mean both misplaces its centre and, on a `[0, 1]`
+/// metric, runs off the axis. `stats::quantile` at `q = 0.5` is `stats::median`
+/// exactly, so the line is the one [`binned_median_on`] would draw.
+#[must_use]
+pub fn binned_band_on(
+    edges: &[f64],
+    scale: BinScale,
+    x: &[f64],
+    y: &[f64],
+    min_per_bin: usize,
+) -> Vec<Option<BinBand>> {
+    let min_per_bin = min_per_bin.max(2);
+    edges
+        .windows(2)
+        .map(|w| {
+            let (a, b) = (w[0], w[1]);
+            let vals: Vec<f64> = x
+                .iter()
+                .zip(y)
+                .filter(|(xv, _)| **xv >= a && **xv <= b)
+                .map(|(_, yv)| *yv)
+                .collect();
+            if vals.len() < min_per_bin {
+                return None;
+            }
+            // Every `quantile` here is `Some`: the slice is non-empty and the
+            // three q are in range. `?` keeps that a fact of the code.
+            Some(BinBand {
+                centre: scale.centre(a, b),
+                median: quantile(&vals, 0.5)?,
+                lo: quantile(&vals, 0.25)?,
+                hi: quantile(&vals, 0.75)?,
+            })
+        })
+        .collect()
+}
+
 /// Median of y in log-spaced x bins, for bins with ≥ `min_per_bin` points — the
 /// trend curve through a cloud of independent cells.
 ///
@@ -1145,6 +1208,55 @@ mod tests {
             "the thinned series has its own min, hence its own edges"
         );
         assert_eq!(own_edges_y.len(), thin_centres.len());
+    }
+
+    /// The band's line is the curve `binned_median_on` draws, and its edges
+    /// bracket that line — on the same edges, so the two can be read as one
+    /// figure.
+    #[test]
+    fn a_band_brackets_the_median_on_the_same_centres() {
+        // Ten points per bin, spread over the unit interval so the quartiles
+        // are strictly inside it.
+        let x: Vec<f64> = (0..100).map(|i| 1.0 + f64::from(i) / 10.0).collect();
+        let y: Vec<f64> = (0..100).map(|i| f64::from(i % 10) / 10.0).collect();
+        let edges = BinScale::Linear.edges(&x, 5).expect("x spans a range");
+
+        let bands = binned_band_on(&edges, BinScale::Linear, &x, &y, 4);
+        let (centres, meds) = binned_median_on(&edges, BinScale::Linear, &x, &y, 4);
+
+        assert_eq!(bands.len(), 5, "one entry per bin, drawn or not");
+        let drawn: Vec<BinBand> = bands.into_iter().flatten().collect();
+        assert_eq!(drawn.len(), centres.len(), "the same bins clear the floor");
+        for (band, (c, m)) in drawn.iter().zip(centres.iter().zip(&meds)) {
+            assert!((band.centre - c).abs() < f64::EPSILON);
+            assert!((band.median - m).abs() < f64::EPSILON);
+            assert!(
+                band.lo <= band.median && band.median <= band.hi,
+                "Q1 {} <= median {} <= Q3 {}",
+                band.lo,
+                band.median,
+                band.hi
+            );
+            assert!(band.lo < band.hi, "a spread bin has a band with width");
+        }
+    }
+
+    /// A bin under the floor is `None` **at its own index**, which is what lets
+    /// a caller break its curve there rather than join the bins either side.
+    #[test]
+    fn a_sparse_bin_is_a_hole_at_its_own_index() {
+        // Bins 0 and 2 hold plenty; bin 1 holds two points.
+        let mut x: Vec<f64> = (0..20).map(|i| f64::from(i) * 0.015).collect();
+        x.extend([0.4, 0.45]);
+        x.extend((0..20).map(|i| 0.7 + f64::from(i) * 0.014));
+        let y: Vec<f64> = x.iter().map(|v| v * 2.0).collect();
+        let edges: Vec<f64> = (0..=3).map(|i| f64::from(i) / 3.0).collect();
+
+        let bands = binned_band_on(&edges, BinScale::Linear, &x, &y, 5);
+        assert_eq!(bands.len(), 3);
+        assert!(bands[0].is_some());
+        assert!(bands[1].is_none(), "two points do not make a quartile");
+        assert!(bands[2].is_some());
     }
 
     #[test]
