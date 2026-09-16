@@ -83,7 +83,8 @@ struct Args {
     r2_delta: Option<PathBuf>,
 
     /// The stage-1 table written by `r2 stats`, plotted as Experiment 2's
-    /// per-region gain heatmaps under `<out-dir>/experiment_2`. Absent is not
+    /// per-region gain heatmaps under `<out-dir>/experiment_2/region_gain`.
+    /// Absent is not
     /// an error — it is a separate `r2` run — and the heatmaps are then simply
     /// not written.
     #[arg(long)]
@@ -136,71 +137,8 @@ fn main() -> Result<()> {
         }
     }
 
-    // Exp 2 draws one metric-trend panel per curved geometry and per x axis —
-    // κ, the embedding curvature, and |K|, the searched hyperparameter;
-    // `panels` returns only the ones with data, so there is no guard on the
-    // loop. Their shared legend is a separate file, built from all of the
-    // panels so it names exactly the curves they draw. The metric-dependence
-    // heatmap is one panel per geometry from the same cells, with its ρ
-    // colourbar written once per run. Both read the **Pareto front** of each
-    // cell, reduced here once in the scoring space: the thesis compares
-    // corpora, and a corpus is the front, so a trial the search discarded is
-    // not part of what either figure describes. The per-region gain heatmap is the one
-    // Exp 2 figure built from a table rather than from `cells` — the stage-1
-    // R2 table, so it carries the numbers the thesis tables carry — one panel
-    // per curved geometry and a colourbar per N, since its scale is the
-    // data's. Everything lands under `<out-dir>/experiment_2`: the panels and
-    // the legend are set together as one row, and a directory keeps that set
-    // from being spread among the other experiments' files.
     if args.exp.contains(&2) {
-        let exp2_dir = args.out_dir.join("experiment_2");
-        let r2_local = args
-            .r2_local
-            .clone()
-            .unwrap_or_else(|| PathBuf::from(format!("results/r2_local_{}.jsonl", space.tag())));
-        let local_rows = exp4::load_table(&r2_local)?;
-        let fronts = figures::front_cells(&cells, space);
-        let mut any_dependence = false;
-        for n in &args.n {
-            let mut panels = Vec::new();
-            for x in [exp2::XAxis::Kappa, exp2::XAxis::Curvature] {
-                panels.extend(exp2::MetricTrend::panels(&fronts, *n, x));
-                // The unbounded metrics: one panel each, no legend.
-                for fig in exp2::UnboundedTrend::panels(&fronts, *n, x) {
-                    save(&fig, &exp2_dir, space)?;
-                }
-            }
-            for fig in &panels {
-                save(fig, &exp2_dir, space)?;
-            }
-            let legend = exp2::MetricLegend::from_panels(&panels, *n);
-            if legend.has_data() {
-                save(&legend, &exp2_dir, space)?;
-            }
-
-            for fig in exp2_dependence::MetricDependence::panels(&fronts, *n) {
-                save(&fig, &exp2_dir, space)?;
-                any_dependence = true;
-            }
-
-            // Twice: over every region, and over the projected surface's
-            // regions alone (legacy space only — `panels` is empty otherwise).
-            for columns in [
-                exp2_region_gain::Columns::Full,
-                exp2_region_gain::Columns::Projected,
-            ] {
-                let gains = exp2_region_gain::RegionGain::panels(&local_rows, *n, space, columns);
-                for fig in &gains {
-                    save(fig, &exp2_dir, space)?;
-                }
-                if let Some(bar) = exp2_region_gain::RegionGainColorbar::from_panels(&gains, *n) {
-                    save(&bar, &exp2_dir, space)?;
-                }
-            }
-        }
-        if any_dependence {
-            save(&exp2_dependence::DependenceColorbar, &exp2_dir, space)?;
-        }
+        render_exp2(&args, &cells, space)?;
     }
 
     // Exp 3: κ against |K| over the pooled Pareto fronts, one panel per curved
@@ -241,6 +179,95 @@ fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Exp 2 draws one metric-trend panel per curved geometry and per x axis —
+/// κ, the embedding curvature, and |K|, the searched hyperparameter;
+/// `panels` returns only the ones with data, so there is no guard on the
+/// loop. Their shared legend is a separate file, built from all of the
+/// panels so it names exactly the curves they draw. The metric-dependence
+/// heatmap is one panel per geometry from the same cells, with its ρ
+/// colourbar written once per run. Both read the **Pareto front** of each
+/// cell, reduced here once in the scoring space: the thesis compares
+/// corpora, and a corpus is the front, so a trial the search discarded is
+/// not part of what either figure describes. The per-region gain heatmap is the one
+/// Exp 2 figure built from a table rather than from `cells` — the stage-1
+/// R2 table, so it carries the numbers the thesis tables carry — one panel
+/// per curved geometry and a colourbar per N, since its scale is the
+/// data's. Everything lands under `<out-dir>/experiment_2`, in one
+/// subdirectory per figure family — `metric_trend` (the overlays and their
+/// legend, set together as one row), `metric_spread`, `unbounded`,
+/// `dependence`, `region_gain` — because the two per-metric figures alone
+/// write over a hundred files per space.
+fn render_exp2(args: &Args, cells: &figures::CellMap, space: ObjectiveSpace) -> Result<()> {
+    // One subdirectory per figure family. Exp 2 writes over two hundred files
+    // per space — every (metric, geometry, axis, scale) of two per-metric
+    // figures on top of the overlays and heatmaps — and a flat directory
+    // stops being a directory a person can read. The families are the ones
+    // the module docs name, and the family a panel belongs to is decided
+    // here, not by parsing its filename.
+    let exp2_dir = args.out_dir.join("experiment_2");
+    let trend_dir = exp2_dir.join("metric_trend");
+    let spread_dir = exp2_dir.join("metric_spread");
+    let unbounded_dir = exp2_dir.join("unbounded");
+    let dependence_dir = exp2_dir.join("dependence");
+    let region_gain_dir = exp2_dir.join("region_gain");
+
+    let r2_local = args
+        .r2_local
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(format!("results/r2_local_{}.jsonl", space.tag())));
+    let local_rows = exp4::load_table(&r2_local)?;
+    let fronts = figures::front_cells(cells, space);
+    let mut any_dependence = false;
+    for n in &args.n {
+        let mut panels = Vec::new();
+        for x in [exp2::XAxis::Kappa, exp2::XAxis::Curvature] {
+            panels.extend(exp2::MetricTrend::panels(&fronts, *n, x));
+            // One panel per metric, the same curve with its spread around
+            // it: the thesis shows one and the appendix carries the rest,
+            // so every metric's is written.
+            for fig in exp2::MetricSpread::panels(&fronts, *n, x) {
+                save(&fig, &spread_dir, space)?;
+            }
+            // The unbounded metrics: one panel each, no legend.
+            for fig in exp2::UnboundedTrend::panels(&fronts, *n, x) {
+                save(&fig, &unbounded_dir, space)?;
+            }
+        }
+        // The overlays and their legend go together: they are set as one row.
+        for fig in &panels {
+            save(fig, &trend_dir, space)?;
+        }
+        let legend = exp2::MetricLegend::from_panels(&panels, *n);
+        if legend.has_data() {
+            save(&legend, &trend_dir, space)?;
+        }
+
+        for fig in exp2_dependence::MetricDependence::panels(&fronts, *n) {
+            save(&fig, &dependence_dir, space)?;
+            any_dependence = true;
+        }
+
+        // Twice: over every region, and over the projected surface's
+        // regions alone (legacy space only — `panels` is empty otherwise).
+        for columns in [
+            exp2_region_gain::Columns::Full,
+            exp2_region_gain::Columns::Projected,
+        ] {
+            let gains = exp2_region_gain::RegionGain::panels(&local_rows, *n, space, columns);
+            for fig in &gains {
+                save(fig, &region_gain_dir, space)?;
+            }
+            if let Some(bar) = exp2_region_gain::RegionGainColorbar::from_panels(&gains, *n) {
+                save(&bar, &region_gain_dir, space)?;
+            }
+        }
+    }
+    if any_dependence {
+        save(&exp2_dependence::DependenceColorbar, &dependence_dir, space)?;
+    }
     Ok(())
 }
 
