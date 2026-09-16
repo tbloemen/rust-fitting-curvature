@@ -202,7 +202,7 @@ pub fn all_datasets() -> Vec<&'static str> {
 /// Trustworthiness (local, ↑) vs normalised stress (global, ↓): the local/global
 /// cross-section the thesis uses for the front cross-sections.
 ///
-/// Axis labels stay inside Latin-1 + Greek: the bitmap backend renders through
+/// Axis labels stay inside Latin-1 + Greek: SVG text is rendered by the viewer through
 /// whatever the system resolves "sans-serif" to, and arrows (U+2190/2192) and
 /// geometric shapes come out as tofu on this machine. Greek does resolve, so κ
 /// and ρ are safe.
@@ -213,8 +213,8 @@ pub const Y_LABEL: &str = "normalised stress (lower is better)";
 
 // ─── Rendering scaffolding ────────────────────────────────────────────────────
 
-/// A figure that can be rendered to any backend, so one definition writes both
-/// the SVG (for the thesis) and the PNG (for a quick look).
+/// A figure that can be rendered to any backend; [`save`] writes the SVG the
+/// thesis embeds.
 pub trait Figure {
     fn name(&self) -> String;
     fn size(&self) -> (u32, u32);
@@ -226,7 +226,11 @@ pub trait Figure {
         DB::ErrorType: 'static;
 }
 
-/// Render *fig* to `<out_dir>/<name>.svg` and `.png`.
+/// Render *fig* to `<out_dir>/<name>.svg`.
+///
+/// SVG only: it is what the thesis embeds, and a PNG twin of every figure
+/// doubled the file count of an already crowded `plots/` for a quick look
+/// any SVG viewer gives anyway.
 ///
 /// # Errors
 ///
@@ -238,22 +242,11 @@ pub fn save<F: Figure>(fig: &F, out_dir: &Path, space: ObjectiveSpace) -> Result
     // write two sets of files instead of one overwriting the other — the same
     // rule the JSONL tables follow.
     let name = format!("{}_{}", fig.name(), space.tag());
-    let size = fig.size();
-
     let svg_path = out_dir.join(format!("{name}.svg"));
-    {
-        let root = SVGBackend::new(&svg_path, size).into_drawing_area();
-        plot_err(root.fill(&WHITE))?;
-        plot_err(fig.draw(&root))?;
-        plot_err(root.present())?;
-    }
-    let png_path = out_dir.join(format!("{name}.png"));
-    {
-        let root = BitMapBackend::new(&png_path, size).into_drawing_area();
-        plot_err(root.fill(&WHITE))?;
-        plot_err(fig.draw(&root))?;
-        plot_err(root.present())?;
-    }
+    let root = SVGBackend::new(&svg_path, fig.size()).into_drawing_area();
+    plot_err(root.fill(&WHITE))?;
+    plot_err(fig.draw(&root))?;
+    plot_err(root.present())?;
     Ok(())
 }
 

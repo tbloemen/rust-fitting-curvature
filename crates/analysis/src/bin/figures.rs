@@ -7,7 +7,7 @@
 //!
 //! ```bash
 //! cargo run --release -p fitting-analysis --features plots --bin figures
-//! cargo run --release -p fitting-analysis --features plots --bin figures -- --n 1000
+//! cargo run --release -p fitting-analysis --features plots --bin figures -- --n 1000 5000
 //! cargo run --release -p fitting-analysis --features plots --bin figures -- --exp 4
 //! cargo run --release -p fitting-analysis --features plots --bin figures -- \
 //!     --exp 1 --exp1-region all structure
@@ -34,12 +34,13 @@ struct Args {
     #[arg(long, default_value = "results")]
     results_dir: PathBuf,
 
-    /// Where the SVG + PNG pairs are written.
+    /// Where the SVGs are written.
     #[arg(long, default_value = "plots")]
     out_dir: PathBuf,
 
-    /// Sample sizes to plot.
-    #[arg(long, num_args = 1.., default_values_t = [1000usize, 5000])]
+    /// Sample sizes to plot. N=5000 is what the thesis reports; N=1000 is
+    /// still available on request.
+    #[arg(long, num_args = 1.., default_values_t = [5000usize])]
     n: Vec<usize>,
 
     /// Which experiments to render, numbered as the results chapter numbers
@@ -164,7 +165,7 @@ fn main() -> Result<()> {
         // The R2 table as bar charts, one per (dataset, geometry) per N. These
         // come from the stage-2 JSONL rather than from `cells`, so they are the
         // same numbers the thesis table carries, and they go in their own
-        // subdirectory: 9 datasets x 3 geometries x 2 N is a lot of files to
+        // subdirectory: 9 datasets x 3 geometries per N is a lot of files to
         // leave loose among the other figures.
         let r2_delta = args
             .r2_delta
