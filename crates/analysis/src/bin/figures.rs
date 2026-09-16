@@ -19,9 +19,10 @@ use std::str::FromStr;
 use clap::Parser;
 
 use fitting_analysis::figures::{
-    self, exp1, exp2, exp2_dependence, exp2_dumbbell, exp2_region_gain, exp3, exp4, exp4_gain_dots,
-    save,
+    self, exp1, exp2, exp2_dependence, exp2_dumbbell, exp2_region_gain, exp3, exp4,
+    exp4_epsilon_dots, exp4_gain_dots, save,
 };
+use fitting_analysis::indicators::EpsilonRow;
 use fitting_analysis::objectives::ObjectiveSpace;
 use fitting_analysis::{Error, Result};
 
@@ -83,6 +84,16 @@ struct Args {
     /// simply not written.
     #[arg(long)]
     r2_delta: Option<PathBuf>,
+
+    /// The ε table written by `r2 compare`, plotted as the per-setting
+    /// ε-indicator dot plot under `<out-dir>/experiment_4`. Defaults to
+    /// `results/r2_epsilon_<space>.jsonl`; note `r2 compare --out` itself
+    /// defaults to the untagged `results/r2_epsilon.jsonl`, so an `obj10`
+    /// table has to be named here. The rows carry no `space` field, so a
+    /// table from the other space cannot be detected. Absent is not an
+    /// error; the figure is then simply not written.
+    #[arg(long)]
+    r2_epsilon: Option<PathBuf>,
 
     /// The stage-1 table written by `r2 stats`, plotted as Experiment 2's
     /// per-region gain heatmaps under `<out-dir>/experiment_2/region_gain`.
@@ -186,6 +197,19 @@ fn main() -> Result<()> {
                 if fig.has_data() {
                     save(&fig, &bars_dir, space)?;
                 }
+            }
+        }
+
+        // The ε-indicator in the same layout, from `r2 compare`'s table.
+        let r2_epsilon = args
+            .r2_epsilon
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(format!("results/r2_epsilon_{}.jsonl", space.tag())));
+        let epsilons: Vec<EpsilonRow> = exp4::load_table(&r2_epsilon)?;
+        for n in &args.n {
+            let fig = exp4_epsilon_dots::EpsilonDots::new(&epsilons, *n);
+            if fig.has_data() {
+                save(&fig, &bars_dir, space)?;
             }
         }
     }

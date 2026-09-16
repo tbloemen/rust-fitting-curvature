@@ -21,7 +21,33 @@
 //! "objective units", and the NaN-freedom `oriented_value` guarantees carries
 //! through: nothing here can produce a NaN from finite input.
 
+use serde::{Deserialize, Serialize};
+
 use crate::objectives::Row;
+
+/// One (dataset, geometry, N, setting) ε comparison against the baseline —
+/// the row `r2 compare` writes and `figures/exp4_epsilon_dots.rs` reads back.
+///
+/// Front sizes are reported next to the indicator because the ε-indicator says
+/// nothing about cardinality: a front of 12 points and one of 230 can score the
+/// same, and the reader has to be able to see which case they are looking at.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpsilonRow {
+    pub dataset: String,
+    pub geometry: String,
+    pub n: usize,
+    pub setting: String,
+    pub n_front_setting: usize,
+    pub n_front_baseline: usize,
+    /// `I_ε+(setting, baseline)`.
+    pub eps_setting_vs_baseline: f64,
+    /// `I_ε+(baseline, setting)`.
+    pub eps_baseline_vs_setting: f64,
+    /// `eps_baseline_vs_setting − eps_setting_vs_baseline`; positive = improvement.
+    pub delta_eps: f64,
+    pub setting_covers_baseline: bool,
+    pub baseline_covers_setting: bool,
+}
 
 /// `I_ε+(A, B)`: the smallest ε such that every point of *b* is weakly dominated
 /// by some point of *a* shifted up by ε on every objective.
