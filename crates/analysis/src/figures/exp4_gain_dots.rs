@@ -387,14 +387,14 @@ impl Figure for GainDots {
 
         for (col, (geometry, area)) in GEOMETRIES.iter().zip(&areas).enumerate() {
             let mut builder = ChartBuilder::on(area);
+            // The caption is drawn by hand below rather than through
+            // `.caption`, which centres on the whole area: the first panel's
+            // area carries the label column, so its title would sit left of
+            // the plot's centre while the other two sit on it.
             builder
-                .margin_top(2)
+                .margin_top(CAPTION)
                 .margin_bottom(MARGIN)
                 .margin_right(6)
-                .caption(
-                    *geometry,
-                    ("sans-serif", 15).into_font().style(FontStyle::Bold),
-                )
                 .x_label_area_size(X_LABEL_AREA);
             if col == 0 {
                 builder.margin_left(MARGIN).y_label_area_size(Y_LABEL_AREA);
@@ -438,6 +438,19 @@ impl Figure for GainDots {
                 area.get_pixel_range().0.start,
                 area.get_pixel_range().1.start,
             );
+            let plot_px = chart.plotting_area().get_pixel_range();
+            area.draw(&Text::new(
+                *geometry,
+                (
+                    plot_x(&plot_px.0, 0.5) - origin.0,
+                    to_i32(f64::from(CAPTION) / 2.0),
+                ),
+                ("sans-serif", 15)
+                    .into_font()
+                    .style(FontStyle::Bold)
+                    .color(&OK_BLACK)
+                    .pos(Pos::new(HPos::Center, VPos::Center)),
+            ))?;
             let na_font = ("sans-serif", 11)
                 .into_font()
                 .color(&OK_GREY)

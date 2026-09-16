@@ -179,11 +179,10 @@ fn main() -> Result<()> {
                 save(&fig, &bars_dir, space)?;
             }
             // The same table as one figure per N: every (dataset, geometry,
-            // setting) gain on one axis. This one the thesis embeds, so it
-            // stays at the top level with the stacked fronts.
+            // setting) gain on one axis, in the same directory as the bars.
             let fig = exp4_gain_dots::GainDots::new(&deltas, *n);
             if fig.has_data() {
-                save(&fig, &args.out_dir, space)?;
+                save(&fig, &bars_dir, space)?;
             }
         }
     }
