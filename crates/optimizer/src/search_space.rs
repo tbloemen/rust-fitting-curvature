@@ -1,5 +1,8 @@
 use fitting_core::cast::{count_to_f64, to_usize};
-use fitting_core::config::{InitMethod, ScalingLossType, TrainingConfig};
+use fitting_core::config::{
+    InitMethod, ScalingLossType, TrainingConfig, SWEEP_EARLY_EXAGGERATION_ITERATIONS,
+    SWEEP_N_ITERATIONS,
+};
 use fitting_core::matrices::get_default_init_scale;
 use fitting_core::synthetic_data::Rng;
 use serde::Deserialize;
@@ -294,8 +297,10 @@ impl TrialConfig {
                 hi: eef_hi,
                 log_scale: eef_log,
             },
-            n_iterations: ParamSpec::Fixed(800.0),
-            early_exaggeration_iterations: ParamSpec::Fixed(250.0),
+            n_iterations: ParamSpec::Fixed(count_to_f64(SWEEP_N_ITERATIONS)),
+            early_exaggeration_iterations: ParamSpec::Fixed(count_to_f64(
+                SWEEP_EARLY_EXAGGERATION_ITERATIONS,
+            )),
             curvature_magnitude: ParamSpec::Fixed(0.0),
             init_scale: ParamSpec::Fixed(get_default_init_scale(2)),
             embed_dim: ParamSpec::Fixed(2.0),

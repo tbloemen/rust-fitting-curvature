@@ -1,6 +1,7 @@
 import {
   EmbeddingRunner,
   get_default_config,
+  get_sweep_config,
   metric_registry,
   default as init,
 } from "fitting-web";
@@ -165,6 +166,7 @@ function applyDefaultConfig() {
   document.getElementById("scaling_loss").value = d.scaling_loss;
   document.getElementById("global_loss_weight").value = d.global_loss_weight;
   document.getElementById("norm_loss_weight").value = d.norm_loss_weight;
+  document.getElementById("init_scale").value = d.init_scale;
 }
 
 function main() {
@@ -362,6 +364,7 @@ function getParams() {
     normLossWeight: parseFloat(
       document.getElementById("norm_loss_weight").value,
     ),
+    initScale: parseFloat(document.getElementById("init_scale").value),
     projection: document.getElementById("projection").value,
   };
 }
@@ -624,6 +627,7 @@ async function createRunner() {
       p.scalingLoss,
       p.globalLossWeight,
       p.normLossWeight,
+      p.initScale,
       p.projection,
     ];
 
@@ -689,6 +693,7 @@ async function createRunner() {
       p.scalingLoss,
       p.globalLossWeight,
       p.normLossWeight,
+      p.initScale,
       p.projection,
     );
   } else if (dataSource === "pareto") {
@@ -716,6 +721,7 @@ async function createRunner() {
       "none",
       0.0,
       0.0,
+      p.initScale,
       "stereographic",
     );
     document.getElementById("plot-title").textContent =
@@ -980,11 +986,23 @@ function applyParetoEntry() {
   const nSamples =
     entry.n_samples ??
     (parseInt(document.getElementById("real_n_points").value) || 1000);
-  const perplexity = (entry.perplexity_ratio ?? 0.01) * nSamples;
+  // Same as `TrialConfig::to_training_config`: unrounded, floored at 2.
+  const perplexity = Math.max((entry.perplexity_ratio ?? 0.01) * nSamples, 2);
+
+  // The entry records only what the sweep searched over; the rest of the
+  // run (iteration budget, EE length, init scale) is fixed by the sweep and
+  // comes from the same constants the optimizer builds its config from.
+  const sweep = get_sweep_config();
 
   document.getElementById("curvature").value = curvature;
-  document.getElementById("perplexity").value = Math.round(perplexity);
+  document.getElementById("perplexity").value = perplexity;
+  document.getElementById("iterations").value = sweep.n_iterations;
   document.getElementById("lr").value = entry.learning_rate ?? 10;
+  document.getElementById("init_scale").value = sweep.init_scale;
+  document.getElementById("ee_factor").value =
+    entry.early_exaggeration_factor ?? 12;
+  document.getElementById("ee_iterations").value =
+    sweep.early_exaggeration_iterations;
   document.getElementById("centering_weight").value =
     entry.centering_weight ?? 0;
   document.getElementById("global_loss_weight").value =

@@ -21,11 +21,11 @@ use crate::visualisation::{project_to_2d, SphericalProjection};
 
 /// Everything a metric or diagnostic may read about one embedding.
 ///
-/// `k` and `projection` are **inputs, not constants**, because the two callers
-/// genuinely differ and that difference is load-bearing: the optimizer scores
-/// with `k = min(30, 0.1n)` under `AzimuthalEquidistant`, while the interactive
-/// `EmbeddingState` uses `k = perplexity` under the projection the user picked.
-/// Folding either into the registry would silently move published numbers.
+/// `k` and `projection` are **inputs, not constants**. Both callers now score
+/// at [`metrics::scoring_k`](crate::metrics::scoring_k), but the projection
+/// still genuinely differs: the optimizer always uses `AzimuthalEquidistant`,
+/// the interactive `EmbeddingState` whatever the user picked. Folding either
+/// into the registry would silently move published numbers.
 pub struct EmbeddingContext<'a> {
     /// Pairwise distances in the input space, flat row-major `n × n`.
     pub high_dim_dist: &'a [f64],

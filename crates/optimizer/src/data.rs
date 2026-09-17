@@ -29,16 +29,18 @@ impl Dataset {
         use fitting_core::synthetic_data::{
             generate_hd_antipodal_clusters, generate_hd_hyperbolic_shells, generate_hd_sphere,
             generate_hd_tree, generate_hd_uniform_grid, generate_matched_ball, generate_tree_graph,
-            MATCHED_BALL_EXTENT,
+            HD_AMBIENT_DIM, MATCHED_BALL_EXTENT,
         };
         let sd = match name {
-            "sphere" => generate_hd_sphere(n_samples, 10, seed),
-            "antipodal_clusters" => generate_hd_antipodal_clusters(n_samples, 10, seed),
-            "tree" => generate_hd_tree(n_samples, 10, seed),
-            "hyperbolic_shells" => generate_hd_hyperbolic_shells(n_samples, 10, seed),
+            // The viewer offers these same five as `hd_<name>`, next to the
+            // 2-D toy generators that share the unprefixed names there.
+            "sphere" => generate_hd_sphere(n_samples, HD_AMBIENT_DIM, seed),
+            "antipodal_clusters" => generate_hd_antipodal_clusters(n_samples, HD_AMBIENT_DIM, seed),
+            "tree" => generate_hd_tree(n_samples, HD_AMBIENT_DIM, seed),
+            "hyperbolic_shells" => generate_hd_hyperbolic_shells(n_samples, HD_AMBIENT_DIM, seed),
             // Euclidean synthetic: a lattice in R^10, matching the ambient
             // dimension of the curved synthetics above.
-            "grid" => generate_hd_uniform_grid(n_samples, 10, seed),
+            "grid" => generate_hd_uniform_grid(n_samples, HD_AMBIENT_DIM, seed),
 
             // A real hierarchy: unweighted tree-metric distances, not a
             // hyperbolic point cloud shaped like tree levels (that is `tree`).
