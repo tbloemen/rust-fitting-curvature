@@ -20,7 +20,7 @@ use clap::Parser;
 
 use fitting_analysis::figures::{
     self, exp1, exp2, exp2_dependence, exp2_dumbbell, exp2_region_gain, exp3, exp4,
-    exp4_epsilon_dots, exp4_gain_dots, save,
+    exp4_epsilon_dots, exp4_gain_dots, exp4_tradeoff, save,
 };
 use fitting_analysis::indicators::EpsilonRow;
 use fitting_analysis::objectives::ObjectiveSpace;
@@ -194,6 +194,12 @@ fn main() -> Result<()> {
             // drawn twice, log and `_linear`, as the Exp 2 panels are.
             for scale in exp4_gain_dots::Scale::ALL {
                 let fig = exp4_gain_dots::GainDots::new(&deltas, *n, scale);
+                if fig.has_data() {
+                    save(&fig, &bars_dir, space)?;
+                }
+                // The local-versus-global trade of the same table: the two
+                // family regions on orthogonal axes, same scales, same dir.
+                let fig = exp4_tradeoff::TradeoffScatter::new(&deltas, *n, scale);
                 if fig.has_data() {
                     save(&fig, &bars_dir, space)?;
                 }
