@@ -182,4 +182,3 @@ impl Evaluator {
         (&self.dataset.x, self.dataset.n_features)
     }
 }
-
