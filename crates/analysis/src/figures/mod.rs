@@ -27,8 +27,11 @@
 //!   one curve per loss-weight setting; the R2 levels of the same settings
 //!   as grouped bar charts under `<out-dir>/experiment_4`; the per-setting
 //!   R2 gain over `all_off` as a dot plot, datasets by geometry
-//!   ([`exp4_gain_dots::GainDots`]); and the ε-indicator against `all_off`
-//!   in the same layout ([`exp4_epsilon_dots::EpsilonDots`]).
+//!   ([`exp4_gain_dots::GainDots`]); the ε-indicator against `all_off`
+//!   in the same layout ([`exp4_epsilon_dots::EpsilonDots`]); and the
+//!   local-versus-global gain scatter, the `structure` family gain against
+//!   the `distance` family gain per (dataset, setting), one panel per
+//!   geometry ([`exp4_tradeoff::TradeoffScatter`]).
 //!
 //! κ uses **`R_rms`** (`r_rms`), not `R_max` — the thesis definition.
 //!
@@ -50,6 +53,7 @@ pub mod exp3;
 pub mod exp4;
 pub mod exp4_epsilon_dots;
 pub mod exp4_gain_dots;
+pub mod exp4_tradeoff;
 
 use fitting_core::cast::{count_to_f64, to_i32};
 use std::collections::BTreeMap;
