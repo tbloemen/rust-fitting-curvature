@@ -15,6 +15,15 @@ pub enum ScalingLossType {
     None,
 }
 
+/// Iteration budget every optimizer sweep fits under (`search_space::base`).
+///
+/// A Pareto-front entry does not record it (it is fixed, not searched), so a
+/// viewer that reproduces an entry has to get it from here, not from the JSON.
+pub const SWEEP_N_ITERATIONS: usize = 800;
+/// Early-exaggeration phase length of every optimizer sweep; see
+/// [`SWEEP_N_ITERATIONS`].
+pub const SWEEP_EARLY_EXAGGERATION_ITERATIONS: usize = 250;
+
 /// Full training configuration, mirrors config.toml.
 #[derive(Debug, Clone)]
 pub struct TrainingConfig {

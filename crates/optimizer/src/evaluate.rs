@@ -1,8 +1,8 @@
-use fitting_core::cast::{count_to_f64, to_usize};
 use fitting_core::context::EmbeddingContext;
 use fitting_core::curvature_detection::{detect_geometry, GeometryVerdict};
 use fitting_core::embedding::EmbeddingState;
 use fitting_core::matrices::compute_euclidean_distance_matrix;
+use fitting_core::metrics::scoring_k;
 use fitting_core::metrics::{Metric, MetricValue, MetricValues};
 use fitting_core::spread::SpreadDiagnostics;
 use fitting_core::visualisation::SphericalProjection;
@@ -124,10 +124,11 @@ impl Evaluator {
     /// The scoring context for an arbitrary configuration on the manifold of
     /// `curvature`.
     ///
-    /// `k = min(30, 0.1n)` and `AzimuthalEquidistant` are this crate's scoring
-    /// convention, and differ from the interactive viewer's. Every caller goes
-    /// through this one function so they cannot drift apart, which is what the
-    /// seam `metrics_from_embedding` documents was always for.
+    /// `k` is the workspace-wide [`scoring_k`], shared with the viewer;
+    /// `AzimuthalEquidistant` is this crate's fixed projection where the viewer
+    /// uses whatever the user picked. Every caller goes through this one
+    /// function so they cannot drift apart, which is what the seam
+    /// `metrics_from_embedding` documents was always for.
     fn context_for<'a>(
         &'a self,
         points: &'a [f64],
@@ -182,7 +183,3 @@ impl Evaluator {
     }
 }
 
-/// The neighbourhood size every metric in this crate is scored at.
-pub fn scoring_k(n: usize) -> usize {
-    to_usize((30_f64.min(count_to_f64(n) * 0.1)).round())
-}

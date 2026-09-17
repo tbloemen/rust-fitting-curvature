@@ -2,8 +2,11 @@ use fitting_core::cast::count_to_f64;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
-use fitting_core::config::{ScalingLossType, TrainingConfig};
+use fitting_core::config::{
+    ScalingLossType, TrainingConfig, SWEEP_EARLY_EXAGGERATION_ITERATIONS, SWEEP_N_ITERATIONS,
+};
 use fitting_core::embedding::EmbeddingState;
+use fitting_core::matrices::get_default_init_scale;
 use fitting_core::metrics;
 use fitting_core::synthetic_data;
 use fitting_core::visualisation::{self, SphericalProjection};
@@ -74,6 +77,7 @@ impl EmbeddingRunner {
         scaling_loss: &str,
         global_loss_weight: f64,
         norm_loss_weight: f64,
+        init_scale: f64,
         projection: &str,
     ) -> Result<EmbeddingRunner, JsValue> {
         let synth = synthetic_data::load_synthetic(dataset_name, n_points, 42)
@@ -91,6 +95,7 @@ impl EmbeddingRunner {
             scaling_loss_type: parse_scaling_loss(scaling_loss),
             global_loss_weight,
             norm_loss_weight,
+            init_scale,
             ..Default::default()
         };
 
@@ -144,6 +149,7 @@ impl EmbeddingRunner {
         scaling_loss: &str,
         global_loss_weight: f64,
         norm_loss_weight: f64,
+        init_scale: f64,
         projection: &str,
     ) -> Result<EmbeddingRunner, JsValue> {
         let config = TrainingConfig {
@@ -158,6 +164,7 @@ impl EmbeddingRunner {
             scaling_loss_type: parse_scaling_loss(scaling_loss),
             global_loss_weight,
             norm_loss_weight,
+            init_scale,
             ..Default::default()
         };
 
@@ -200,6 +207,7 @@ impl EmbeddingRunner {
         scaling_loss: &str,
         global_loss_weight: f64,
         norm_loss_weight: f64,
+        init_scale: f64,
         projection: &str,
     ) -> Result<EmbeddingRunner, JsValue> {
         let config = TrainingConfig {
@@ -214,6 +222,7 @@ impl EmbeddingRunner {
             scaling_loss_type: parse_scaling_loss(scaling_loss),
             global_loss_weight,
             norm_loss_weight,
+            init_scale,
             ..Default::default()
         };
 
@@ -544,6 +553,7 @@ pub fn get_default_config() -> Result<JsValue, JsValue> {
     set_prop(&obj, "centering_weight", cfg.centering_weight)?;
     set_prop(&obj, "global_loss_weight", cfg.global_loss_weight)?;
     set_prop(&obj, "norm_loss_weight", cfg.norm_loss_weight)?;
+    set_prop(&obj, "init_scale", cfg.init_scale)?;
     let scaling_loss_str = match cfg.scaling_loss_type {
         ScalingLossType::Rms => "rms",
         ScalingLossType::HardBarrier => "hard_barrier",
@@ -556,6 +566,28 @@ pub fn get_default_config() -> Result<JsValue, JsValue> {
         &JsValue::from_str("scaling_loss"),
         &JsValue::from_str(scaling_loss_str),
     )?;
+    Ok(obj.into())
+}
+
+/// The settings every optimizer sweep fixes rather than searches, and which a
+/// Pareto-front entry therefore does not record: iteration budget,
+/// early-exaggeration length and PCA init scale. The viewer applies these
+/// alongside an entry's own fields so the run it reproduces is the run the
+/// entry was scored on.
+///
+/// # Errors
+///
+/// Returns `Err(JsValue)` if JS object property setting fails.
+#[wasm_bindgen]
+pub fn get_sweep_config() -> Result<JsValue, JsValue> {
+    let obj = js_sys::Object::new();
+    set_prop(&obj, "n_iterations", count_to_f64(SWEEP_N_ITERATIONS))?;
+    set_prop(
+        &obj,
+        "early_exaggeration_iterations",
+        count_to_f64(SWEEP_EARLY_EXAGGERATION_ITERATIONS),
+    )?;
+    set_prop(&obj, "init_scale", get_default_init_scale(2))?;
     Ok(obj.into())
 }
 

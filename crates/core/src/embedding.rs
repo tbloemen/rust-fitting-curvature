@@ -1,7 +1,7 @@
 use crate::affinities::{
     compute_perplexity_affinities, compute_perplexity_affinities_from_distances,
 };
-use crate::cast::{count_to_f64, to_usize};
+use crate::cast::count_to_f64;
 use crate::config::{InitMethod, TrainingConfig};
 use crate::context::EmbeddingContext;
 use crate::kernels::compute_q_matrix_with_distances;
@@ -11,7 +11,7 @@ use crate::kl_divergence::{
 use crate::manifolds;
 use crate::manifolds::Manifold;
 use crate::matrices::{compute_euclidean_distance_matrix, pca, pca_from_distances};
-use crate::metrics::MetricValues;
+use crate::metrics::{self, MetricValues};
 use crate::optimizer::RiemannianSGDMomentum;
 use crate::scaling_loss;
 use crate::spread::SpreadDiagnostics;
@@ -295,18 +295,16 @@ impl EmbeddingState {
     /// metrics say how faithful the embedding is, the diagnostics say how far
     /// it reaches. Only the first is ever optimised.
     ///
-    /// `k` and the projection come from this state, not from the registry: the
-    /// interactive view scores at the configured perplexity under whichever
-    /// projection the user picked, where the optimizer uses
-    /// `k = min(30, 0.1n)` under `AzimuthalEquidistant`. Both readings are
-    /// valid; they are just not the same number, and `EmbeddingContext` takes them
-    /// as inputs so neither caller can quietly adopt the other's.
+    /// `k` is the workspace-wide [`metrics::scoring_k`] (`min(30, 0.1n)`), the
+    /// same neighbourhood the optimizer scores at, so the viewer's panel and a
+    /// Pareto-front entry are the same number for the same embedding. The
+    /// projection is this state's: the optimizer always scores under
+    /// `AzimuthalEquidistant`, the viewer under whatever the user picked, and
+    /// `EmbeddingContext` takes it as an input so the difference stays visible.
     #[must_use]
     pub fn compute_metrics(&self) -> (MetricValues, SpreadDiagnostics) {
         let n = self.n_points;
-        let k = to_usize(self.config.perplexity)
-            .min(n.saturating_sub(2))
-            .max(1);
+        let k = metrics::scoring_k(n).min(n.saturating_sub(2)).max(1);
         let high_dim = self.high_dim_distances();
         let ctx = EmbeddingContext::new(
             &high_dim,

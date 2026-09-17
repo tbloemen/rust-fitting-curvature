@@ -56,3 +56,17 @@ pub use quality::{
 };
 pub(crate) use values::mean_of as values_mean_of;
 pub use values::{MetricValue, MetricValues};
+
+use crate::cast::{count_to_f64, to_usize};
+
+/// The neighbourhood size every metric is scored at: `k = min(30, 0.1n)`.
+///
+/// This is the one scoring convention shared by the optimizer sweeps, the
+/// `results/` Pareto fronts and the interactive viewer, so a number read off
+/// the viewer's panel is comparable with a number read out of a front. It is
+/// deliberately *not* the perplexity: perplexity is a fitting knob, and tying
+/// the score to it would let two configurations be scored at different `k`.
+#[must_use]
+pub fn scoring_k(n: usize) -> usize {
+    to_usize((30_f64.min(count_to_f64(n) * 0.1)).round())
+}

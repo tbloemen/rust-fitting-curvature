@@ -1183,7 +1183,16 @@ pub fn generate_uniform_hyperbolic3(n_samples: usize, seed: u64, max_r: f64) -> 
 // Dispatcher
 // ---------------------------------------------------------------------------
 
-/// Available synthetic dataset names (for the frontend/2D generators).
+/// Ambient dimension of the `hd_*` generators in [`load_synthetic`]: the
+/// sweep datasets `optimizer::Dataset::load_synthetic` builds (as `sphere`,
+/// `antipodal_clusters`, `tree`, `hyperbolic_shells`, `grid`) live in R^10.
+pub const HD_AMBIENT_DIM: usize = 10;
+
+/// Available synthetic dataset names (for the frontend generators).
+///
+/// The `hd_*` entries are the exact datasets the optimizer sweeps run on
+/// (see [`HD_AMBIENT_DIM`]); the unprefixed 2-D generators are the toy
+/// versions that embed trivially.
 pub const DATASET_NAMES: &[&str] = &[
     "uniform_grid",
     "gaussian_blob",
@@ -1195,6 +1204,11 @@ pub const DATASET_NAMES: &[&str] = &[
     "tree_structured",
     "hyperbolic_shells",
     "tree_graph",
+    "hd_uniform_grid",
+    "hd_sphere",
+    "hd_antipodal_clusters",
+    "hd_tree",
+    "hd_hyperbolic_shells",
     "ball2_euclidean",
     "ball2_spherical",
     "ball2_hyperbolic",
@@ -1203,13 +1217,28 @@ pub const DATASET_NAMES: &[&str] = &[
     "ball9_hyperbolic",
 ];
 
-/// Load a synthetic dataset by name (2D/3D frontend generators).
+/// Load a synthetic dataset by name (frontend generators).
 ///
 /// # Errors
 ///
 /// Returns `Err` for unknown dataset name.
 pub fn load_synthetic(name: &str, n_samples: usize, seed: u64) -> Result<DataPoints, String> {
     match name {
+        // The sweep datasets, same generator and ambient dimension as
+        // `optimizer::Dataset::load_synthetic` uses under the unprefixed name.
+        "hd_uniform_grid" => Ok(generate_hd_uniform_grid(n_samples, HD_AMBIENT_DIM, seed)),
+        "hd_sphere" => Ok(generate_hd_sphere(n_samples, HD_AMBIENT_DIM, seed)),
+        "hd_antipodal_clusters" => Ok(generate_hd_antipodal_clusters(
+            n_samples,
+            HD_AMBIENT_DIM,
+            seed,
+        )),
+        "hd_tree" => Ok(generate_hd_tree(n_samples, HD_AMBIENT_DIM, seed)),
+        "hd_hyperbolic_shells" => Ok(generate_hd_hyperbolic_shells(
+            n_samples,
+            HD_AMBIENT_DIM,
+            seed,
+        )),
         "uniform_grid" => Ok(generate_uniform_grid(n_samples, seed)),
         "gaussian_blob" => Ok(generate_gaussian_blob(n_samples, seed)),
         "concentric_circles" => Ok(generate_concentric_circles(n_samples, seed)),

@@ -62,6 +62,15 @@
                 <option value="tree_structured">Tree Structured</option>
                 <option value="hyperbolic_shells">Hyperbolic Shells</option>
                 <option value="tree_graph">Tree (graph metric)</option>
+                <option value="hd_uniform_grid">Sweep: Grid (E¹⁰)</option>
+                <option value="hd_sphere">Sweep: Sphere (S⁹)</option>
+                <option value="hd_antipodal_clusters">
+                  Sweep: Antipodal Clusters (S⁹)
+                </option>
+                <option value="hd_tree">Sweep: Tree (H⁹)</option>
+                <option value="hd_hyperbolic_shells">
+                  Sweep: Hyperbolic Shells (H⁹)
+                </option>
                 <option value="ball2_euclidean">Matched Ball E² (2D)</option>
                 <option value="ball2_spherical">Matched Ball S² (2D)</option>
                 <option value="ball2_hyperbolic">Matched Ball H² (2D)</option>
@@ -147,7 +156,7 @@
           </div>
           <div class="control-group">
             <label for="perplexity">Perplexity</label>
-            <input type="number" id="perplexity" min="5" max="100" />
+            <input type="number" id="perplexity" min="2" max="100" step="any" />
           </div>
           <div class="control-group">
             <label for="iterations">Iterations</label>
@@ -156,6 +165,10 @@
           <div class="control-group">
             <label for="lr">Learning Rate</label>
             <input type="number" id="lr" step="10" />
+          </div>
+          <div class="control-group">
+            <label for="init_scale">Init Scale</label>
+            <input type="number" id="init_scale" step="0.1" min="0.01" />
           </div>
         </div>
 
@@ -209,10 +222,10 @@
           <div class="control-group">
             <label for="projection">Spherical projection</label>
             <select id="projection">
-              <option value="azimuthal_equidistant">
+              <option value="azimuthal_equidistant" selected>
                 Azimuthal Equidistant
               </option>
-              <option value="stereographic" selected>Stereographic</option>
+              <option value="stereographic">Stereographic</option>
               <option value="orthographic">Orthographic</option>
             </select>
           </div>
