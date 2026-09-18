@@ -249,7 +249,7 @@ mod tests {
             eps("mnist", "euclidean", "norm_only", 5000, 0.025, 0.150),
             eps("grid", "hyperbolic", "all_free", 5000, 0.005, 0.014),
             eps("grid", "hyperbolic", "rms_anchored", 5000, 0.9, 0.9),
-            eps("tree", "spherical", "all_free", 1000, 0.5, 0.5),
+            eps("tree", "spherical", "global_only", 1000, 0.5, 0.5),
         ];
         let fig = EpsilonDots::new(&rows, 5000);
         let datasets: Vec<&str> = fig.rows().iter().map(Row::dataset).collect();

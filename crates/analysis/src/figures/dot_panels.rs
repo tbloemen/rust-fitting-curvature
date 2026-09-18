@@ -24,6 +24,7 @@ use super::exp2_dumbbell::SlotAxis;
 use super::{
     plot_x, setting_color, Res, GEOMETRIES, OK_BLACK, OK_GREY, REAL_DATASETS, SYNTH_DATASETS,
 };
+use crate::cell::setting_applies;
 use crate::style_mesh;
 
 /// Every value is multiplied by this, the way the Typst tables multiply
@@ -82,7 +83,8 @@ pub(super) const PANEL_GAP: u32 = 13;
 pub(super) const DOT: i32 = 4;
 
 /// One dataset's row: a value per geometry of [`GEOMETRIES`] per setting of
-/// [`SETTINGS`], `None` where the sweep has no such cell.
+/// [`SETTINGS`], `None` where the sweep has no such cell or where the
+/// setting's weight is inert under that geometry ([`setting_applies`]).
 #[derive(Debug, Clone)]
 pub struct Row<T> {
     dataset: String,
@@ -128,7 +130,11 @@ impl<T: Copy> Row<T> {
 /// chapter order — synthetic first, as the results chapter introduces them,
 /// then the real ones, the order the region-gain heatmap uses. *lookup*
 /// gives the value of a (dataset, geometry, setting) or `None`; it is never
-/// asked about an [`EXCLUDED`] setting.
+/// asked about an [`EXCLUDED`] setting, nor about a cell whose weight is
+/// inert under its geometry ([`setting_applies`]) — a `centering_only` cell
+/// off the hyperboloid, or an `all_free` cell on the sphere, is a repeat of
+/// the search without that weight, and is drawn as `n/a` like a cell that
+/// was never run.
 pub(super) fn collect_rows<T: Copy>(lookup: impl Fn(&str, &str, &str) -> Option<T>) -> Vec<Row<T>> {
     let mut out = Vec::new();
     for dataset in SYNTH_DATASETS.iter().chain(REAL_DATASETS.iter()) {
@@ -137,7 +143,7 @@ pub(super) fn collect_rows<T: Copy>(lookup: impl Fn(&str, &str, &str) -> Option<
             .map(|geometry| {
                 let mut cell = [None; SETTINGS.len()];
                 for (i, (setting, _, _)) in SETTINGS.iter().enumerate() {
-                    if EXCLUDED.contains(setting) {
+                    if EXCLUDED.contains(setting) || !setting_applies(setting, geometry) {
                         continue;
                     }
                     cell[i] = lookup(dataset, geometry, setting);

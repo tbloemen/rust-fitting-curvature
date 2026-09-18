@@ -24,9 +24,12 @@
 //! for stress and Shepard goodness. `ΔR2 = R2(all_off) − R2(setting)`, so a
 //! marker right of the vertical rule and above the horizontal one is better
 //! than the baseline on that family; R2 is a cost. A (dataset, geometry,
-//! setting) is a marker only when *both* rows exist — a setting the sweep
-//! did not run for a geometry (`norm_only` on the sphere) is simply absent,
-//! which the caption states rather than the panel.
+//! setting) is a marker only when *both* rows exist and the setting's weight
+//! acts under that geometry (`cell::setting_applies`) — a setting the sweep
+//! did not run for a geometry (`norm_only` on the sphere), or one whose
+//! weight is inert there (`centering_only` off the hyperboloid, `all_free`
+//! on the sphere), is simply absent, which the caption states rather than
+//! the panel.
 //!
 //! ### The axes are the gain dot plot's
 //!
@@ -77,6 +80,7 @@ use super::{
     SYNTH_DATASETS,
 };
 use crate::aggregate::DeltaRow;
+use crate::cell::setting_applies;
 use crate::style_mesh;
 
 /// The preference region on x: the family of trustworthiness and continuity
@@ -141,7 +145,7 @@ impl TradeoffScatter {
         for dataset in SYNTH_DATASETS.iter().chain(REAL_DATASETS.iter()) {
             for (col, geometry) in GEOMETRIES.iter().enumerate() {
                 for (s, (setting, _, _)) in SETTINGS.iter().enumerate() {
-                    if EXCLUDED.contains(setting) {
+                    if EXCLUDED.contains(setting) || !setting_applies(setting, geometry) {
                         continue;
                     }
                     let (Some(local), Some(global)) = (
@@ -592,11 +596,32 @@ mod tests {
     }
 
     #[test]
+    fn inert_cells_are_not_markers() {
+        // Both rows exist, but the weight does nothing under that geometry.
+        let rows = vec![
+            delta("grid", "euclidean", "centering_only", LOCAL_REGION, 0.01),
+            delta("grid", "euclidean", "centering_only", GLOBAL_REGION, 0.01),
+            delta("grid", "spherical", "all_free", LOCAL_REGION, 0.01),
+            delta("grid", "spherical", "all_free", GLOBAL_REGION, 0.01),
+            delta("grid", "hyperbolic", "centering_only", LOCAL_REGION, 0.01),
+            delta("grid", "hyperbolic", "centering_only", GLOBAL_REGION, 0.01),
+        ];
+        let fig = TradeoffScatter::new(&rows, 5000, Scale::Log);
+        assert_eq!(fig.point("grid", "euclidean", "centering_only"), None);
+        assert_eq!(fig.point("grid", "spherical", "all_free"), None);
+        assert_eq!(
+            fig.point("grid", "hyperbolic", "centering_only"),
+            Some((10.0, 10.0))
+        );
+        assert_eq!(fig.points().len(), 1);
+    }
+
+    #[test]
     fn points_follow_chapter_order_and_names_carry_the_scale() {
         let mut rows = Vec::new();
         for ds in ["mnist", "grid"] {
-            rows.push(delta(ds, "spherical", "all_free", LOCAL_REGION, 0.001));
-            rows.push(delta(ds, "spherical", "all_free", GLOBAL_REGION, 0.001));
+            rows.push(delta(ds, "spherical", "global_only", LOCAL_REGION, 0.001));
+            rows.push(delta(ds, "spherical", "global_only", GLOBAL_REGION, 0.001));
         }
         let log = TradeoffScatter::new(&rows, 5000, Scale::Log);
         let lin = TradeoffScatter::new(&rows, 5000, Scale::Linear);

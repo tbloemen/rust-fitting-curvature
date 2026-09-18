@@ -23,6 +23,29 @@ pub const SETTINGS: [&str; 6] = [
 /// known by construction, see [`SYNTH_TRUTH`].
 pub const GEOMETRIES: [&str; 3] = ["euclidean", "hyperbolic", "spherical"];
 
+/// Whether *setting*'s loss weight acts on the objective under *geometry*.
+///
+/// The sweeps ran every setting under every geometry, but not every weight
+/// does anything there. The centering loss is the mean hyperbolic radius and
+/// `fitting_core::scaling_loss::compute` returns zero loss and zero gradient
+/// for `curvature >= 0`, so `centering_only` is a repeat of `all_off` in the
+/// Euclidean and spherical geometries. The depth-norm loss is never built on
+/// the sphere (`Embedding::new` only computes target radii for
+/// `curvature <= 0`, and the feature-norm gradient is radial, which the
+/// tangent projection removes), so `norm_only` was not run there and
+/// `all_free` reduces to `global_only`. Those cells carry no information the
+/// active setting does not, and the ablation figures draw them as `n/a`.
+/// In the Euclidean geometry `all_free` still optimises the global and
+/// depth-norm weights jointly and is kept.
+#[must_use]
+pub fn setting_applies(setting: &str, geometry: &str) -> bool {
+    match setting {
+        "centering_only" => geometry == "hyperbolic",
+        "norm_only" | "all_free" => geometry != "spherical",
+        _ => true,
+    }
+}
+
 /// Intrinsic geometry of each synthetic dataset, by construction.
 ///
 /// Experiment 1 asks whether the embedding geometry *matching* the data beats
@@ -287,4 +310,27 @@ pub fn discover_cells(results_dir: &Path) -> Result<Vec<CellFile>> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inert_cells_do_not_apply() {
+        // The centering loss is zero for curvature >= 0.
+        assert!(setting_applies("centering_only", "hyperbolic"));
+        assert!(!setting_applies("centering_only", "euclidean"));
+        assert!(!setting_applies("centering_only", "spherical"));
+        // The depth-norm loss is undefined on the sphere, and with the
+        // centering loss inert too, `all_free` reduces to `global_only`.
+        assert!(!setting_applies("norm_only", "spherical"));
+        assert!(!setting_applies("all_free", "spherical"));
+        assert!(setting_applies("all_free", "euclidean"));
+        assert!(setting_applies("all_free", "hyperbolic"));
+        for geometry in GEOMETRIES {
+            assert!(setting_applies("global_only", geometry));
+            assert!(setting_applies("all_off", geometry));
+        }
+    }
 }
