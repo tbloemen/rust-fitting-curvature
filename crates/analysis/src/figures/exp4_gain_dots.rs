@@ -69,9 +69,11 @@
 //! colour (`setting_color`) and its own shape, outlined in black, so the
 //! four stay apart in greyscale; a stem from the zero rule carries the sign
 //! out to the marker. A setting the sweep did not run for
-//! that geometry — `norm_only` on the sphere — is written `n/a` in grey on
-//! its sub-row, so the absence is not read as a zero. The layout is
-//! [`dot_panels`]'s, shared with the ε figure.
+//! that geometry — `norm_only` on the sphere — or whose weight is inert
+//! there — `centering_only` off the hyperboloid, `all_free` on the sphere
+//! (`cell::setting_applies`) — is written `n/a` in grey on its sub-row, so
+//! the absence is not read as a zero. The layout is [`dot_panels`]'s,
+//! shared with the ε figure.
 
 use plotters::coord::ranged1d::{DefaultFormatting, KeyPointHint, Ranged};
 use plotters::coord::types::RangedCoordf64;
@@ -382,10 +384,10 @@ mod tests {
             delta("grid", "hyperbolic", "rms_anchored", "all", 0.01),
             delta("grid", "hyperbolic", "all_free", "all", 0.0025),
             // Another region and another N are not this figure's.
-            delta("tree", "spherical", "all_free", "trustworthiness", 0.5),
+            delta("tree", "spherical", "global_only", "trustworthiness", 0.5),
             DeltaRow {
                 n: 1000,
-                ..delta("tree", "spherical", "all_free", "all", 0.5)
+                ..delta("tree", "spherical", "global_only", "all", 0.5)
             },
         ];
         let fig = GainDots::new(&rows, 5000, Scale::Log);
@@ -404,11 +406,27 @@ mod tests {
 
     #[test]
     fn missing_setting_is_none_not_zero() {
-        let rows = vec![delta("sphere", "spherical", "all_free", "all", 0.001)];
+        let rows = vec![delta("sphere", "spherical", "global_only", "all", 0.001)];
         let fig = GainDots::new(&rows, 5000, Scale::Linear);
         assert_eq!(fig.rows()[0].value("spherical", "norm_only"), None);
-        assert_eq!(fig.rows()[0].value("spherical", "all_free"), Some(1.0));
-        assert_eq!(fig.rows()[0].value("euclidean", "all_free"), None);
+        assert_eq!(fig.rows()[0].value("spherical", "global_only"), Some(1.0));
+        assert_eq!(fig.rows()[0].value("euclidean", "global_only"), None);
+    }
+
+    #[test]
+    fn inert_setting_is_none_even_when_the_table_has_a_row() {
+        let rows = vec![
+            delta("sphere", "spherical", "all_free", "all", 0.001),
+            delta("sphere", "euclidean", "centering_only", "all", 0.001),
+            delta("sphere", "hyperbolic", "centering_only", "all", 0.001),
+        ];
+        let fig = GainDots::new(&rows, 5000, Scale::Linear);
+        assert_eq!(fig.rows()[0].value("spherical", "all_free"), None);
+        assert_eq!(fig.rows()[0].value("euclidean", "centering_only"), None);
+        assert_eq!(
+            fig.rows()[0].value("hyperbolic", "centering_only"),
+            Some(1.0)
+        );
     }
 
     #[test]
