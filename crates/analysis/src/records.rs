@@ -104,47 +104,28 @@ impl TrialRecord {
         }
     }
 
-    /// Dimensionless embedding curvature κ = |`K|·R_rms²` for one trial
-    /// (thesis `@eq:kappa` at the embedding gauge, `4methods.typ` §gauge-fixing).
+    /// Dimensionless embedding curvature κ = |`K|·R_g²` for one trial
+    /// (thesis `@eq:kappa`), gauged by the radius of gyration `R_g`.
+    ///
+    /// `R_g` is computed from the pairwise geodesic distances and needs no
+    /// pole. The earlier gauge, the RMS radius from a fixed pole `R_rms`, is
+    /// meaningless on the sphere: `Sphere::center` is a no-op and
+    /// `lift_pca_to_manifold` puts the constrained coordinate in the last
+    /// ambient slot while `distances_from_origin` reads the first, so PCA init
+    /// lands every point at ~90° from the pole and `|K|·R_rms²` sits at
+    /// `π²/4 ≈ 2.4674` whatever `|K|` is. On the hyperboloid and in Euclidean
+    /// space the two gauges agree closely.
     ///
     /// `|K|` prefers `curvature_magnitude` and falls back to `|curvature|`.
     /// The fallback is not cosmetic: **Euclidean sweeps write `curvature: 0.0`
-    /// and omit `curvature_magnitude` entirely** (0 of 1032 trials carry it in
-    /// `all_off_grid_euclidean.jsonl`, while every hyperbolic trial does), so
-    /// without it every Euclidean cell reports no κ at all. Euclidean space has
-    /// `K = 0`, hence `κ = 0` exactly on any gauge — that is a value, not a
-    /// missing measurement, and a table that prints `---` for it is wrong.
+    /// and omit `curvature_magnitude` entirely**, so without it every
+    /// Euclidean cell reports no κ at all. Euclidean space has `K = 0`, hence
+    /// `κ = 0` exactly — that is a value, not a missing measurement.
+    ///
+    /// `None` for every file written before `r_gyration` was logged, which is
+    /// every file under `results/`.
     #[must_use]
     pub fn kappa(&self) -> Option<f64> {
-        let k = self
-            .curvature_magnitude
-            .or_else(|| self.curvature.map(f64::abs))?;
-        let r = self.spread.r_rms()?;
-        if !(k.is_finite() && r.is_finite()) {
-            return None;
-        }
-        Some(k * r * r)
-    }
-
-    /// κ gauged by the origin-free radius, `|K|·r_gyration²`.
-    ///
-    /// The same quantity [`TrialRecord::kappa`] reports, measured without a
-    /// pole. On the hyperboloid and in Euclidean space the two agree closely —
-    /// `Hyperboloid::center` runs every iteration, so the origin already *is*
-    /// the centroid. On the sphere they do not: `Sphere::center` is a no-op and
-    /// `lift_pca_to_manifold` puts the constrained coordinate in the last
-    /// ambient slot while `distances_from_origin` reads the first, so PCA init
-    /// lands every point at ~90° from the pole κ is measured from and
-    /// [`TrialRecord::kappa`] sits at `π²/4 ≈ 2.4674` whatever `|K|` is
-    /// (68% of the 71,839 spherical trials in `results/`, whole range
-    /// `[1.66, 4.93]`).
-    ///
-    /// `None` for every file written before the fix, which is every file under
-    /// `results/`. Callers that need a κ for both sets must say which gauge they
-    /// are using rather than silently falling back — the two are not comparable
-    /// on the spherical arm.
-    #[must_use]
-    pub fn kappa_gyration(&self) -> Option<f64> {
         let k = self
             .curvature_magnitude
             .or_else(|| self.curvature.map(f64::abs))?;

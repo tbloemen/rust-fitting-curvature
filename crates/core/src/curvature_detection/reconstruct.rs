@@ -43,6 +43,7 @@
 use super::signature::{build_z_euclidean, build_z_hyperbolic, build_z_spherical, eigen_symmetric};
 use crate::cast::count_to_f64;
 use crate::manifolds::create_manifold;
+use crate::spread::gyration_radius;
 
 /// A configuration recovered from a fitted constant-curvature model.
 ///
@@ -74,19 +75,15 @@ impl Reconstruction {
     }
 
     /// Geodesic distance from each point to the manifold's natural origin —
-    /// the quantity `r_max` and `r_rms` are computed from.
+    /// the quantity `r_max` and `r_rms` are computed from. Not a κ gauge: on
+    /// the sphere the origin is an arbitrary pole (see [`Self::r_gyration`]).
     #[must_use]
     pub fn distances_from_origin(&self, n: usize) -> Vec<f64> {
         create_manifold(self.curvature).distances_from_origin(&self.points, n, self.ambient_dim)
     }
 
-    /// RMS geodesic radius — the `R_rms` of the thesis's embedding gauge
-    /// (`4methods.typ` §gauge-fixing).
-    ///
-    /// Defined here rather than at each call site so that every κ built on it
-    /// is the same quantity a t-SNE trial reports: this uses the same
-    /// `Manifold::distances_from_origin` an embedding's `r_rms` comes from, and
-    /// reduces it the same way.
+    /// RMS geodesic radius from the manifold origin, the same `r_rms` a t-SNE
+    /// trial logs. Kept as a diagnostic; κ is gauged by [`Self::r_gyration`].
     #[must_use]
     pub fn r_rms(&self, n: usize) -> f64 {
         let origin = self.distances_from_origin(n);
@@ -97,7 +94,19 @@ impl Reconstruction {
         (sum_sq / count_to_f64(origin.len())).sqrt()
     }
 
-    /// `κ = |K| · R_rms²` — the dimensionless curvature of this configuration
+    /// Radius of gyration `R_g` of this configuration, from its pairwise
+    /// geodesic distances — the gauge length of the thesis's κ.
+    ///
+    /// It needs no origin, so it means the same thing on every manifold. The
+    /// pole-relative [`Self::r_rms`] does not: on the sphere it depends on
+    /// where the configuration sits relative to an arbitrary pole. This is the
+    /// same [`gyration_radius`] a t-SNE trial logs as `r_gyration`.
+    #[must_use]
+    pub fn r_gyration(&self, n: usize) -> f64 {
+        gyration_radius(&self.pairwise_distances(n), n)
+    }
+
+    /// `κ = |K| · R_g²` — the dimensionless curvature of this configuration
     /// (thesis `@eq:kappa`), the same quantity `TrialRecord::kappa()` computes
     /// for a t-SNE trial. `0` for the flat model, where `K = 0` exactly.
     ///
@@ -106,7 +115,7 @@ impl Reconstruction {
     /// side by side and differenced.
     #[must_use]
     pub fn kappa(&self, n: usize) -> f64 {
-        let r = self.r_rms(n);
+        let r = self.r_gyration(n);
         self.curvature.abs() * r * r
     }
 }

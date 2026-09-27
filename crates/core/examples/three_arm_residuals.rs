@@ -22,12 +22,12 @@
 //! carry the units of the input distance matrix, which are pixel distances for
 //! MNIST and hop counts for `WordNet`.
 //!
-//! `kappa_* = |K|·R_rms²`, where `R_rms` is the RMS geodesic radius of the
+//! `kappa_* = |K|·R_g²`, where `R_g` is the radius of gyration of the
 //! configuration the fit implies — the one gauge used throughout the
 //! repository, so this κ can be set beside a Pareto front's or `--mode
 //! detect`'s.
 //!
-//! Getting `R_rms` means reconstructing each arm, which is cheap and exact
+//! Getting `R_g` means reconstructing each arm, which is cheap and exact
 //! rather than a second fit: each `Z(r*)` *is* the Gram matrix of the model it
 //! tests for, so its retained eigen-block is the configuration itself.
 //!
@@ -78,20 +78,20 @@ struct Row {
     /// distance matrix, and the curvature quantities it implies.
     r_star_hyp: f64,
     k_hyp: f64,
-    /// `|K|·R_rms²`, measured on the reconstruction this fit implies. Same
+    /// `|K|·R_g²`, measured on the reconstruction this fit implies. Same
     /// formula the t-SNE runs report per trial. A pinned hyperbolic arm reads
     /// exactly `HYPERBOLIC_KAPPA_MIN`, since the search cap is a bound on this
     /// same quantity.
     kappa_hyp: f64,
-    /// RMS geodesic radius of the hyperbolic reconstruction, the gauge length
+    /// Radius of gyration of the hyperbolic reconstruction, the gauge length
     /// behind `kappa_hyp`.
-    r_rms_hyp: f64,
+    r_g_hyp: f64,
     hyp_pinned: bool,
     /// Same for the spherical arm.
     r_star_sph: f64,
     k_sph: f64,
     kappa_sph: f64,
-    r_rms_sph: f64,
+    r_g_sph: f64,
     sph_pinned: bool,
     gromov: bool,
 }
@@ -126,7 +126,7 @@ fn build_row(fx: &Fixture) -> Row {
     // second fit — and it runs once per arm, at the already-fitted radius.
     let rec_hyp = reconstruct_hyperbolic(d, n, DIM, hyp.radius);
     let rec_sph = reconstruct_spherical(d, n, DIM, sph.radius);
-    let (r_rms_hyp, r_rms_sph) = (rec_hyp.r_rms(n), rec_sph.r_rms(n));
+    let (r_g_hyp, r_g_sph) = (rec_hyp.r_gyration(n), rec_sph.r_gyration(n));
 
     Row {
         name: fx.name,
@@ -142,13 +142,13 @@ fn build_row(fx: &Fixture) -> Row {
         margin_sph: r_euc / r_sph,
         r_star_hyp: hyp.radius,
         k_hyp: -1.0 / (hyp.radius * hyp.radius),
-        kappa_hyp: rec_hyp.curvature.abs() * r_rms_hyp * r_rms_hyp,
-        r_rms_hyp,
+        kappa_hyp: rec_hyp.kappa(n),
+        r_g_hyp,
         hyp_pinned: hyp.at_upper_bound,
         r_star_sph: sph.radius,
         k_sph: 1.0 / (sph.radius * sph.radius),
-        kappa_sph: rec_sph.curvature.abs() * r_rms_sph * r_rms_sph,
-        r_rms_sph,
+        kappa_sph: rec_sph.kappa(n),
+        r_g_sph,
         sph_pinned: sph.at_upper_bound,
         gromov: detect_hyperbolic(d, n).is_hyperbolic,
     }
@@ -191,7 +191,7 @@ fn json_line(row: &Row, seed: u64) -> String {
         ("r_star_hyp", row.r_star_hyp),
         ("k_hyp", row.k_hyp),
         ("kappa_hyp", row.kappa_hyp),
-        ("r_rms_hyp", row.r_rms_hyp),
+        ("r_g_hyp", row.r_g_hyp),
     ] {
         let _ = write!(s, ",\"{key}\":{}", json_f64(value));
     }
@@ -200,7 +200,7 @@ fn json_line(row: &Row, seed: u64) -> String {
         ("r_star_sph", row.r_star_sph),
         ("k_sph", row.k_sph),
         ("kappa_sph", row.kappa_sph),
-        ("r_rms_sph", row.r_rms_sph),
+        ("r_g_sph", row.r_g_sph),
     ] {
         let _ = write!(s, ",\"{key}\":{}", json_f64(value));
     }
@@ -292,14 +292,14 @@ fn print_table(rows: &[Row], n: usize, seed: u64) {
     );
     println!("               those units");
     println!(
-        "  kappa_*    = |K|*R_rms^2 on the reconstruction each fit implies — the EMBEDDING gauge,"
+        "  kappa_*    = |K|*R_g^2 on the reconstruction each fit implies — the EMBEDDING gauge,"
     );
     println!(
         "               the same one every t-SNE trial reports, so it can be set beside a front's"
     );
     println!("               a pinned hyperbolic arm reads exactly HYPERBOLIC_KAPPA_MIN (0.01),");
     println!("               because the search cap is a bound on this same quantity");
-    println!("  R_rms_*    = gauge length behind kappa_*, in input distance units");
+    println!("  R_g_*      = gauge length behind kappa_*, in input distance units");
     println!("  pinned     = which curved arm(s) came to rest on their flat-ward window edge");
     println!("  gromov     = the CURRENT production hyperbolicity gate, for comparison");
 

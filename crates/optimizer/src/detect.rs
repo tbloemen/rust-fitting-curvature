@@ -8,16 +8,16 @@
 //!
 //! ## What `κ_data` is
 //!
-//! The thesis reports a dimensionless curvature **κ = |`K|·R_rms²`** (|sectional
-//! curvature| times the squared RMS geodesic radius the configuration occupies),
+//! The thesis reports a dimensionless curvature **κ = |`K|·R_g²`** (|sectional
+//! curvature| times the squared radius of gyration of the configuration),
 //! and that is the gauge used throughout — for embeddings and for the detector
 //! alike, so the two land on one axis.
 //!
 //! For a detected geometry, `K = ±1/r*²` comes from the fitted radius and
-//! `R_rms` from the configuration that radius implies: each `Z(r*)` is the Gram
+//! `R_g` from the configuration that radius implies: each `Z(r*)` is the Gram
 //! matrix of its own model, so its retained eigen-block *is* that configuration
 //! (`curvature_detection::reconstruct`). `kappa_data` is therefore
-//! `|K|·R_rms²` measured on the reconstruction, not `|K|·d_rms²` measured on the
+//! `|K|·R_g²` measured on the reconstruction, not `|K|·d_rms²` measured on the
 //! input — the name is kept for continuity with the file it writes.
 //!
 //! The record also carries the raw per-model Wilson fits (radius + residual +
@@ -53,7 +53,7 @@ struct DetectionRecord {
     geometry_detected: &'static str,
     /// Signed sectional curvature of the verdict (`0.0` for euclidean).
     curvature: f64,
-    /// Dimensionless curvature `|curvature| · R_rms²` of the configuration the
+    /// Dimensionless curvature `|curvature| · R_g²` of the configuration the
     /// verdict's fit implies — the quantity that shares an axis with the
     /// embeddings' κ. `0.0` when the verdict is euclidean, where `K = 0` makes
     /// κ vanish on any gauge.
@@ -81,12 +81,12 @@ struct DetectionRecord {
     sph_angular_extent: f64,
     /// `+1/r*²` — curvature implied by the spherical radius.
     sph_curvature: f64,
-    /// `|+1/r*²| · R_rms²` of the spherical reconstruction — κ under the
+    /// `|+1/r*²| · R_g²` of the spherical reconstruction — κ under the
     /// spherical hypothesis regardless of verdict.
     sph_kappa: f64,
-    /// RMS geodesic radius of the spherical reconstruction, the gauge length
+    /// Radius of gyration of the spherical reconstruction, the gauge length
     /// behind `sph_kappa`.
-    sph_r_rms: f64,
+    sph_r_gyration: f64,
 
     // ── Wilson hyperbolic fit ──
     hyp_radius: f64,
@@ -103,12 +103,12 @@ struct DetectionRecord {
     hyp_at_upper_bound: bool,
     /// `-1/r*²` — curvature implied by the hyperbolic radius.
     hyp_curvature: f64,
-    /// `|-1/r*²| · R_rms²` of the hyperbolic reconstruction — κ under the
+    /// `|-1/r*²| · R_g²` of the hyperbolic reconstruction — κ under the
     /// hyperbolic hypothesis regardless of verdict.
     hyp_kappa: f64,
-    /// RMS geodesic radius of the hyperbolic reconstruction, the gauge length
+    /// Radius of gyration of the hyperbolic reconstruction, the gauge length
     /// behind `hyp_kappa`.
-    hyp_r_rms: f64,
+    hyp_r_gyration: f64,
 
     // ── Wilson euclidean fit ──
     // The flat null model: `B = −J D∘D J / 2`, the `r → ∞` limit of both curved
@@ -123,7 +123,7 @@ struct DetectionRecord {
     /// `euc_residual / (n · d_max²)`; the arm-comparable form, same gauge as
     /// `sph_residual_normalised` and `hyp_residual_normalised`.
     euc_residual_normalised: f64,
-    /// `0` exactly: the flat model has `K = 0`, so `κ = |K| · R_rms²` vanishes
+    /// `0` exactly: the flat model has `K = 0`, so `κ = |K| · R_g²` vanishes
     /// on any gauge. Present so all three arms expose the same κ field.
     euc_kappa: f64,
 
@@ -138,7 +138,7 @@ struct DetectionRecord {
     delta_saturated_normalised: f64,
     /// Curvature from `δ = ln(1+√2)/√(−K)` when hyperbolic (`0.0` otherwise).
     delta_curvature: f64,
-    /// `|delta_curvature| · R_rms²` — κ from the Gromov δ estimate, gauged on
+    /// `|delta_curvature| · R_g²` — κ from the Gromov δ estimate, gauged on
     /// the hyperbolic configuration that curvature implies. `0.0` when the δ
     /// test does not call the data hyperbolic.
     delta_kappa: f64,
@@ -173,7 +173,7 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
     let sph_curvature = 1.0 / (spherical.radius * spherical.radius);
     let hyp_curvature = -1.0 / (hyperbolic.radius * hyperbolic.radius);
 
-    // κ is gauged by R_rms, which is a property of the *configuration* a fit
+    // κ is gauged by R_g, which is a property of the *configuration* a fit
     // implies rather than of the radius alone — so each arm is reconstructed at
     // its fitted radius. That is an eigendecomposition, not a second fit: each
     // `Z(r*)` is the Gram matrix of its own model.
@@ -223,7 +223,7 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
         },
         sph_curvature,
         sph_kappa,
-        sph_r_rms: sph_rec.r_rms(n),
+        sph_r_gyration: sph_rec.r_gyration(n),
 
         hyp_radius: hyperbolic.radius,
         hyp_residual: hyperbolic.residual,
@@ -231,7 +231,7 @@ pub fn run_detect(dataset_name: &str, args: &Args, evaluator: &Evaluator) {
         hyp_at_upper_bound: hyperbolic.at_upper_bound,
         hyp_curvature,
         hyp_kappa,
-        hyp_r_rms: hyp_rec.r_rms(n),
+        hyp_r_gyration: hyp_rec.r_gyration(n),
 
         euc_residual: euclidean.residual,
         euc_residual_normalised: euclidean.residual_normalised,

@@ -151,7 +151,7 @@ impl Cell {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Variant {
     /// `_rgyr` — the N=5000 curved re-run that logs the origin-free
-    /// `r_gyration` column ([`crate::records::TrialRecord::kappa_gyration`])
+    /// `r_gyration` column ([`crate::records::TrialRecord::kappa`])
     /// alongside the pole-relative `r_rms`.
     Rgyr,
 }
