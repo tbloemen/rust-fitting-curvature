@@ -13,19 +13,19 @@
       $r^*_"sph"$, $K_"sph"$, $kappa_"sph"$,
     ),
     table.hline(stroke: 0.5pt),
-    [grid 10D], [$0.12$], [$0.13$], [$0.13$], [$8.74$#super[†]], [$-0.0131$#super[†]], [$0.0100$#super[†]], [$1.79$#super[†]], [$0.310$#super[†]], [$5.81$#super[†]],
-    [grid 2D], [$7.7 dot 10^(-3)$], [$7.7 dot 10^(-16)$], [$1.4 dot 10^(-4)$], [$8.19$#super[†]], [$-0.0149$#super[†]], [$0.0100$#super[†]], [$1.08$#super[†]], [$0.862$#super[†]], [$5.91$#super[†]],
-    [sphere 2D], [$3.1 dot 10^(-8)$], [$0.20$], [$0.21$], [$11.3$#super[†]], [$-7.83 dot 10^(-3)$#super[†]], [$0.0100$#super[†]], [$1.00$], [$1.00$], [$3.05$],
-    [sphere 10D], [$0.085$], [$0.28$], [$0.28$], [$5.98$#super[†]], [$-0.0279$#super[†]], [$0.0100$#super[†]], [$1.00$], [$1.00$], [$2.99$],
-    [tree 2D], [$0.23$], [$0.24$], [$0.24$], [$45.4$#super[†]], [$-4.84 dot 10^(-4)$#super[†]], [$0.0100$#super[†]], [$4.58$], [$0.0476$], [$3.06$],
-    [tree 10D], [$0.063$], [$0.067$], [$0.068$], [$38.8$#super[†]], [$-6.66 dot 10^(-4)$#super[†]], [$0.0100$#super[†]], [$7.31$], [$0.0187$], [$5.73$],
+    [grid 10D], [$0.12$], [$0.13$], [$0.13$], [$8.74$#super[†]], [$-0.0131$#super[†]], [$0.0100$#super[†]], [$1.79$#super[†]], [$0.310$#super[†]], [$0.661$#super[†]],
+    [grid 2D], [$7.7 dot 10^(-3)$], [$7.7 dot 10^(-16)$], [$1.4 dot 10^(-4)$], [$8.20$#super[†]], [$-0.0149$#super[†]], [$0.0100$#super[†]], [$1.08$#super[†]], [$0.862$#super[†]], [$0.571$#super[†]],
+    [sphere 2D], [$3.1 dot 10^(-8)$], [$0.20$], [$0.21$], [$11.3$#super[†]], [$-7.82 dot 10^(-3)$#super[†]], [$0.0100$#super[†]], [$1.00$], [$1.00$], [$1.46$],
+    [sphere 10D], [$0.085$], [$0.28$], [$0.28$], [$5.99$#super[†]], [$-0.0279$#super[†]], [$0.0100$#super[†]], [$1.00$], [$1.00$], [$1.47$],
+    [tree 2D], [$0.23$], [$0.24$], [$0.24$], [$45.5$#super[†]], [$-4.84 dot 10^(-4)$#super[†]], [$0.0100$#super[†]], [$4.58$], [$0.0476$], [$1.44$],
+    [tree 10D], [$0.063$], [$0.067$], [$0.068$], [$38.8$#super[†]], [$-6.65 dot 10^(-4)$#super[†]], [$0.0100$#super[†]], [$7.31$], [$0.0187$], [$0.599$],
     table.hline(stroke: 0.5pt),
-    [mnist], [$0.17$], [$0.19$], [$0.19$], [$29.8$#super[†]], [$-1.13 dot 10^(-3)$#super[†]], [$0.0100$#super[†]], [$5.96$#super[†]], [$0.0282$#super[†]], [$2.12$#super[†]],
-    [mnist-fashion], [$0.083$], [$0.085$], [$0.085$], [$56.6$#super[†]], [$-3.12 dot 10^(-4)$#super[†]], [$0.0100$#super[†]], [$8.25$#super[†]], [$0.0147$#super[†]], [$5.00$#super[†]],
-    [wordnet-mammals], [$0.16$], [$0.17$], [$0.17$], [$33.3$#super[†]], [$-9.02 dot 10^(-4)$#super[†]], [$0.0100$#super[†]], [$3.82$], [$0.0685$], [$3.93$],
-    [pbmc], [$0.022$], [$0.024$], [$0.025$], [$71.5$#super[†]], [$-1.96 dot 10^(-4)$#super[†]], [$0.0100$#super[†]], [$26.2$], [$1.46 dot 10^(-3)$], [$8.22$],
-    [H2 exact (ctrl)], [$0.16$], [$0.15$], [$1.1 dot 10^(-5)$], [$1.00$], [$-1.00$], [$16.9$], [$3.18$], [$0.0988$], [$3.01$],
-    [hyperbolic_shells], [$0.063$], [$0.070$], [$0.071$], [$7.54$#super[†]], [$-0.0176$#super[†]], [$0.0100$#super[†]], [$2.53$], [$0.156$], [$7.77$],
+    [mnist], [$0.17$], [$0.19$], [$0.19$], [$29.8$#super[†]], [$-1.13 dot 10^(-3)$#super[†]], [$0.0100$#super[†]], [$5.96$#super[†]], [$0.0282$#super[†]], [$1.35$#super[†]],
+    [mnist-fashion], [$0.083$], [$0.085$], [$0.085$], [$56.6$#super[†]], [$-3.12 dot 10^(-4)$#super[†]], [$0.0100$#super[†]], [$8.25$#super[†]], [$0.0147$#super[†]], [$0.886$#super[†]],
+    [wordnet-mammals], [$0.16$], [$0.17$], [$0.17$], [$33.3$#super[†]], [$-9.01 dot 10^(-4)$#super[†]], [$0.0100$#super[†]], [$3.82$], [$0.0685$], [$1.29$],
+    [pbmc], [$0.022$], [$0.024$], [$0.025$], [$71.5$#super[†]], [$-1.96 dot 10^(-4)$#super[†]], [$0.0100$#super[†]], [$26.2$], [$1.46 dot 10^(-3)$], [$0.135$],
+    [H2 exact (ctrl)], [$0.16$], [$0.15$], [$6.3 dot 10^(-6)$], [$1.00$], [$-1.00$], [$24.6$], [$3.18$], [$0.0988$], [$1.44$],
+    [hyperbolic_shells], [$0.063$], [$0.070$], [$0.071$], [$7.54$#super[†]], [$-0.0176$#super[†]], [$0.0100$#super[†]], [$2.53$], [$0.156$], [$0.276$],
     table.hline(stroke: 0.8pt),
   ),
   caption: [Three-arm Wilson fits of the thesis datasets.
@@ -39,8 +39,8 @@
   by running flat-ward and the question the table answers is whether curvature buys a
   strictly better fit than flat.
   For each curved arm, $r^*$ is the fitted radius, $K = minus.plus 1\/r^(*2)$ the signed
-  sectional curvature it implies, and $kappa = |K| dot R_"rms"^2$ its dimensionless form
-  (@eq:kappa), where $R_"rms"$ is the RMS geodesic radius of the configuration the fit
+  sectional curvature it implies, and $kappa = |K| dot R_"g"^2$ its dimensionless form
+  (@eq:kappa), where $R_"g"$ is the radius of gyration of the configuration the fit
   implies.  That configuration is not a further estimate: each $Z(r^*)$ *is* the Gram
   matrix of the model it tests for, so its retained eigen-block is the configuration
   itself.  Gauging $kappa$ this way rather than by the input's $d_"rms"$ puts it on the
