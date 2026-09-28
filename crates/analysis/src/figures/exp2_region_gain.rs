@@ -88,9 +88,12 @@
 //! repeat the first's and cost a third of its width. Its canvas is narrower by
 //! exactly [`ROW_LABEL_AREA`], and the cells are the same size in pixels on
 //! both ([`panel_size`]) — so the pair sets at one cell size only if the page
-//! gives the two images widths in the ratio of their canvases, `700 : 500`
-//! for eight regions (`grid(columns: (7fr, 5fr))` in Typst), not two equal
-//! columns.
+//! gives the two images widths in the ratio of their canvases, `820 : 620`
+//! for the ten regions of `obj6` (`grid(columns: (820fr, 620fr))` in Typst),
+//! not two equal columns.
+//!
+//! Grey rules split the columns into `W_all`, the metric families and the
+//! single metrics ([`region_kind`]).
 
 use plotters::coord::Shift;
 use plotters::prelude::*;
@@ -102,11 +105,11 @@ use fitting_core::cast::{count_to_f64, to_i32};
 use super::exp2::SETTING;
 use super::exp2_dependence::{diverging_color, text_on, CategoryAxis, TITLE_STRIP};
 use super::{
-    plot_x, Figure, LinearTicks, ObjectiveSpace, Res, CURVED, OK_BLACK, REAL_DATASETS,
+    plot_x, Figure, LinearTicks, ObjectiveSpace, Res, CURVED, FAMILIES, OK_BLACK, REAL_DATASETS,
     SYNTH_DATASETS,
 };
 use crate::aggregate::CellRecord;
-use crate::r2::{projected_region_labels, region_labels};
+use crate::r2::{projected_region_labels, region_labels, REGION_ALL};
 use crate::style_mesh;
 
 /// The reference geometry every gain is measured from.
@@ -141,6 +144,26 @@ const CELL: u32 = 60;
 
 /// Margin around the chart on every side.
 const MARGIN: u32 = 10;
+
+/// The rules between the region kinds (`W_all` | the families | the single
+/// metrics): grey, and as thin as the row-label axis line `style_mesh!`
+/// draws, drawn over the white cell seam at that column.
+const GROUP_RULE: RGBColor = RGBColor(120, 120, 120);
+const GROUP_RULE_WIDTH: u32 = 1;
+
+/// Which kind of preference region *name* is: `0` for the full simplex, `1`
+/// for a metric family, `2` for a single metric. A rule is drawn wherever the
+/// kind changes between neighbouring columns, so the panel reads as the
+/// overall indicator, then the families, then the metrics.
+fn region_kind(name: &str) -> u8 {
+    if name == REGION_ALL {
+        0
+    } else if FAMILIES.iter().any(|(family, _)| *family == name) {
+        1
+    } else {
+        2
+    }
+}
 
 /// Canvas of the colourbar: as wide as the eight-column panel with its row
 /// labels, one strip tall.
@@ -441,6 +464,18 @@ impl Figure for RegionGain {
                 ))?;
             }
         }
+
+        // Drawn after the cells so the rules sit on top of the white seams.
+        let rows = count_to_f64(self.datasets.len());
+        for (j, pair) in self.regions.windows(2).enumerate() {
+            if region_kind(&pair[0].0) != region_kind(&pair[1].0) {
+                let x = count_to_f64(j + 1);
+                chart.draw_series(std::iter::once(PathElement::new(
+                    vec![(x, 0.0), (x, rows)],
+                    GROUP_RULE.stroke_width(GROUP_RULE_WIDTH),
+                )))?;
+            }
+        }
         Ok(())
     }
 }
@@ -728,5 +763,22 @@ mod tests {
         assert!(
             RegionGain::panels(&rows, 5000, ObjectiveSpace::Current6, Columns::Full).is_empty()
         );
+    }
+
+    /// The rules fall after `W_all` and after the last family, and nowhere
+    /// else, for the current space.
+    #[test]
+    fn rules_split_all_families_and_metrics() {
+        let names: Vec<String> = region_labels(ObjectiveSpace::Current6)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        let rules: Vec<usize> = names
+            .windows(2)
+            .enumerate()
+            .filter(|(_, pair)| region_kind(&pair[0]) != region_kind(&pair[1]))
+            .map(|(j, _)| j + 1)
+            .collect();
+        assert_eq!(rules, vec![1, 1 + FAMILIES.len()]);
     }
 }

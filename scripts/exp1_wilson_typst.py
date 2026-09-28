@@ -81,7 +81,7 @@ def build(rows, n):
         "  reconstruction's own error and not a separate misfit score.",
         "",
         "  $kappa = |K| dot R_"
-        + '"rms"'
+        + '"g"'
         + "^2$ of @eq:kappa, measured on the configuration the",
         "  fit implies.  It shares that gauge with $tilde(kappa)$ of @tab:geometry-match-r2, so",
         "  the two may be set side by side --- what the detector infers about the data against",

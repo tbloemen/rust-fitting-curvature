@@ -76,7 +76,7 @@ def build(rows, n, region):
         "  consistently among the smallest, which biases $Delta R_2$ *toward* the curved arms.",
         "",
         "  $tilde(kappa)$ is the median $|K| dot R_"
-        + '"rms"'
+        + '"g"'
         + "^2$ of @eq:kappa over the front --- what",
         "  the optimiser actually chose.  It shares its gauge with the $kappa$ the detector infers",
         "  in @tab:wilson-fit, so the two columns may be set side by side.  Both are $0$ for the",

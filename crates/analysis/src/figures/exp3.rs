@@ -4,7 +4,7 @@
 //! [`KappaLanding`] is the figure this module draws: **`|K|` on x, κ on y, one
 //! panel per curved embedding geometry.** `curvature_magnitude` is a searched
 //! hyperparameter, so given that freedom, where does the search leave κ?
-//! κ = `|K|·R_rms²` (`@eq:kappa`) is the quantity the thesis argues is
+//! κ = `|K|·R_g²` (`@eq:kappa`, gauged by the radius of gyration) is the quantity the thesis argues is
 //! comparable across embeddings — rescaling an embedding changes `K` without
 //! changing κ (`<curvature-tuning-results>`, *Separating Curvature from
 //! Embedding Scale*) — and this panel is the one place the two are set against
@@ -36,10 +36,10 @@
 //! `|K|` is log-searched over `1e-6..5` (`config/params.json`), so x is always
 //! logarithmic; a linear axis would put five of the six searched decades in
 //! the first pixel. κ takes whichever scale is natural to its span
-//! (`exp2::natural_scale`, the rule every Exp 2 axis follows): **log on the
-//! hyperbolic panel**, where κ runs from the collapse floor at ~2e-7 to ~40,
-//! and **linear on the spherical one**, where κ sits in a factor-of-two window
-//! that a log axis cannot label.
+//! (`exp2::natural_scale`, the rule every Exp 2 axis follows): log wherever κ
+//! spans a decade or more, which under the gyration gauge is both panels
+//! (hyperbolic from the collapse floor at ~1e-7 to ~40, spherical from ~1e-6 to
+//! ~2).
 //!
 //! Each panel is also rendered **linear on both axes**, as a second file
 //! suffixed `_linear` — the same rule `exp2::MetricTrend` follows for a
@@ -63,10 +63,11 @@
 //! both are visible on these panels rather than corrected by them:
 //!
 //! * the κ ≈ 2e-7 band is *collapsed* embeddings, not near-flat space;
-//! * on the sphere `R_rms` is measured from the wrong pole, so κ there is
-//!   `mean(θ²)`, bounded in `[0, π²]` and blind to `|K|` by construction. The
-//!   spherical panel is a near-flat band at κ ≈ 2.5–3 across six decades of
-//!   `|K|`, and that flatness is the finding, not a reason to drop the panel.
+//! * on the sphere `R_rms` is measured from the wrong pole, so κ gauged by it is
+//!   `mean(θ²)`, blind to `|K|` by construction. κ here is therefore gauged by
+//!   the radius of gyration ([`TrialRecord::kappa`]), which needs no
+//!   pole; files without an `r_gyration` column (all of `results/`) place no
+//!   points.
 //!
 //! ### No Euclidean panel
 //!
@@ -156,8 +157,8 @@ impl KappaLanding {
 
     /// One panel at one x scale, or `None` when nothing can be placed.
     ///
-    /// On the log rendering y follows [`natural_scale`] over κ: log on the
-    /// hyperbolic panel, linear on the spherical one. On the linear rendering
+    /// On the log rendering y follows [`natural_scale`] over κ: log when κ
+    /// spans a decade or more, linear otherwise. On the linear rendering
     /// both axes are linear — the point of it is to show where the front
     /// actually sits, and a log κ axis over a linear `|K|` axis would still
     /// flatten that.
@@ -372,15 +373,15 @@ mod tests {
 
     const SPACE: ObjectiveSpace = ObjectiveSpace::Current6;
 
-    /// A hyperbolic trial at `|K| = k` with `r_rms` as given (a JSON value, so
+    /// A hyperbolic trial at `|K| = k` with `r_gyration` as given (a JSON value, so
     /// `null` can be written), scoring `v` on every objective —
     /// oriented so that a larger `v` dominates. Through the deserialiser
     /// because `SpreadDiagnostics` has no public constructor, and this is the
     /// same path a results line takes.
-    fn trial(k: f64, r_rms: &str, v: f64) -> TrialRecord {
+    fn trial(k: f64, r_gyration: &str, v: f64) -> TrialRecord {
         let mut fields = vec![
             format!("\"curvature_magnitude\": {k}"),
-            format!("\"r_rms\": {r_rms}"),
+            format!("\"r_gyration\": {r_gyration}"),
         ];
         for &m in OBJECTIVES {
             let raw = if is_minimized_metric(m) { 1.0 - v } else { v };

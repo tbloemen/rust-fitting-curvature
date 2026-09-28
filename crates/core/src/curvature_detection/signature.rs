@@ -722,16 +722,15 @@ pub fn fit_spherical(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
     }
 }
 
-/// Smallest dimensionless curvature `κ = |K|·R_rms²` the hyperbolic search
+/// Smallest dimensionless curvature `κ = |K|·R_g²` the hyperbolic search
 /// is asked to resolve; it sets the flat-ward edge of the window (see
 /// [`fit_hyperbolic`]).
 ///
 /// A hyperbolic metric departs from the Euclidean one by a *relative*
 /// `κ/6` over the extent of the configuration — the circumference of a
 /// geodesic circle of radius `s` in `H²(r)` is
-/// `2πr·sinh(s/r) = 2πs(1 + (s/r)²/6 + …)`, and taking `s = R_rms`, the RMS
-/// geodesic radius of the configuration about its centre, gives
-/// `(R_rms/r)² = κ`.  At `κ = 0.01` that is 0.17%: beyond this radius the
+/// `2πr·sinh(s/r) = 2πs(1 + (s/r)²/6 + …)`, and taking `s = R_g`, the radius
+/// of gyration of the configuration, gives `(R_g/r)² = κ`.  At `κ = 0.01` that is 0.17%: beyond this radius the
 /// model is flat to within a fifth of a percent across the whole sample, so
 /// searching further only fits Euclidean structure.
 pub const HYPERBOLIC_KAPPA_MIN: f64 = 0.01;
@@ -740,7 +739,7 @@ pub const HYPERBOLIC_KAPPA_MIN: f64 = 0.01;
 ///
 /// Used only to seed the window solve in [`hyperbolic_window_cap`]: it is the
 /// cheapest available estimate of the configuration's extent, and the flat-limit
-/// reconstruction's `R_rms` is within a small factor of it.
+/// reconstruction's `R_g` is within a small factor of it (`d_rms ≈ √2·R_g`).
 fn rms_distance(distances: &[f64], n: usize) -> f64 {
     if n < 2 {
         return 0.0;
@@ -757,13 +756,13 @@ const WINDOW_CAP_TOL: f64 = 1e-3;
 /// The radius at which a hyperbolic reconstruction's dimensionless curvature
 /// falls to [`HYPERBOLIC_KAPPA_MIN`] — the flat-ward edge of the search window.
 ///
-/// κ is gauged by `R_rms`, the extent of the configuration the model implies,
-/// so the cap solves `κ(r) = R_rms(r)²/r² = κ_min`, i.e. the fixed point
-/// `r = R_rms(r)/√κ_min`.
+/// κ is gauged by `R_g`, the extent of the configuration the model implies,
+/// so the cap solves `κ(r) = R_g(r)²/r² = κ_min`, i.e. the fixed point
+/// `r = R_g(r)/√κ_min`.
 ///
 /// # Why a fixed point rather than a scan
 ///
-/// `R_rms(r)` is nearly *constant* in `r` at the flat end: as `r → ∞` the
+/// `R_g(r)` is nearly *constant* in `r` at the flat end: as `r → ∞` the
 /// hyperbolic kernel degenerates to the flat-limit one and the reconstruction
 /// tends to the fixed classical-MDS configuration. The map is therefore
 /// strongly contracting, and seeding it with the input-scale estimate
@@ -782,11 +781,11 @@ fn hyperbolic_window_cap(distances: &[f64], n: usize, dim: usize, r_lower: f64) 
 
     let mut r = seed;
     for _ in 0..WINDOW_CAP_MAX_ITER {
-        let r_rms = super::reconstruct::reconstruct_hyperbolic(distances, n, dim, r).r_rms(n);
-        if !r_rms.is_finite() || r_rms <= 0.0 {
+        let r_g = super::reconstruct::reconstruct_hyperbolic(distances, n, dim, r).r_gyration(n);
+        if !r_g.is_finite() || r_g <= 0.0 {
             return seed.max(r_lower);
         }
-        let next = r_rms / HYPERBOLIC_KAPPA_MIN.sqrt();
+        let next = r_g / HYPERBOLIC_KAPPA_MIN.sqrt();
         let moved = (next - r).abs() / r;
         r = next;
         if moved < WINDOW_CAP_TOL {
@@ -802,7 +801,7 @@ fn hyperbolic_window_cap(distances: &[f64], n: usize, dim: usize, r_lower: f64) 
 ///
 /// Search bounds: r ≥ `d_max/20` (keeps `cosh(d_max/r) ≤ cosh(20) ≈ 2.4·10⁸`,
 /// safe from overflow) and `r ≤` the radius at which the implied
-/// configuration's `κ = |K|·R_rms²` falls to [`HYPERBOLIC_KAPPA_MIN`], solved
+/// configuration's `κ = |K|·R_g²` falls to [`HYPERBOLIC_KAPPA_MIN`], solved
 /// by [`hyperbolic_window_cap`].  Hyperbolic space is non-compact, so the
 /// geodesic-fits-on-space lower bound from the spherical case does not
 /// apply — but for r far beyond the configuration's extent,
@@ -813,7 +812,7 @@ fn hyperbolic_window_cap(distances: &[f64], n: usize, dim: usize, r_lower: f64) 
 /// a multiple of `d_max` so that it makes the same demand of every dataset:
 /// `d_max` is an extreme order statistic that drifts with `n` and varies 30×
 /// across the thesis datasets, so `r ≤ d_max` silently imposes a `κ_min` that
-/// ranges over 7×.  It is gauged by `R_rms` rather than by the input's `d_rms`
+/// ranges over 7×.  It is gauged by `R_g` rather than by the input's `d_rms`
 /// so that the bound is a statement about the same κ the fit reports — see
 /// [`hyperbolic_window_cap`] for what that costs and why it is affordable.
 pub fn fit_hyperbolic(distances: &[f64], n: usize, dim: usize) -> WilsonFit {

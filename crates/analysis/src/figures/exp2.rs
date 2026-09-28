@@ -20,7 +20,7 @@
 //!
 //! * **`|K|`**, the `curvature_magnitude` hyperparameter — what the optimiser
 //!   *chose*, log-searched over `1e-6..5` (`config/params.json`);
-//! * **`κ = |K|·R_rms²`**, the dimensionless embedding curvature — what the
+//! * **`κ = |K|·R_g²`**, the dimensionless embedding curvature — what the
 //!   embedding *ended up at* once its spread is folded in
 //!   (`TrialRecord::kappa`, thesis `@eq:kappa`).
 //!
@@ -170,18 +170,16 @@
 //!
 //! ### No Euclidean panel
 //!
-//! `κ = |K|·R_rms²` and Euclidean space has `K = 0` exactly, so every Euclidean
+//! `κ = |K|·R_g²` and Euclidean space has `K = 0` exactly, so every Euclidean
 //! trial sits at `κ = 0`: one column of points, no axis, nothing to read. The
 //! panel is not drawn. A flat reference, if one is wanted, is a different figure
 //! — the same metrics' *distributions* at κ = 0 — not this one with another
 //! argument.
 //!
-//! The spherical κ panel **is** drawn, and its κ window is a factor of ~1.4
-//! rather than the hyperbolic seven decades. That is not a plotting failure: it
-//! is the pole mismatch between `Sphere::center` and `lift_pca_to_manifold`
-//! documented in `crates/analysis/CLAUDE.md` § *One κ, one gauge*, which pins
-//! spherical κ at `mean(θ²)` and makes it blind to `|K|`. Reading it beside the
-//! spherical `|K|` panel is how that shows.
+//! κ is gauged by the radius of gyration, not `R_rms`: on the sphere `R_rms`
+//! is measured from the wrong pole and pins κ at `mean(θ²)` whatever `|K|` is
+//! (`crates/analysis/CLAUDE.md` § *One κ, one gauge*). `R_g` needs no pole, so
+//! the spherical κ panel spans the same kind of range as the hyperbolic one.
 //!
 //! ### Layout
 //!
@@ -246,7 +244,8 @@ const N_BINS: usize = 20;
 /// the same code for both.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum XAxis {
-    /// `κ = |K|·R_rms²`, the embedding curvature ([`TrialRecord::kappa`]).
+    /// `κ = |K|·R_g²`, the embedding curvature gauged by the radius of
+    /// gyration ([`TrialRecord::kappa`]), which needs no pole.
     Kappa,
     /// `|K|`, the `curvature_magnitude` hyperparameter the search chose.
     Curvature,
@@ -338,8 +337,8 @@ fn pooled_trials<'a>(
 ///
 /// **A log axis needs a decade to label.** plotters derives a log scale's key
 /// points from its endpoints and finds none inside a window narrower than one
-/// decade, so the spherical κ panel — pinned to a factor of ~1.4 by the
-/// wrong-pole gauge — came out with no x ticks at all. Below a decade the axis
+/// decade, so a κ panel pinned to a narrow window (as the spherical one was
+/// under the old wrong-pole gauge) came out with no x ticks at all. Below a decade the axis
 /// is linear, which is also the honest rendering: nothing about that window is
 /// multiplicative.
 ///
@@ -678,8 +677,8 @@ fn flipped(metric: Metric, name: &str) -> String {
 
 impl Figure for MetricTrend {
     fn name(&self) -> String {
-        // Only the *alternate* rendering is marked. The spherical κ panel is
-        // linear too, but it is that geometry's only figure on that axis — a
+        // Only the *alternate* rendering is marked. A panel whose natural
+        // scale is linear is that geometry's only figure on that axis — a
         // suffix there would imply a log companion that does not exist.
         let axis = if self.alternate { "_linear" } else { "" };
         format!(
@@ -1375,10 +1374,10 @@ mod tests {
         let rows: Vec<TrialRecord> = (0..400)
             .map(|i| {
                 let t = count_to_f64(i) / 400.0;
-                // |K| over four decades with r_rms = 1, so κ = |K|.
+                // |K| over four decades with r_gyration = 1, so κ = |K|.
                 let k = 10f64.powf(-4.0 + 4.0 * t);
                 let body = format!(
-                    r#"{{"curvature_magnitude":{k},"r_rms":1.0,
+                    r#"{{"curvature_magnitude":{k},"r_gyration":1.0,
                        "trustworthiness":{t},"continuity":{t},
                        "normalized_stress":{t},"shepard_goodness":{t},
                        "neighborhood_hit":{t}}}"#

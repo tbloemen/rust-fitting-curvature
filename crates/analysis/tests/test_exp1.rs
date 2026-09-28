@@ -19,7 +19,7 @@ use fitting_analysis::TrialRecord;
 #[test]
 fn kappa_falls_back_to_curvature_for_euclidean() {
     let record: TrialRecord = serde_json::from_str(
-        r#"{"geometry":"euclidean","curvature":0.0,"r_rms":7.869024392227243}"#,
+        r#"{"geometry":"euclidean","curvature":0.0,"r_gyration":7.869024392227243}"#,
     )
     .expect("euclidean trial shape");
 
@@ -37,7 +37,7 @@ fn kappa_prefers_the_recorded_magnitude() {
     let record: TrialRecord = serde_json::from_str(
         r#"{"curvature":-0.1587415548667954,
              "curvature_magnitude":0.1587415548667954,
-             "r_rms":4.583735477895421}"#,
+             "r_gyration":4.583735477895421}"#,
     )
     .expect("hyperbolic trial shape");
 
@@ -49,8 +49,8 @@ fn kappa_prefers_the_recorded_magnitude() {
 /// `|K|` from a signed curvature, so the sign convention cannot leak into κ.
 #[test]
 fn kappa_is_unsigned() {
-    let neg: TrialRecord = serde_json::from_str(r#"{"curvature":-0.25,"r_rms":2.0}"#).unwrap();
-    let pos: TrialRecord = serde_json::from_str(r#"{"curvature":0.25,"r_rms":2.0}"#).unwrap();
+    let neg: TrialRecord = serde_json::from_str(r#"{"curvature":-0.25,"r_gyration":2.0}"#).unwrap();
+    let pos: TrialRecord = serde_json::from_str(r#"{"curvature":0.25,"r_gyration":2.0}"#).unwrap();
     assert_eq!(neg.kappa(), Some(1.0));
     assert_eq!(pos.kappa(), Some(1.0));
 }
@@ -59,7 +59,7 @@ fn kappa_is_unsigned() {
 /// must not manufacture a κ for a row that never recorded one.
 #[test]
 fn kappa_is_none_without_any_curvature() {
-    let no_curvature: TrialRecord = serde_json::from_str(r#"{"r_rms":3.0}"#).unwrap();
+    let no_curvature: TrialRecord = serde_json::from_str(r#"{"r_gyration":3.0}"#).unwrap();
     assert_eq!(no_curvature.kappa(), None);
 
     let no_radius: TrialRecord = serde_json::from_str(r#"{"curvature":0.0}"#).unwrap();

@@ -33,7 +33,7 @@
 //!   the `distance` family gain per (dataset, setting), one panel per
 //!   geometry ([`exp4_tradeoff::TradeoffScatter`]).
 //!
-//! κ uses **`R_rms`** (`r_rms`), not `R_max` — the thesis definition.
+//! κ uses **`R_g`** (`r_gyration`), the pole-free radius of gyration.
 //!
 //! **Some κ and log-axis helpers below still have no caller and are kept on
 //! purpose.** `KappaData`, [`load_kappa_data`], [`median_front_kappa`],

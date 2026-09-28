@@ -1,0 +1,37 @@
+<svg width="130" height="300" viewBox="0 0 130 300" xmlns="http://www.w3.org/2000/svg">
+<rect x="0" y="0" width="130" height="300" opacity="1" fill="#FFFFFF" stroke="none"/>
+<polyline fill="none" opacity="1" stroke="#000000" stroke-width="3" points="6,100 24,100 "/>
+<text x="29" y="100" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="9.67741935483871" opacity="1" fill="#000000">
+trustworthiness
+</text>
+<polyline fill="none" opacity="1" stroke="#E69F00" stroke-width="3" points="6,120 13,120 "/>
+<polyline fill="none" opacity="1" stroke="#E69F00" stroke-width="3" points="17,120 24,120 "/>
+<text x="29" y="120" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="9.67741935483871" opacity="1" fill="#000000">
+continuity
+</text>
+<polyline fill="none" opacity="1" stroke="#56B4E9" stroke-width="3" points="6,140 8,140 "/>
+<polyline fill="none" opacity="1" stroke="#56B4E9" stroke-width="3" points="11,140 13,140 "/>
+<polyline fill="none" opacity="1" stroke="#56B4E9" stroke-width="3" points="16,140 18,140 "/>
+<polyline fill="none" opacity="1" stroke="#56B4E9" stroke-width="3" points="21,140 23,140 "/>
+<text x="29" y="140" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="9.67741935483871" opacity="1" fill="#000000">
+1-normalized_stress
+</text>
+<polyline fill="none" opacity="1" stroke="#009E73" stroke-width="3" points="6,160 17,160 "/>
+<polyline fill="none" opacity="1" stroke="#009E73" stroke-width="3" points="21,160 24,160 "/>
+<text x="29" y="160" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="9.67741935483871" opacity="1" fill="#000000">
+shepard_goodness
+</text>
+<polyline fill="none" opacity="1" stroke="#0072B2" stroke-width="3" points="6,180 13,180 "/>
+<polyline fill="none" opacity="1" stroke="#0072B2" stroke-width="3" points="16,180 23,180 "/>
+<text x="29" y="180" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="9.67741935483871" opacity="1" fill="#000000">
+neighborhood_hit
+</text>
+<polyline fill="none" opacity="1" stroke="#D55E00" stroke-width="3" points="6,200 8,200 "/>
+<polyline fill="none" opacity="1" stroke="#D55E00" stroke-width="3" points="10,200 12,200 "/>
+<polyline fill="none" opacity="1" stroke="#D55E00" stroke-width="3" points="14,200 16,200 "/>
+<polyline fill="none" opacity="1" stroke="#D55E00" stroke-width="3" points="18,200 20,200 "/>
+<polyline fill="none" opacity="1" stroke="#D55E00" stroke-width="3" points="22,200 24,200 "/>
+<text x="29" y="200" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="9.67741935483871" opacity="1" fill="#000000">
+distance_consistency
+</text>
+</svg>

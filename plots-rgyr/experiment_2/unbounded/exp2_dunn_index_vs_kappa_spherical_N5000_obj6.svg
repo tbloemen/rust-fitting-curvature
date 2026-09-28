@@ -1,0 +1,50 @@
+<svg width="370" height="300" viewBox="0 0 370 300" xmlns="http://www.w3.org/2000/svg">
+<rect x="0" y="0" width="370" height="300" opacity="1" fill="#FFFFFF" stroke="none"/>
+<text x="182" y="11" dy="0.76em" text-anchor="middle" font-family="sans-serif" font-size="11.290322580645162" opacity="1" fill="#000000" font-weight="bold">
+spherical
+</text>
+<text x="6" y="143" dy="0.76em" text-anchor="middle" font-family="sans-serif" font-size="11.290322580645162" opacity="1" fill="#1E1E1E" transform="rotate(270, 6, 143)">
+dunn_index
+</text>
+<text x="211" y="294" dy="-0.5ex" text-anchor="middle" font-family="sans-serif" font-size="11.290322580645162" opacity="1" fill="#1E1E1E">
+κ
+</text>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="76" y1="259" x2="76" y2="27"/>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="166" y1="259" x2="166" y2="27"/>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="257" y1="259" x2="257" y2="27"/>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="347" y1="259" x2="347" y2="27"/>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="64" y1="223" x2="357" y2="223"/>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="64" y1="144" x2="357" y2="144"/>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="64" y1="85" x2="357" y2="85"/>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="63,27 63,259 "/>
+<text x="54" y="223" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+0.0002
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="58,223 63,223 "/>
+<text x="54" y="144" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+0.0005
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="58,144 63,144 "/>
+<text x="54" y="85" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+0.001
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="58,85 63,85 "/>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="64,260 357,260 "/>
+<text x="76" y="270" dy="0.76em" text-anchor="middle" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+1e-6
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="76,260 76,265 "/>
+<text x="166" y="270" dy="0.76em" text-anchor="middle" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+0.0001
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="166,260 166,265 "/>
+<text x="257" y="270" dy="0.76em" text-anchor="middle" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+0.01
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="257,260 257,265 "/>
+<text x="347" y="270" dy="0.76em" text-anchor="middle" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+1
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="347,260 347,265 "/>
+<polyline fill="none" opacity="1" stroke="#D55E00" stroke-width="2" points="72,249 88,69 104,236 121,228 137,231 153,212 169,221 186,233 202,247 218,221 234,237 251,222 267,240 283,212 299,193 316,181 332,38 348,179 "/>
+</svg>
