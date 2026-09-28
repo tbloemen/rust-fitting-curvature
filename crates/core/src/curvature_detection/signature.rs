@@ -574,6 +574,16 @@ fn normalise_residual(residual: f64, n: usize, d_max: f64) -> f64 {
     }
 }
 
+/// Coarse log-grid size of the radius search in the Wilson fits.
+///
+/// The grid only has to bracket a local minimum for golden section to refine
+/// it, but on an exact constant-curvature configuration the notch at the true
+/// radius is extremely narrow: on `tree 2D` (exact `H²`, `R = 1`) the
+/// residual at `0.999·R` already exceeds the flat-limit plateau.  At 30
+/// points the grid steps over it and the fit pins at the flat-ward bound;
+/// from 60 points up it lands on `r* = 1.0000`.  100 leaves margin.
+const FIT_GRID: usize = 100;
+
 /// Golden-section minimisation on `[a, b]`.  Returns `(r*, f(r*))`.
 fn golden_section(a: f64, b: f64, f: &mut dyn FnMut(f64) -> f64) -> (f64, f64) {
     let phi = 0.618_033_988_749_894_9_f64;
@@ -712,7 +722,7 @@ pub fn fit_spherical(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
 
     let mut objective = |r: f64| -> f64 { spherical_residual(distances, n, dim, r) };
 
-    let (r_star, _, at_upper) = minimise_log_spaced(r_lower, r_upper, 30, &mut objective);
+    let (r_star, _, at_upper) = minimise_log_spaced(r_lower, r_upper, FIT_GRID, &mut objective);
     let residual = spherical_residual(distances, n, dim, r_star);
     WilsonFit {
         radius: r_star,
@@ -822,7 +832,7 @@ pub fn fit_hyperbolic(distances: &[f64], n: usize, dim: usize) -> WilsonFit {
 
     let mut objective = |r: f64| -> f64 { hyperbolic_residual(distances, n, dim, r) };
 
-    let (r_star, _, at_upper) = minimise_log_spaced(r_lower, r_upper, 30, &mut objective);
+    let (r_star, _, at_upper) = minimise_log_spaced(r_lower, r_upper, FIT_GRID, &mut objective);
     let residual = hyperbolic_residual(distances, n, dim, r_star);
     WilsonFit {
         radius: r_star,
