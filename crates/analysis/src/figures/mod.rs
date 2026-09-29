@@ -53,6 +53,7 @@ pub mod exp3;
 pub mod exp4;
 pub mod exp4_epsilon_dots;
 pub mod exp4_gain_dots;
+pub mod exp4_proj_gap;
 pub mod exp4_tradeoff;
 
 use fitting_core::cast::{count_to_f64, to_i32};

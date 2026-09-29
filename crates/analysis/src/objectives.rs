@@ -24,7 +24,8 @@ use crate::records::TrialRecord;
 /// - *Projected only.* The manifold (pre-projection, geodesic) variants used to
 ///   occupy half this list. They are still measured and still present on
 ///   [`TrialRecord`], and [`METRIC_PAIRS`] still pairs them up — but they no
-///   longer steer the search, and no figure currently reads them.
+///   longer steer the search; only Experiment 4's projection-gap figure reads
+///   them.
 /// - *Bounded only.* [`oriented_value`] clamps to `[0, 1]` and the R2 ideal
 ///   point is pinned at `(1, …, 1)`, so an unbounded objective would be
 ///   silently truncated rather than measured. `distance_consistency` qualifies
@@ -350,11 +351,10 @@ pub fn families(space: ObjectiveSpace) -> Vec<(&'static str, Vec<usize>)> {
 /// independent — an objective with no manifold variant would correctly not
 /// appear here.
 ///
-/// It has no consumer at present. The figure that read it — one panel per row,
-/// comparing the manifold and projected readings of the same metric — was the
-/// evidence for dropping the manifold objectives, and was deleted in `b43c731`
-/// once that argument was settled. The pairing is kept because the manifold columns are
-/// still measured and Experiment 2 is the question that would read them again.
+/// Beyond the legacy space, its reader is `figures::exp4_proj_gap`, one panel
+/// per row comparing the manifold and projected readings of the same metric —
+/// the evidence for dropping the manifold objectives. Deleted in `b43c731`
+/// once that argument was settled, and since restored.
 ///
 /// Derived by matching `QualityMetric::base` over the registry, so a metric
 /// that gains or loses a twin gains or loses a row with no edit here.
