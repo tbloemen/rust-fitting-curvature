@@ -20,7 +20,7 @@ use clap::Parser;
 
 use fitting_analysis::figures::{
     self, exp1, exp2, exp2_dependence, exp2_dumbbell, exp2_region_gain, exp3, exp4,
-    exp4_epsilon_dots, exp4_gain_dots, exp4_tradeoff, save,
+    exp4_epsilon_dots, exp4_gain_dots, exp4_proj_gap, exp4_tradeoff, save,
 };
 use fitting_analysis::indicators::EpsilonRow;
 use fitting_analysis::objectives::ObjectiveSpace;
@@ -70,6 +70,11 @@ struct Args {
     /// preference model is the point of it — so it is drawn once per N.
     #[arg(long, num_args = 1.., default_values_t = ["all".to_string()])]
     exp1_region: Vec<String>,
+
+    /// Lowest κ in Exp 4's zoomed projection-gap figure, which is written
+    /// alongside the full one. Set to 0 to skip the zoom.
+    #[arg(long, default_value_t = 0.01)]
+    gap_zoom_kappa: f64,
 
     /// Force the objective space instead of reading it off the sweeps. The
     /// sweeps under `results/` were searched in the 10-objective space
@@ -171,6 +176,28 @@ fn main() -> Result<()> {
             let fig = exp4::StackedFronts::new(&cells, *n);
             if fig.has_data() {
                 save(&fig, &args.out_dir, space)?;
+            }
+        }
+
+        // The manifold-vs-projection gap, once per N: its unit is a front
+        // point, not a cell, so each N stands on its own. Each also gets a zoom
+        // above `--gap-zoom-kappa`, as its own file: the full figure's x axis is
+        // dominated by the collapsed-embedding spike at κ ≈ 2e-7, three decades
+        // left of anything else. Both are kept — the zoom excludes real front
+        // points, and the reader should be able to see what.
+        for n in &args.n {
+            let fig = exp4_proj_gap::ProjGap::new(&cells, *n, space);
+            if fig.has_data() {
+                save(&fig, &args.out_dir, space)?;
+            }
+            // A floor of 0 is "no zoom", not "zoom at zero": with it the zoom
+            // would carry the full figure's name and overwrite it.
+            if args.gap_zoom_kappa > 0.0 {
+                let zoom =
+                    exp4_proj_gap::ProjGap::new(&cells, *n, space).zoomed(args.gap_zoom_kappa);
+                if zoom.has_data() {
+                    save(&zoom, &args.out_dir, space)?;
+                }
             }
         }
 
