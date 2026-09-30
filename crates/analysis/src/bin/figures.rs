@@ -19,8 +19,8 @@ use std::str::FromStr;
 use clap::Parser;
 
 use fitting_analysis::figures::{
-    self, exp1, exp2, exp2_dependence, exp2_dumbbell, exp2_region_gain, exp3, exp4,
-    exp4_epsilon_dots, exp4_gain_dots, exp4_proj_gap, exp4_tradeoff, save,
+    self, exp1, exp1_kappa_hist, exp2, exp2_dependence, exp2_dumbbell, exp2_region_gain, exp3,
+    exp4, exp4_epsilon_dots, exp4_gain_dots, exp4_proj_gap, exp4_tradeoff, save,
 };
 use fitting_analysis::indicators::EpsilonRow;
 use fitting_analysis::objectives::ObjectiveSpace;
@@ -123,6 +123,17 @@ fn main() -> Result<()> {
     // two cannot disagree. A region the table does not carry, like a missing
     // table, leaves the figure unwritten rather than failing.
     if args.exp.contains(&1) {
+        // Where the `all_off` corpora land in κ, one panel per curved geometry.
+        // From `cells`, not the table, and ahead of it: κ needs `r_gyration`,
+        // so from `results/` this writes nothing, the same as Exp 3.
+        let fronts = figures::front_cells(&cells, space);
+        let exp1_dir = args.out_dir.join("experiment_1");
+        for n in &args.n {
+            for fig in exp1_kappa_hist::KappaHistogram::panels(&fronts, *n) {
+                save(&fig, &exp1_dir, space)?;
+            }
+        }
+
         let path = args.exp1.clone().unwrap_or_else(|| {
             PathBuf::from(format!("results/exp1_geometry_match_{}.jsonl", space.tag()))
         });

@@ -45,6 +45,7 @@
 
 pub mod dot_panels;
 pub mod exp1;
+pub mod exp1_kappa_hist;
 pub mod exp2;
 pub mod exp2_dependence;
 pub mod exp2_dumbbell;
