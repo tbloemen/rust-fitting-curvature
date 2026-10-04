@@ -1,0 +1,69 @@
+use fitting_core::synthetic_data::DataPoints;
+
+#[derive(Debug, Clone)]
+pub struct Dataset {
+    pub x: Vec<f64>,
+    pub labels: Vec<u32>,
+    pub n_points: usize,
+    pub n_features: usize,
+    /// Pre-computed pairwise distance matrix (flat n × n, row-major).
+    /// Non-empty for datasets like `WordNet` where intrinsic distances drive
+    /// affinities and evaluation instead of Euclidean distances in feature space.
+    pub precomputed_distances: Vec<f64>,
+}
+
+impl From<DataPoints> for Dataset {
+    fn from(sd: DataPoints) -> Self {
+        Self {
+            x: sd.x,
+            labels: sd.labels,
+            n_points: sd.n_points,
+            n_features: sd.ambient_dim,
+            precomputed_distances: sd.distances,
+        }
+    }
+}
+
+impl Dataset {
+    pub fn load_synthetic(name: &str, n_samples: usize, seed: u64) -> Result<Self, String> {
+        use fitting_core::synthetic_data::{
+            generate_hd_hyperbolic_shells, generate_hd_sphere, generate_hd_tree,
+            generate_hd_uniform_grid, HD_AMBIENT_DIM,
+        };
+        let sd = match name {
+            // The viewer offers these same four as `hd_<name>`, next to the
+            // 2-D toy generators that share the unprefixed names there.
+            "sphere" => generate_hd_sphere(n_samples, HD_AMBIENT_DIM, seed),
+            "tree" => generate_hd_tree(n_samples, HD_AMBIENT_DIM, seed),
+            "hyperbolic_shells" => generate_hd_hyperbolic_shells(n_samples, HD_AMBIENT_DIM, seed),
+            // Euclidean synthetic: a lattice in R^10, matching the ambient
+            // dimension of the curved synthetics above.
+            "grid" => generate_hd_uniform_grid(n_samples, HD_AMBIENT_DIM, seed),
+
+            _ => {
+                return Err(format!(
+                    "Unknown dataset '{name}'.\n  \
+                 Real: mnist, fashion_mnist, pbmc, wordnet_mammals\n  \
+                 Synthetic: sphere, tree, hyperbolic_shells, grid"
+                ));
+            }
+        };
+        Ok(sd.into())
+    }
+
+    pub fn load_mnist(path: &str, n_samples: usize) -> Result<Self, String> {
+        fitting_core::data::load_mnist(path, n_samples).map(std::convert::Into::into)
+    }
+
+    pub fn load_fashion_mnist(path: &str, n_samples: usize) -> Result<Self, String> {
+        fitting_core::data::load_fashion_mnist(path, n_samples).map(std::convert::Into::into)
+    }
+
+    pub fn load_wordnet_mammals(path: &str, n_samples: usize) -> Result<Self, String> {
+        fitting_core::data::load_wordnet_mammals(path, n_samples).map(std::convert::Into::into)
+    }
+
+    pub fn load_pbmc(path: &str, n_samples: usize) -> Result<Self, String> {
+        fitting_core::data::load_pbmc(path, n_samples).map(std::convert::Into::into)
+    }
+}

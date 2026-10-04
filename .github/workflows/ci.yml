@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  clippy-core:
+    name: Clippy (core)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy -p fitting-core --all-targets -- -D warnings
+
+  clippy-optimizer:
+    name: Clippy (optimizer)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy -p fitting-optimizer --all-targets -- -D warnings
+
+  clippy-web:
+    name: Clippy (web)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - run: cargo clippy -p fitting-web --target wasm32-unknown-unknown --all-targets -- -D warnings
+
+  clippy-analysis:
+    name: Clippy (analysis)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # --all-features enables the `plots` feature, which pulls in
+      # plotters -> font-kit -> fontconfig.
+      - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+      - run: cargo clippy -p fitting-analysis --all-targets --all-features -- -D warnings
+
+  fmt:
+    name: Rustfmt
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  test:
+    name: Tests
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -p fitting-core
+
+  test-js:
+    name: JS Tests
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm install
+        working-directory: www
+      - run: npm test
+        working-directory: www
+
+  build-site:
+    name: Build website
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: cargo install wasm-pack
+      - run: wasm-pack build crates/web --target web --out-dir ../../www/pkg
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm install
+        working-directory: www
+      - run: npm run build -- --base /${{ github.event.repository.name }}/
+        working-directory: www
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: www/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [build-site]
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

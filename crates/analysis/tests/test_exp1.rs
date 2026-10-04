@@ -1,0 +1,185 @@
+//! Tests for the pieces `bin/exp1.rs` depends on.
+//!
+//! The binary itself is thin glue over `cell_summary`, which has its own tests.
+//! What is new here, and so what is worth pinning, is the ground-truth map and
+//! the sign conventions of the two comparisons it forms — ΔR2 against the
+//! Euclidean baseline, and the ε pair against the matched arm.
+
+use fitting_analysis::cell::{truth_of, GEOMETRIES, SYNTH_TRUTH};
+use fitting_analysis::indicators::epsilon_pair;
+use fitting_analysis::objectives::{ObjectiveSpace, Row};
+use fitting_analysis::r2::{front_utilities, r2, Weights};
+use fitting_analysis::TrialRecord;
+
+// ─── κ on the embedding gauge ────────────────────────────────────────────────
+
+/// Euclidean sweeps write `curvature: 0.0` and omit `curvature_magnitude`
+/// entirely, so `kappa()` has to read `|K|` off `curvature` or every Euclidean
+/// cell reports no κ. `K = 0` makes `κ = 0` exactly — a value, not a gap.
+#[test]
+fn kappa_falls_back_to_curvature_for_euclidean() {
+    let record: TrialRecord = serde_json::from_str(
+        r#"{"geometry":"euclidean","curvature":0.0,"r_gyration":7.869024392227243}"#,
+    )
+    .expect("euclidean trial shape");
+
+    assert_eq!(
+        record.curvature_magnitude, None,
+        "fixture must mimic a real euclidean trial"
+    );
+    assert_eq!(record.kappa(), Some(0.0));
+}
+
+/// The fallback must not shadow a recorded magnitude, which is what every
+/// curved trial carries.
+#[test]
+fn kappa_prefers_the_recorded_magnitude() {
+    let record: TrialRecord = serde_json::from_str(
+        r#"{"curvature":-0.1587415548667954,
+             "curvature_magnitude":0.1587415548667954,
+             "r_gyration":4.583735477895421}"#,
+    )
+    .expect("hyperbolic trial shape");
+
+    let expected = 0.158_741_554_866_795_4 * 4.583_735_477_895_421_f64.powi(2);
+    let got = record.kappa().expect("curved trial has kappa");
+    assert!((got - expected).abs() < 1e-12, "got {got}, want {expected}");
+}
+
+/// `|K|` from a signed curvature, so the sign convention cannot leak into κ.
+#[test]
+fn kappa_is_unsigned() {
+    let neg: TrialRecord = serde_json::from_str(r#"{"curvature":-0.25,"r_gyration":2.0}"#).unwrap();
+    let pos: TrialRecord = serde_json::from_str(r#"{"curvature":0.25,"r_gyration":2.0}"#).unwrap();
+    assert_eq!(neg.kappa(), Some(1.0));
+    assert_eq!(pos.kappa(), Some(1.0));
+}
+
+/// A record with no curvature at all is still missing, not zero — the fallback
+/// must not manufacture a κ for a row that never recorded one.
+#[test]
+fn kappa_is_none_without_any_curvature() {
+    let no_curvature: TrialRecord = serde_json::from_str(r#"{"r_gyration":3.0}"#).unwrap();
+    assert_eq!(no_curvature.kappa(), None);
+
+    let no_radius: TrialRecord = serde_json::from_str(r#"{"curvature":0.0}"#).unwrap();
+    assert_eq!(no_radius.kappa(), None);
+}
+
+// ─── The ground-truth map ────────────────────────────────────────────────────
+
+#[test]
+fn every_synthetic_dataset_has_a_valid_truth() {
+    for (dataset, truth) in SYNTH_TRUTH {
+        assert!(
+            GEOMETRIES.contains(&truth),
+            "{dataset} claims geometry {truth}, which is not one of {GEOMETRIES:?}"
+        );
+        assert_eq!(truth_of(dataset), Some(truth));
+    }
+}
+
+#[test]
+fn truth_covers_the_optimizer_synthetic_set() {
+    // `crates/optimizer/src/data.rs::load_synthetic` accepts exactly these
+    // names (`main.rs::SYNTHETIC_DATASETS` is the same list). Experiment 1
+    // filters cells by `truth_of(..).is_some()`, so a name missing here would
+    // silently drop a dataset from the table rather than failing.
+    for dataset in ["sphere", "tree", "hyperbolic_shells", "grid"] {
+        assert!(
+            truth_of(dataset).is_some(),
+            "{dataset} is an optimizer synthetic dataset with no ground truth"
+        );
+    }
+    // Real datasets must stay absent: their geometry is the question.
+    for dataset in ["mnist", "fashion_mnist", "pbmc", "wordnet_mammals"] {
+        assert_eq!(truth_of(dataset), None, "{dataset} must not carry a truth");
+    }
+    // A curved dataset for each sign, so the table always has a matched row to
+    // compare against the Euclidean baseline.
+    let truths: Vec<&str> = SYNTH_TRUTH.iter().map(|(_, t)| *t).collect();
+    for geometry in GEOMETRIES {
+        assert!(
+            truths.contains(&geometry),
+            "no synthetic dataset is {geometry}"
+        );
+    }
+}
+
+// ─── The ΔR2 sign convention ─────────────────────────────────────────────────
+
+fn point(fill: f64) -> Row {
+    vec![fill; ObjectiveSpace::Current6.len()]
+}
+
+/// ΔR2 is formed baseline-minus-row because R2 is a cost, so a *lower* R2 for
+/// the curved arm must come out as a *positive* ΔR2. This is the sign
+/// convention `aggregate.rs` uses and the easiest thing in the analysis to get
+/// backwards.
+#[test]
+fn delta_r2_is_positive_when_the_row_beats_the_baseline() {
+    let weights = Weights::new(ObjectiveSpace::Current6);
+
+    // A better front: every objective higher, so its R2 is lower.
+    let good = vec![point(0.9)];
+    let poor = vec![point(0.4)];
+
+    let good_u = front_utilities(&good, &weights.vectors);
+    let poor_u = front_utilities(&poor, &weights.vectors);
+
+    for region in &weights.regions {
+        let r2_good = r2(&good_u, region);
+        let r2_poor = r2(&poor_u, region);
+        assert!(r2_good < r2_poor, "R2 should be lower for the better front");
+        // baseline (poor, standing in for euclidean) minus row (good)
+        assert!(
+            r2_poor - r2_good > 0.0,
+            "region {}: an improvement must give a positive delta",
+            region.name
+        );
+    }
+}
+
+// ─── The ε orientation ───────────────────────────────────────────────────────
+
+/// `epsilon_summary` calls `epsilon_pair(matched, arm)` — the matched geometry
+/// as the treatment, the mismatched arm as the control — which is what makes
+/// `delta_eps` read the same way round as `delta_r2`. Swapping the arguments
+/// would flip both stored directions *and* the sign of the summary, and every
+/// number would still look plausible.
+#[test]
+fn epsilon_is_formed_with_the_matched_arm_as_the_treatment() {
+    // A matched front that covers the mismatched one outright: every objective
+    // higher, so no shift is needed to dominate it.
+    let matched = vec![point(0.9)];
+    let arm = vec![point(0.4)];
+
+    let eps = epsilon_pair(&matched, &arm).expect("both fronts are non-empty");
+
+    // I(matched, arm) <= 0: the matched front covers the arm's.
+    assert!(
+        eps.setting_vs_baseline <= 0.0,
+        "I(matched, arm) = {}",
+        eps.setting_vs_baseline
+    );
+    assert!(eps.setting_covers_baseline());
+    // And not the other way round.
+    assert!(eps.baseline_vs_setting > 0.0);
+    assert!(!eps.baseline_covers_setting());
+    // Positive delta = the matched geometry came out ahead, as for ΔR2.
+    assert!(eps.delta > 0.0, "delta = {}", eps.delta);
+}
+
+/// The other side of the same convention: a matched arm that *lost* has to come
+/// out negative rather than merely small.
+#[test]
+fn a_beaten_matched_arm_gives_a_negative_delta_eps() {
+    let matched = vec![point(0.4)];
+    let arm = vec![point(0.9)];
+
+    let eps = epsilon_pair(&matched, &arm).expect("both fronts are non-empty");
+
+    assert!(eps.setting_vs_baseline > 0.0);
+    assert!(eps.baseline_covers_setting());
+    assert!(eps.delta < 0.0, "delta = {}", eps.delta);
+}

@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Curvature Embedding — Rust/WASM</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-content">
+        <h1>Constant Curvature Embedding</h1>
+
+        <div class="section">
+          <div class="section-title">Data Source</div>
+          <div class="toggle-group">
+            <button id="btn-real" class="active">Real Data</button>
+            <button id="btn-synthetic">Synthetic</button>
+            <button id="btn-pareto">Pareto</button>
+          </div>
+
+          <div id="real-controls">
+            <div class="control-group">
+              <label for="real-dataset">Dataset</label>
+              <select id="real-dataset">
+                <option value="mnist">MNIST</option>
+                <option value="fashion_mnist">Fashion-MNIST</option>
+                <option value="wordnet_mammals">WordNet Mammals</option>
+                <option value="pbmc">PBMC 3k</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label for="real_n_points">Points</label>
+              <input
+                type="number"
+                id="real_n_points"
+                value="1000"
+                min="50"
+                max="10000"
+              />
+            </div>
+            <p
+              id="real-dataset-note"
+              style="font-size: 0.65rem; color: #666; margin-top: 4px"
+            ></p>
+          </div>
+
+          <div id="synthetic-controls" style="display: none">
+            <div class="control-group">
+              <label for="dataset">Dataset</label>
+              <select id="dataset">
+                <option value="uniform_grid">Uniform Grid (Eucl.)</option>
+                <option value="uniform_sphere">Uniform Sphere</option>
+                <option value="tree_structured">Tree Structured</option>
+                <option value="hyperbolic_shells" selected>
+                  Hyperbolic Shells
+                </option>
+                <option value="hd_uniform_grid">Sweep: Grid (E¹⁰)</option>
+                <option value="hd_sphere">Sweep: Sphere (S⁹)</option>
+                <option value="hd_tree">Sweep: Tree (H⁹)</option>
+                <option value="hd_hyperbolic_shells">
+                  Sweep: Hyperbolic Shells (H⁹)
+                </option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label for="synth_n_points">Points</label>
+              <input
+                type="number"
+                id="synth_n_points"
+                value="300"
+                min="10"
+                max="5000"
+              />
+            </div>
+          </div>
+
+          <div id="pareto-tsne-controls" style="display: none">
+            <div class="control-group">
+              <label for="pareto-tsne-file">JSON file</label>
+              <input
+                type="file"
+                id="pareto-tsne-file"
+                accept=".json"
+                style="font-size: 0.7rem; color: #ccc; width: 100%"
+              />
+            </div>
+            <p
+              id="pareto-tsne-status"
+              style="font-size: 0.65rem; color: #888; margin-top: 4px"
+            ></p>
+            <div
+              class="control-group"
+              id="pareto-tsne-metric-row"
+              style="display: none"
+            >
+              <label for="pareto-tsne-metric">Color by</label>
+              <select
+                id="pareto-tsne-metric"
+                style="font-size: 0.7rem"
+              ></select>
+            </div>
+            <div
+              class="control-group"
+              id="pareto-tsne-bins-row"
+              style="display: none"
+            >
+              <label for="pareto-tsne-bins">Bins</label>
+              <input
+                type="number"
+                id="pareto-tsne-bins"
+                value="8"
+                min="2"
+                max="10"
+              />
+            </div>
+            <div
+              id="pareto-tsne-legend-section"
+              style="display: none; margin-top: 6px"
+            >
+              <div
+                class="section-title"
+                style="margin-bottom: 4px; font-size: 0.6rem"
+              >
+                Legend
+              </div>
+              <div id="pareto-tsne-legend"></div>
+            </div>
+            <p style="font-size: 0.62rem; color: #555; margin-top: 6px">
+              Curvature fixed to 0. Adjust Perplexity, Iterations, LR below.
+            </p>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Embedding Parameters</div>
+          <div class="control-group">
+            <label for="curvature">Curvature</label>
+            <input type="text" id="curvature" inputmode="numeric" />
+          </div>
+          <div class="control-group">
+            <label for="perplexity">Perplexity</label>
+            <input type="number" id="perplexity" min="2" max="100" step="any" />
+          </div>
+          <div class="control-group">
+            <label for="iterations">Iterations</label>
+            <input type="number" id="iterations" min="10" max="5000" />
+          </div>
+          <div class="control-group">
+            <label for="lr">Learning Rate</label>
+            <input type="number" id="lr" step="10" />
+          </div>
+          <div class="control-group">
+            <label for="init_scale">Init Scale</label>
+            <input type="number" id="init_scale" step="0.1" min="0.01" />
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Early Exaggeration</div>
+          <div class="control-group">
+            <label for="ee_factor">Exaggeration Factor</label>
+            <input type="number" id="ee_factor" step="0.5" min="1" />
+          </div>
+          <div class="control-group">
+            <label for="ee_iterations">Exaggeration Iterations</label>
+            <input type="number" id="ee_iterations" min="0" max="5000" />
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Global Constraints</div>
+          <div class="loss-grid">
+            <span class="loss-col-header"></span>
+            <span class="loss-col-header">Type</span>
+            <span class="loss-col-header">λ</span>
+
+            <span class="loss-col-name">Scale</span>
+            <span>Mean Dist.</span>
+            <input type="number" id="centering_weight" step="0.1" min="0" />
+
+            <span class="loss-col-name">Global</span>
+            <span></span>
+            <input type="number" id="global_loss_weight" step="1" min="0" />
+
+            <span class="loss-col-name">Norm</span>
+            <span></span>
+            <input
+              type="number"
+              id="norm_loss_weight"
+              step="0.001"
+              min="0"
+              value="0"
+            />
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Projection</div>
+          <div class="control-group">
+            <label for="projection">Spherical projection</label>
+            <select id="projection">
+              <option value="azimuthal_equidistant" selected>
+                Azimuthal Equidistant
+              </option>
+              <option value="stereographic">Stereographic</option>
+              <option value="orthographic">Orthographic</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Load Pareto Entry</div>
+          <div class="control-group">
+            <label for="pareto-file">JSON file</label>
+            <input
+              type="file"
+              id="pareto-file"
+              accept=".json"
+              style="font-size: 0.7rem; color: #ccc; width: 100%"
+            />
+          </div>
+          <div
+            class="control-group"
+            id="pareto-geometry-row"
+            style="display: none"
+          >
+            <label for="pareto-geometry">Geometry</label>
+            <select id="pareto-geometry">
+              <option value="-1">Hyperbolic (k&lt;0)</option>
+              <option value="0">Euclidean (k=0)</option>
+              <option value="1">Spherical (k&gt;0)</option>
+            </select>
+          </div>
+          <div
+            class="control-group"
+            id="pareto-entry-row"
+            style="display: none"
+          >
+            <label for="pareto-entry">Entry</label>
+            <select id="pareto-entry" style="font-size: 0.7rem"></select>
+          </div>
+          <div
+            id="pareto-metrics-preview"
+            style="
+              display: none;
+              font-size: 0.65rem;
+              color: #888;
+              margin-top: 4px;
+              line-height: 1.5;
+            "
+          ></div>
+          <button
+            id="pareto-apply-btn"
+            class="primary"
+            style="display: none; margin-top: 6px; width: 100%"
+          >
+            Apply to Controls
+          </button>
+        </div>
+
+        <div class="button-group">
+          <button id="run-btn" class="primary">Run</button>
+          <button id="stop-btn" class="primary" disabled>Stop</button>
+          <button id="step-btn" class="primary">Step</button>
+        </div>
+        <div class="button-group">
+          <button id="download-svg-btn" class="primary" disabled>
+            Download SVG
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="main">
+      <button class="sidebar-toggle shifted" id="sidebar-toggle">
+        &#9776;
+      </button>
+      <div class="canvas-wrapper" id="canvas-wrapper">
+        <div class="plot-title" id="plot-title"></div>
+        <canvas id="canvas" width="500" height="500"></canvas>
+        <div
+          id="pareto-tsne-tooltip"
+          style="
+            position: absolute;
+            pointer-events: none;
+            background: rgba(16, 16, 36, 0.94);
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 6px 9px;
+            font-size: 0.65rem;
+            color: #ccc;
+            line-height: 1.6;
+            display: none;
+            max-width: 250px;
+            z-index: 10;
+            white-space: nowrap;
+          "
+        ></div>
+        <div class="zoom-indicator" id="zoom-indicator"></div>
+        <div class="metrics-panel" id="metrics-panel" style="display: none">
+          <div class="section-title">Quality Metrics</div>
+          <div id="metrics-content"></div>
+        </div>
+      </div>
+      <div class="status-bar">
+        <p id="status">Loading WASM module...</p>
+        <div
+          class="progress-container"
+          id="progress-container"
+          style="display: none"
+        >
+          <div class="progress-bar" id="progress-bar"></div>
+        </div>
+        <p class="loss-display" id="loss-display"></p>
+        <p class="loss-display" id="fps-display"></p>
+        <p class="canvas-hint">
+          scroll to zoom · drag to pan · double-click to reset
+        </p>
+      </div>
+    </div>
+
+    <script src="./index.js" type="module"></script>
+  </body>
+</html>

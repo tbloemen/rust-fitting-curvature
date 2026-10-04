@@ -1,0 +1,51 @@
+[
+  {
+    "name": "learning_rate",
+    "label": "Learning Rate",
+    "min": 0.5,
+    "max": 80.0,
+    "log": true
+  },
+  {
+    "name": "perplexity_ratio",
+    "label": "Perplexity Ratio",
+    "min": 0.0004,
+    "max": 0.08,
+    "log": true
+  },
+  {
+    "name": "centering_weight",
+    "label": "Centering Weight",
+    "min": 0.0,
+    "max": 2.0,
+    "log": false
+  },
+  {
+    "name": "global_loss_weight",
+    "label": "Global Loss Weight",
+    "min": 0.0,
+    "max": 1.0,
+    "log": false
+  },
+  {
+    "name": "norm_loss_weight",
+    "label": "Norm Loss Weight",
+    "min": 0.0,
+    "max": 0.02,
+    "log": false
+  },
+  {
+    "name": "curvature_magnitude",
+    "label": "Curvature Magnitude",
+    "min": 0.000001,
+    "max": 5.0,
+    "log": true
+  },
+  {
+    "name": "early_exaggeration_factor",
+    "label": "Early Exaggeration",
+    "min": 1.0,
+    "max": 44.0,
+    "log": false
+  }
+]

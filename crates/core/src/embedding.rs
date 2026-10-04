@@ -1,0 +1,649 @@
+use crate::affinities::{
+    compute_perplexity_affinities, compute_perplexity_affinities_from_distances,
+};
+use crate::cast::count_to_f64;
+use crate::config::{InitMethod, TrainingConfig};
+use crate::context::EmbeddingContext;
+use crate::kernels::compute_q_matrix_with_distances;
+use crate::kl_divergence::{
+    compute_global_similarities, depth_norm_loss_gradient, kl_gradient, kl_loss, norm_loss_gradient,
+};
+use crate::manifolds;
+use crate::manifolds::Manifold;
+use crate::matrices::{compute_euclidean_distance_matrix, pca, pca_from_distances};
+use crate::metrics::{self, MetricValues};
+use crate::optimizer::RiemannianSGDMomentum;
+use crate::scaling_loss;
+use crate::spread::SpreadDiagnostics;
+use crate::visualisation::SphericalProjection;
+
+/// Embedding state for step-by-step iteration.
+///
+/// Allows running one iteration at a time, suitable for animated rendering
+/// where the caller needs to yield control between steps.
+pub struct EmbeddingState {
+    pub points: Vec<f64>,
+    pub n_points: usize,
+    pub ambient_dim: usize,
+    pub iteration: usize,
+    pub loss: f64,
+    /// Diagnostic: RMS magnitude of the weighted, tangent-projected norm-loss
+    /// gradient contribution added during the last `step` (0 when inactive).
+    pub last_norm_grad_rms: f64,
+    /// Diagnostic: RMS magnitude of the full gradient during the last `step`.
+    pub last_total_grad_rms: f64,
+    config: TrainingConfig,
+    manifold: Box<dyn Manifold>,
+    optimizer: RiemannianSGDMomentum,
+    p_base: Vec<f64>,
+    /// Early-exaggeration copy of `p_base` (each entry scaled by the exaggeration
+    /// factor). Pre-computed once and used during the early phase instead of
+    /// re-allocating a scaled `p_base` every iteration; freed at the phase
+    /// boundary. Empty when there is no early-exaggeration phase.
+    p_early: Vec<f64>,
+    /// Globally-normalized input similarities `p̂_ij` for the Zhou & Sharpee global loss.
+    /// Only populated when `config.global_loss_weight > 0`.
+    p_hat: Vec<f64>,
+    /// Whether to compute the (O(n²)) KL loss each `step`. The hyperparameter
+    /// search never reads `loss`, so it leaves this off; the interactive/web
+    /// path enables it for display. Default: on.
+    track_loss: bool,
+    /// Original input data, kept for metric computation.
+    input_data: Vec<f64>,
+    n_features: usize,
+    /// Pre-computed high-dimensional distance matrix.
+    /// Set by `from_distances`; empty for feature-based construction.
+    precomputed_distances: Vec<f64>,
+    /// Per-point target depths (bounded Poincaré radius for k < 0) for the depth
+    /// norm loss. Populated when `norm_loss_weight > 0` from either the root graph
+    /// distance (`from_distances`: `tanh(dist_to_root / 2R)`) or the input vector's
+    /// own Poincaré radius (`new`, hyperbolic feature data). When non-empty the
+    /// depth norm loss is used instead of the raw-‖x‖² feature norm loss.
+    target_norms: Vec<f64>,
+    // Metric computation state -------------------------------------------
+    /// Class labels for label-dependent metrics; `None` if unavailable.
+    pub labels: Option<Vec<u32>>,
+    /// Projection used for the 2D ("after projecting") metric variant.
+    pub projection: SphericalProjection,
+}
+
+impl EmbeddingState {
+    /// Initialize embedding state from input data and config.
+    #[must_use]
+    pub fn new(data: &[f64], n_features: usize, config: &TrainingConfig) -> Self {
+        let n_points = config.n_points;
+        let manifold = manifolds::create_manifold(config.curvature);
+        let ambient_dim = manifold.ambient_dim(config.embed_dim);
+
+        let p_base = compute_perplexity_affinities(data, n_points, n_features, config.perplexity);
+        let points = match config.init_method {
+            InitMethod::Pca => {
+                let coords = pca(data, n_points, n_features, config.embed_dim, config.seed);
+                lift_pca_to_manifold(
+                    &coords,
+                    n_points,
+                    config.embed_dim,
+                    ambient_dim,
+                    config.init_scale,
+                    config.curvature,
+                    manifold.radius(),
+                )
+            }
+            InitMethod::Random => {
+                manifold.init_points(n_points, config.embed_dim, config.init_scale, config.seed)
+            }
+        };
+        let optimizer = RiemannianSGDMomentum::new(
+            config.learning_rate,
+            config.momentum_early,
+            n_points,
+            ambient_dim,
+        );
+
+        // Precompute p̂ from input Euclidean distances (fixed throughout training).
+        let p_hat = if config.global_loss_weight > 0.0 {
+            let input_dists = compute_euclidean_distance_matrix(data, n_points, n_features);
+            compute_global_similarities(&input_dists, n_points)
+        } else {
+            Vec::new()
+        };
+
+        // For hyperbolic feature data, the norm loss targets each point's *input*
+        // Poincaré radius (bounded in [0, 1)) instead of its raw ambient ‖x‖²
+        // (which diverges near the boundary and dwarfs the KL gradient — see the
+        // depth norm loss). The input vector is interpreted as a unit-hyperboloid
+        // point (coord 0 = time, coords 1.. = spatial), whose Poincaré radius is
+        //   r = ‖x[1..]‖ / (x[0] + 1) ∈ [0, 1).
+        // The depth norm loss then matches the embedding's Poincaré radius to it.
+        // Euclidean (k = 0) and spherical (k > 0) keep the feature ‖x‖² loss.
+        let target_norms =
+            if config.norm_loss_weight > 0.0 && config.curvature < 0.0 && n_features >= 2 {
+                (0..n_points)
+                    .map(|i| {
+                        let o = i * n_features;
+                        let x0 = data[o];
+                        let spatial = (1..n_features)
+                            .map(|d| data[o + d] * data[o + d])
+                            .sum::<f64>()
+                            .sqrt();
+                        let denom = x0 + 1.0;
+                        if denom <= 1e-12 {
+                            0.0
+                        } else {
+                            (spatial / denom).clamp(0.0, 1.0 - 1e-6)
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+        let p_early = make_p_early(&p_base, config);
+
+        Self {
+            points,
+            n_points,
+            ambient_dim,
+            iteration: 0,
+            loss: 0.0,
+            last_norm_grad_rms: 0.0,
+            last_total_grad_rms: 0.0,
+            config: config.clone(),
+            manifold,
+            optimizer,
+            p_base,
+            p_early,
+            p_hat,
+            track_loss: true,
+            input_data: data.to_vec(),
+            n_features,
+            precomputed_distances: Vec::new(),
+            target_norms,
+            labels: None,
+            projection: SphericalProjection::AzimuthalEquidistant,
+        }
+    }
+
+    /// Initialize embedding state from a pre-computed pairwise distance matrix.
+    ///
+    /// Uses `compute_perplexity_affinities_from_distances` so the t-SNE affinities
+    /// are driven by the provided distances (e.g. tree distances for `WordNet`) rather
+    /// than Euclidean distances in some feature space.
+    ///
+    /// `InitMethod::Pca` is handled via classical MDS (PCoA): the distance matrix is
+    /// double-centered to form a Gram matrix whose top eigenvectors give coordinates.
+    /// The *feature* norm loss is skipped (no input feature vectors exist); when
+    /// `norm_loss_weight > 0`, the depth norm loss is applied instead, comparing each
+    /// point's embedding depth to its graph distance from the root.
+    #[must_use]
+    pub fn from_distances(distances: &[f64], n_points: usize, config: &TrainingConfig) -> Self {
+        let manifold = manifolds::create_manifold(config.curvature);
+        let ambient_dim = manifold.ambient_dim(config.embed_dim);
+
+        let p_base =
+            compute_perplexity_affinities_from_distances(distances, n_points, config.perplexity);
+
+        let points = match config.init_method {
+            InitMethod::Pca => {
+                let coords = pca_from_distances(distances, n_points, config.embed_dim, config.seed);
+                lift_pca_to_manifold(
+                    &coords,
+                    n_points,
+                    config.embed_dim,
+                    ambient_dim,
+                    config.init_scale,
+                    config.curvature,
+                    manifold.radius(),
+                )
+            }
+            InitMethod::Random => {
+                manifold.init_points(n_points, config.embed_dim, config.init_scale, config.seed)
+            }
+        };
+
+        let optimizer = RiemannianSGDMomentum::new(
+            config.learning_rate,
+            config.momentum_early,
+            n_points,
+            ambient_dim,
+        );
+
+        // Global loss: use input distances directly for p̂.
+        let p_hat = if config.global_loss_weight > 0.0 {
+            compute_global_similarities(distances, n_points)
+        } else {
+            Vec::new()
+        };
+
+        // Precompute per-point target Poincaré/Euclidean radii from root distances.
+        // Node 0 is always the root (BFS convention).  The mapping is:
+        //   k < 0: tanh(d_root / (2R))  → Poincaré radius in [0, 1)
+        //   k = 0: d_root               → raw hop-distance (Euclidean)
+        //   k > 0: not meaningful       → empty (no depth loss on sphere)
+        let target_norms = if config.norm_loss_weight > 0.0 && config.curvature <= 0.0 {
+            let radius = manifold.radius();
+            (0..n_points)
+                .map(|i| {
+                    let d = distances[i * n_points]; // distance from node i to root (node 0)
+                    if config.curvature < 0.0 {
+                        (d / (2.0 * radius)).tanh()
+                    } else {
+                        d // Euclidean: use raw distance as target norm
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let p_early = make_p_early(&p_base, config);
+
+        Self {
+            points,
+            n_points,
+            ambient_dim,
+            iteration: 0,
+            loss: 0.0,
+            last_norm_grad_rms: 0.0,
+            last_total_grad_rms: 0.0,
+            config: config.clone(),
+            manifold,
+            optimizer,
+            p_base,
+            p_early,
+            p_hat,
+            track_loss: true,
+            // No input feature vectors in the distance-based path.
+            input_data: Vec::new(),
+            n_features: 0,
+            precomputed_distances: distances.to_vec(),
+            target_norms,
+            labels: None,
+            projection: SphericalProjection::AzimuthalEquidistant,
+        }
+    }
+
+    /// Set class labels for label-dependent metrics (neighbourhood hit, class/cluster density, DB ratio).
+    #[must_use]
+    pub fn with_labels(mut self, labels: Vec<u32>) -> Self {
+        self.labels = Some(labels);
+        self
+    }
+
+    /// Set the spherical projection used when computing "after-projection" (2D) metrics.
+    #[must_use]
+    pub fn with_projection(mut self, projection: SphericalProjection) -> Self {
+        self.projection = projection;
+        self
+    }
+
+    /// Enable or disable per-step KL-loss tracking (`self.loss`).
+    ///
+    /// Computing the loss is an O(n²) pass with a `ln` per pair. Callers that
+    /// never read `loss` (e.g. the hyperparameter search) should disable it to
+    /// avoid that work each iteration. Defaults to enabled.
+    #[must_use]
+    pub fn with_loss_tracking(mut self, track: bool) -> Self {
+        self.track_loss = track;
+        self
+    }
+
+    /// Score the current embedding on every metric in
+    /// [`metrics::ALL`](crate::metrics::ALL), and measure its spread.
+    ///
+    /// The two come back separately because they are different things: the
+    /// metrics say how faithful the embedding is, the diagnostics say how far
+    /// it reaches. Only the first is ever optimised.
+    ///
+    /// `k` is the workspace-wide [`metrics::scoring_k`] (`min(30, 0.1n)`), the
+    /// same neighbourhood the optimizer scores at, so the viewer's panel and a
+    /// Pareto-front entry are the same number for the same embedding. The
+    /// projection is this state's: the optimizer always scores under
+    /// `AzimuthalEquidistant`, the viewer under whatever the user picked, and
+    /// `EmbeddingContext` takes it as an input so the difference stays visible.
+    #[must_use]
+    pub fn compute_metrics(&self) -> (MetricValues, SpreadDiagnostics) {
+        let n = self.n_points;
+        let k = metrics::scoring_k(n).min(n.saturating_sub(2)).max(1);
+        let high_dim = self.high_dim_distances();
+        let ctx = EmbeddingContext::new(
+            &high_dim,
+            &self.points,
+            self.labels.as_deref(),
+            n,
+            self.ambient_dim,
+            self.config.curvature,
+            k,
+            self.projection,
+        )
+        // Already derived by `embedded_distances`; deriving them a second time
+        // would be both wasted work and a chance for the two to disagree.
+        .with_manifold_dist(self.embedded_distances());
+        (
+            MetricValues::compute(&ctx),
+            SpreadDiagnostics::compute(&ctx),
+        )
+    }
+
+    /// Run one training iteration. Returns the current phase name.
+    pub fn step(&mut self) -> &str {
+        let n_points = self.n_points;
+        let ambient_dim = self.ambient_dim;
+
+        // Reset per-step diagnostics; repopulated below if the norm loss is active.
+        self.last_norm_grad_rms = 0.0;
+
+        // Phase transition
+        if self.iteration == self.config.early_exaggeration_iterations {
+            self.optimizer.set_momentum(self.config.momentum_main);
+            self.p_early = Vec::new();
+        }
+
+        // Current P: the pre-computed exaggerated copy during the early phase,
+        // otherwise the base affinities. Clone to avoid borrow conflict with the
+        // mutable self borrow in compute_loss_and_gradient.
+        let p_current: Vec<f64> = if self.iteration < self.config.early_exaggeration_iterations
+            && !self.p_early.is_empty()
+        {
+            self.p_early.clone()
+        } else {
+            self.p_base.clone()
+        };
+
+        let (grad, _centering_loss, _global_loss, _depth_loss) =
+            self.compute_loss_and_gradient(&p_current, n_points, ambient_dim);
+
+        // Optimizer step
+        self.optimizer.step(
+            self.manifold.as_ref(),
+            &mut self.points,
+            &grad,
+            n_points,
+            ambient_dim,
+        );
+
+        // Hard center
+        self.manifold
+            .center(&mut self.points, n_points, ambient_dim);
+
+        self.iteration += 1;
+
+        if self.iteration <= self.config.early_exaggeration_iterations {
+            "early"
+        } else {
+            "main"
+        }
+    }
+
+    /// Compute the full loss and gradient for one training step.
+    ///
+    /// Returns `(gradient, centering_loss, global_loss, depth_or_feature_loss)`.
+    /// The caller applies the losses and takes the optimizer step.
+    fn compute_loss_and_gradient(
+        &mut self,
+        p_current: &[f64],
+        n_points: usize,
+        ambient_dim: usize,
+    ) -> (Vec<f64>, f64, f64, f64) {
+        let (q, distances) = compute_q_matrix_with_distances(
+            self.manifold.as_ref(),
+            &self.points,
+            n_points,
+            ambient_dim,
+            1.0,
+        );
+        if self.track_loss {
+            self.loss = kl_loss(&q, p_current, n_points);
+        }
+        let mut grad = kl_gradient(
+            self.manifold.as_ref(),
+            &self.points,
+            &q,
+            p_current,
+            &distances,
+            n_points,
+            ambient_dim,
+        );
+        let mut centering_loss = 0.0;
+        if self.config.centering_weight > 0.0 {
+            let (scaling_loss, mut scale_grad) = scaling_loss::compute(
+                self.config.scaling_loss_type,
+                &self.points,
+                n_points,
+                ambient_dim,
+                self.manifold.radius(),
+                self.config.curvature,
+            );
+            self.manifold
+                .project_to_tangent(&self.points, &mut scale_grad, n_points, ambient_dim);
+            for k in 0..grad.len() {
+                grad[k] += self.config.centering_weight * scale_grad[k];
+            }
+            centering_loss = self.config.centering_weight * scaling_loss;
+            self.loss += centering_loss;
+        }
+        let mut global_loss = 0.0;
+        if self.config.global_loss_weight > 0.0 {
+            let q_hat = compute_global_similarities(&distances, n_points);
+            let global_grad = kl_gradient(
+                self.manifold.as_ref(),
+                &self.points,
+                &q_hat,
+                &self.p_hat,
+                &distances,
+                n_points,
+                ambient_dim,
+            );
+            for k in 0..grad.len() {
+                grad[k] += self.config.global_loss_weight * global_grad[k];
+            }
+            if self.track_loss {
+                global_loss =
+                    self.config.global_loss_weight * kl_loss(&q_hat, &self.p_hat, n_points);
+                self.loss += global_loss;
+            }
+        }
+        let mut depth_feature_loss = 0.0;
+        if self.config.norm_loss_weight > 0.0 {
+            let (nl, nl_rms) = self.compute_norm_loss(&mut grad, n_points, ambient_dim);
+            depth_feature_loss = nl;
+            if nl_rms.is_finite() {
+                self.last_norm_grad_rms = nl_rms;
+            }
+        }
+        let total_sumsq: f64 = grad.iter().map(|g| g * g).sum();
+        self.last_total_grad_rms = (total_sumsq / count_to_f64(grad.len())).sqrt();
+
+        (grad, centering_loss, global_loss, depth_feature_loss)
+    }
+
+    /// Compute the depth or feature norm loss (whichever is active), apply its
+    /// gradient into `grad`, and return `(loss, grad_rms)` where `grad_rms` is
+    /// `NaN` when no norm loss is active.
+    fn compute_norm_loss(
+        &mut self,
+        grad: &mut [f64],
+        n_points: usize,
+        ambient_dim: usize,
+    ) -> (f64, f64) {
+        let weight = self.config.norm_loss_weight;
+        let (loss, mut ngrad, active) = if !self.target_norms.is_empty() {
+            let (loss, ngrad) = depth_norm_loss_gradient(
+                &self.points,
+                &self.target_norms,
+                n_points,
+                ambient_dim,
+                self.config.curvature,
+                self.manifold.radius(),
+            );
+            (loss, ngrad, true)
+        } else if self.n_features > 0 {
+            let (loss, ngrad) = norm_loss_gradient(
+                &self.input_data,
+                &self.points,
+                n_points,
+                self.n_features,
+                ambient_dim,
+            );
+            (loss, ngrad, true)
+        } else {
+            (0.0, Vec::new(), false)
+        };
+        if !active {
+            return (0.0, f64::NAN);
+        }
+        self.manifold
+            .project_to_tangent(&self.points, &mut ngrad, n_points, ambient_dim);
+        let mut sumsq = 0.0;
+        for k in 0..grad.len() {
+            let contrib = weight * ngrad[k];
+            grad[k] += contrib;
+            sumsq += contrib * contrib;
+        }
+        let rms = (sumsq / count_to_f64(grad.len())).sqrt();
+        let weighted_loss = weight * loss;
+        self.loss += weighted_loss;
+        (weighted_loss, rms)
+    }
+
+    /// Whether all iterations have been completed.
+    #[must_use]
+    pub fn is_done(&self) -> bool {
+        self.iteration >= self.config.n_iterations
+    }
+
+    /// Current training phase: "early" during exaggeration, "main" after.
+    #[must_use]
+    pub fn phase(&self) -> &str {
+        if self.iteration < self.config.early_exaggeration_iterations {
+            "early"
+        } else {
+            "main"
+        }
+    }
+
+    /// Run all remaining iterations, calling `on_step` after each.
+    /// Return `false` from the callback to stop early.
+    pub fn run(&mut self, mut on_step: impl FnMut(&Self) -> bool) {
+        while !self.is_done() {
+            self.step();
+            if !on_step(self) {
+                break;
+            }
+        }
+    }
+
+    /// Access the training config.
+    #[must_use]
+    pub fn config(&self) -> &TrainingConfig {
+        &self.config
+    }
+
+    /// Return the high-dimensional distance matrix.
+    ///
+    /// For feature-based construction (`new`): computed as Euclidean distance
+    /// in input feature space. For distance-based construction (`from_distances`):
+    /// returns the pre-computed distances that were supplied at construction time.
+    #[must_use]
+    pub fn high_dim_distances(&self) -> Vec<f64> {
+        if self.precomputed_distances.is_empty() {
+            crate::matrices::compute_euclidean_distance_matrix(
+                &self.input_data,
+                self.n_points,
+                self.n_features,
+            )
+        } else {
+            self.precomputed_distances.clone()
+        }
+    }
+
+    /// Compute the embedded pairwise distance matrix using the manifold metric.
+    #[must_use]
+    pub fn embedded_distances(&self) -> Vec<f64> {
+        self.manifold
+            .pairwise_distances(&self.points, self.n_points, self.ambient_dim)
+    }
+
+    /// Per-point geodesic distance from the manifold's natural origin.
+    #[must_use]
+    pub fn distances_from_origin(&self) -> Vec<f64> {
+        self.manifold
+            .distances_from_origin(&self.points, self.n_points, self.ambient_dim)
+    }
+}
+
+/// Pre-compute the early-exaggeration P matrix (`p_base` scaled by the
+/// exaggeration factor), or an empty vector when there is no early-exaggeration
+/// phase (zero iterations, or a factor of exactly 1.0 which leaves `p_base`
+/// unchanged). Lets `step` reuse this instead of re-scaling every iteration.
+fn make_p_early(p_base: &[f64], config: &TrainingConfig) -> Vec<f64> {
+    if config.early_exaggeration_iterations > 0
+        && config.early_exaggeration_factor.partial_cmp(&1.0) != Some(std::cmp::Ordering::Equal)
+    {
+        let factor = config.early_exaggeration_factor;
+        p_base.iter().map(|&x| x * factor).collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Lift `embed_dim`-dimensional PCA coordinates onto the target manifold.
+///
+/// Scales coords so the max Euclidean norm equals `init_scale`, then:
+/// - **Euclidean** (k=0): use as-is.
+/// - **Hyperboloid** (k<0): spatial components = scaled PCA coords (indices 1..);
+///   time component (index 0) = sqrt(r² + ||spatial||²).
+/// - **Sphere** (k>0): spatial components = scaled PCA coords (indices `0..embed_dim`);
+///   last component (index `embed_dim`) = sqrt(r² - ||spatial||²).
+fn lift_pca_to_manifold(
+    coords: &[f64],
+    n_points: usize,
+    embed_dim: usize,
+    ambient_dim: usize,
+    init_scale: f64,
+    curvature: f64,
+    radius: f64,
+) -> Vec<f64> {
+    // Scale so the maximum per-point Euclidean norm equals init_scale.
+    let max_norm = coords
+        .chunks(embed_dim)
+        .map(|p| p.iter().map(|x| x * x).sum::<f64>().sqrt())
+        .fold(0.0f64, f64::max);
+    let scale = if max_norm > 1e-12 {
+        init_scale / max_norm
+    } else {
+        init_scale
+    };
+
+    let mut pts = vec![0.0f64; n_points * ambient_dim];
+    for i in 0..n_points {
+        let src = &coords[i * embed_dim..(i + 1) * embed_dim];
+        let dst = &mut pts[i * ambient_dim..(i + 1) * ambient_dim];
+
+        if curvature < 0.0 {
+            // Hyperboloid layout: [time, x1, ..., x_d]
+            let spatial_norm_sq: f64 = src.iter().map(|&x| (x * scale).powi(2)).sum();
+            dst[0] = (radius * radius + spatial_norm_sq).sqrt();
+            for d in 0..embed_dim {
+                dst[1 + d] = src[d] * scale;
+            }
+        } else if curvature > 0.0 {
+            // Sphere layout: [x1, ..., x_d, x_{d+1}]
+            // Analogous to hyperboloid: place PCA coords in the first embed_dim slots,
+            // compute the last coord from the sphere constraint ||x||^2 = r^2.
+            // Requires ||src*scale|| <= r, guaranteed when init_scale <= radius.
+            let spatial_norm_sq: f64 = src.iter().map(|&x| (x * scale).powi(2)).sum();
+            let last_sq = radius * radius - spatial_norm_sq;
+            for d in 0..embed_dim {
+                dst[d] = src[d] * scale;
+            }
+            dst[embed_dim] = last_sq.max(0.0).sqrt();
+        } else {
+            // Euclidean: straight copy.
+            for d in 0..embed_dim {
+                dst[d] = src[d] * scale;
+            }
+        }
+    }
+    pts
+}

@@ -1,0 +1,124 @@
+<svg width="740" height="450" viewBox="0 0 740 450" xmlns="http://www.w3.org/2000/svg">
+<rect x="0" y="0" width="740" height="450" opacity="1" fill="#FFFFFF" stroke="none"/>
+<text x="370" y="5" dy="0.76em" text-anchor="middle" font-family="sans-serif" font-size="14.516129032258064" opacity="1" fill="#000000">
+R2 gain of the matched geometry over each mismatched one
+</text>
+<polyline fill="none" opacity="1" stroke="#D55E00" stroke-width="3" points="12,39 38,39 "/>
+<circle cx="25" cy="39" r="4" opacity="1" fill="#D55E00" stroke="none" stroke-width="1"/>
+<text x="46" y="39" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="12.096774193548388" opacity="1" fill="#000000">
+vs spherical
+</text>
+<polyline fill="none" opacity="1" stroke="#999999" stroke-width="3" points="258,39 284,39 "/>
+<circle cx="271" cy="39" r="4" opacity="1" fill="#999999" stroke="none" stroke-width="1"/>
+<text x="292" y="39" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="12.096774193548388" opacity="1" fill="#000000">
+vs euclidean
+</text>
+<polyline fill="none" opacity="1" stroke="#0072B2" stroke-width="3" points="504,39 530,39 "/>
+<circle cx="517" cy="39" r="4" opacity="1" fill="#0072B2" stroke="none" stroke-width="1"/>
+<text x="538" y="39" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="12.096774193548388" opacity="1" fill="#000000">
+vs hyperbolic
+</text>
+<text x="10" y="231" dy="0.76em" text-anchor="middle" font-family="sans-serif" font-size="11.290322580645162" opacity="1" fill="#1E1E1E" transform="rotate(270, 10, 231)">
+R2 gain (units of 1e-3)
+</text>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="74" y1="362" x2="729" y2="362"/>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="74" y1="323" x2="729" y2="323"/>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="74" y1="284" x2="729" y2="284"/>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="74" y1="245" x2="729" y2="245"/>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="74" y1="206" x2="729" y2="206"/>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="74" y1="167" x2="729" y2="167"/>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="74" y1="128" x2="729" y2="128"/>
+<line opacity="0.25" stroke="#787878" stroke-width="1" x1="74" y1="89" x2="729" y2="89"/>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="73,64 73,397 "/>
+<text x="64" y="362" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+-5.0
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="68,362 73,362 "/>
+<text x="64" y="323" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+0.0
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="68,323 73,323 "/>
+<text x="64" y="284" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+5.0
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="68,284 73,284 "/>
+<text x="64" y="245" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+10.0
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="68,245 73,245 "/>
+<text x="64" y="206" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+15.0
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="68,206 73,206 "/>
+<text x="64" y="167" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+20.0
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="68,167 73,167 "/>
+<text x="64" y="128" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+25.0
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="68,128 73,128 "/>
+<text x="64" y="89" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="10.483870967741936" opacity="1" fill="#3C3C3C">
+30.0
+</text>
+<polyline fill="none" opacity="1" stroke="#505050" stroke-width="1" points="68,89 73,89 "/>
+<rect x="237" y="64" width="164" height="333" opacity="1" fill="#F6F6F6" stroke="none"/>
+<rect x="565" y="64" width="164" height="333" opacity="1" fill="#F6F6F6" stroke="none"/>
+<polyline fill="none" opacity="1" stroke="#000000" stroke-width="1" points="74,323 729,323 "/>
+<rect x="95" y="109" width="55" height="214" opacity="0.9" fill="#D55E00" stroke="none"/>
+<rect x="259" y="323" width="55" height="29" opacity="0.9" fill="#999999" stroke="none"/>
+<rect x="422" y="323" width="56" height="20" opacity="0.9" fill="#D55E00" stroke="none"/>
+<rect x="586" y="312" width="56" height="11" opacity="0.9" fill="#D55E00" stroke="none"/>
+<text x="123" y="105" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#3C3C3C" transform="rotate(270, 123, 105)">
++27.5
+</text>
+<text x="286" y="356" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#3C3C3C" transform="rotate(270, 286, 356)">
+-3.70
+</text>
+<text x="450" y="347" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#3C3C3C" transform="rotate(270, 450, 347)">
+-2.61
+</text>
+<text x="614" y="308" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#3C3C3C" transform="rotate(270, 614, 308)">
++1.44
+</text>
+<rect x="160" y="323" width="56" height="30" opacity="0.9" fill="#0072B2" stroke="none"/>
+<rect x="324" y="317" width="56" height="6" opacity="0.9" fill="#0072B2" stroke="none"/>
+<rect x="488" y="323" width="55" height="0" opacity="0.9" fill="#999999" stroke="none"/>
+<rect x="652" y="269" width="55" height="54" opacity="0.9" fill="#999999" stroke="none"/>
+<text x="188" y="357" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#3C3C3C" transform="rotate(270, 188, 357)">
+-3.90
+</text>
+<text x="352" y="313" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#3C3C3C" transform="rotate(270, 352, 313)">
++0.72
+</text>
+<text x="516" y="327" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#3C3C3C" transform="rotate(270, 516, 327)">
+-0.01
+</text>
+<text x="679" y="265" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#3C3C3C" transform="rotate(270, 679, 265)">
++6.90
+</text>
+<text x="156" y="420" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="11.290322580645162" opacity="1" fill="#000000">
+grid
+</text>
+<text x="156" y="437" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#999999">
+matched: euc
+</text>
+<text x="320" y="420" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="11.290322580645162" opacity="1" fill="#000000">
+sphere
+</text>
+<text x="320" y="437" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#D55E00">
+matched: sph
+</text>
+<text x="484" y="420" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="11.290322580645162" opacity="1" fill="#000000">
+tree
+</text>
+<text x="484" y="437" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#0072B2">
+matched: hyp
+</text>
+<text x="648" y="420" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="11.290322580645162" opacity="1" fill="#000000">
+hyp. shells
+</text>
+<text x="648" y="437" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#0072B2">
+matched: hyp
+</text>
+</svg>

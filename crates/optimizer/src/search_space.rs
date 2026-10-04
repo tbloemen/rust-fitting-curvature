@@ -1,0 +1,551 @@
+use fitting_core::cast::{count_to_f64, to_usize};
+use fitting_core::config::{
+    InitMethod, ScalingLossType, TrainingConfig, SWEEP_EARLY_EXAGGERATION_ITERATIONS,
+    SWEEP_N_ITERATIONS,
+};
+use fitting_core::matrices::get_default_init_scale;
+use fitting_core::synthetic_data::Rng;
+use serde::Deserialize;
+use std::fmt;
+use std::sync::LazyLock;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OptimizeDirection {
+    Maximize,
+    Minimize,
+}
+
+/// The registry states a metric's own orientation; `OptimizeDirection` states
+/// which way *this run* optimises. They coincide for every current metric, but they
+/// are different questions — a run could legitimately minimise a maximised
+/// metric — so the conversion is explicit rather than the two being one type.
+impl From<fitting_core::metrics::Direction> for OptimizeDirection {
+    fn from(d: fitting_core::metrics::Direction) -> Self {
+        match d {
+            fitting_core::metrics::Direction::Maximize => OptimizeDirection::Maximize,
+            fitting_core::metrics::Direction::Minimize => OptimizeDirection::Minimize,
+        }
+    }
+}
+
+impl fmt::Display for OptimizeDirection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OptimizeDirection::Maximize => write!(f, "maximize"),
+            OptimizeDirection::Minimize => write!(f, "minimize"),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct ParamBoundsEntry {
+    name: String,
+    min: f64,
+    max: f64,
+    log: bool,
+}
+
+static PARAM_BOUNDS: LazyLock<Vec<ParamBoundsEntry>> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../../../config/params.json"))
+        .expect("config/params.json must be valid JSON")
+});
+
+/// Returns `(min, max, log_scale)` for a named parameter from `config/params.json`.
+pub fn param_bounds(name: &str) -> (f64, f64, bool) {
+    PARAM_BOUNDS.iter().find(|b| b.name == name).map_or_else(
+        || panic!("unknown param: {name}"),
+        |b| (b.min, b.max, b.log),
+    )
+}
+
+// ─── ParamSpec ────────────────────────────────────────────────────────────────
+
+/// Whether a hyperparameter is held fixed or included in the BO search space.
+#[derive(Debug, Clone)]
+pub enum ParamSpec {
+    Fixed(f64),
+    Optimize { lo: f64, hi: f64, log_scale: bool },
+}
+
+impl ParamSpec {
+    /// Sample a concrete value. Returns the fixed value for `Fixed`; draws
+    /// uniformly (log or linear) for `Optimize`.
+    pub fn sample(&self, rng: &mut Rng) -> f64 {
+        match self {
+            ParamSpec::Fixed(v) => *v,
+            ParamSpec::Optimize {
+                lo,
+                hi,
+                log_scale: true,
+            } => (rng.uniform() * (hi.ln() - lo.ln()) + lo.ln())
+                .exp()
+                .clamp(*lo, *hi),
+            ParamSpec::Optimize {
+                lo,
+                hi,
+                log_scale: false,
+            } => (rng.uniform() * (hi - lo) + lo).clamp(*lo, *hi),
+        }
+    }
+
+    /// Like `sample`, but wraps the result in `Fixed`. Used by `HyperParams::sample`.
+    pub fn sample_fixed(&self, rng: &mut Rng) -> Self {
+        ParamSpec::Fixed(self.sample(rng))
+    }
+
+    /// Perturb a value. No-op (returns fixed value) for `Fixed`.
+    pub fn mutate(&self, current: f64, rng: &mut Rng) -> f64 {
+        match self {
+            ParamSpec::Fixed(v) => *v,
+            ParamSpec::Optimize {
+                lo,
+                hi,
+                log_scale: true,
+            } => (current * 2.0_f64.powf((rng.uniform() - 0.5) * 1.0)).clamp(*lo, *hi),
+            ParamSpec::Optimize {
+                lo,
+                hi,
+                log_scale: false,
+            } => (current + (rng.uniform() - 0.5) * (hi - lo) * 0.25).clamp(*lo, *hi),
+        }
+    }
+
+    pub fn is_optimized(&self) -> bool {
+        matches!(self, ParamSpec::Optimize { .. })
+    }
+
+    /// Extract the concrete value. Panics on `Optimize` — call `sample` first.
+    pub fn value(&self) -> f64 {
+        match self {
+            ParamSpec::Fixed(v) => *v,
+            ParamSpec::Optimize { .. } => {
+                panic!("ParamSpec::value() called on Optimize — sample the HyperParams first")
+            }
+        }
+    }
+}
+
+// ─── TrialConfig ──────────────────────────────────────────────────────────────
+
+/// Full hyperparameter specification for one experiment.
+///
+/// Each numeric field is either `Fixed(v)` (held constant) or `Optimize{lo,hi}` (in the
+/// BO search space).  A fully-sampled `HyperParams` (all fields `Fixed`) serves directly
+/// as the trial config.
+///
+/// `scaling_loss_type` is always `MeanDistance` and `init_method` is always `Pca`
+/// — both are hardcoded in `to_training_config`.
+///
+/// Canonical field order (also the GP input vector order):
+///   `learning_rate`, `perplexity_ratio`, `momentum_main`, `momentum_early`,
+///   `centering_weight`, `global_loss_weight`, `norm_loss_weight`,
+///   `early_exaggeration_factor`, `n_iterations`, `early_exaggeration_iterations`,
+///   `curvature_magnitude`, `init_scale`, `embed_dim`
+#[derive(Debug, Clone)]
+pub struct TrialConfig {
+    pub learning_rate: ParamSpec,
+    /// Fraction of `n_points`; converted to absolute perplexity in `to_training_config`.
+    pub perplexity_ratio: ParamSpec,
+    pub momentum_main: ParamSpec,
+    pub momentum_early: ParamSpec,
+    pub centering_weight: ParamSpec,
+    pub global_loss_weight: ParamSpec,
+    pub norm_loss_weight: ParamSpec,
+    pub early_exaggeration_factor: ParamSpec,
+    pub n_iterations: ParamSpec,
+    pub early_exaggeration_iterations: ParamSpec,
+    /// Unsigned magnitude; sign is supplied by the caller of `to_training_config`.
+    pub curvature_magnitude: ParamSpec,
+    pub init_scale: ParamSpec,
+    pub embed_dim: ParamSpec,
+    /// Which scaling loss the embedding uses. Not optimised — set per experiment
+    /// variant. Default `MeanDistance`; `Rms` pins `R_max` ≈ 1 (gauge-fixing).
+    pub scaling_loss_type: ScalingLossType,
+}
+
+impl TrialConfig {
+    /// Number of `Optimize` (free) parameters — the dimensionality seen by the GP.
+    pub fn free_param_count(&self) -> usize {
+        self.specs().iter().filter(|s| s.is_optimized()).count()
+    }
+
+    /// All specs in canonical order (mirrors `to_gp_input` / `gp_param_names`).
+    fn specs(&self) -> [&ParamSpec; 13] {
+        [
+            &self.learning_rate,
+            &self.perplexity_ratio,
+            &self.momentum_main,
+            &self.momentum_early,
+            &self.centering_weight,
+            &self.global_loss_weight,
+            &self.norm_loss_weight,
+            &self.early_exaggeration_factor,
+            &self.n_iterations,
+            &self.early_exaggeration_iterations,
+            &self.curvature_magnitude,
+            &self.init_scale,
+            &self.embed_dim,
+        ]
+    }
+
+    /// Sample a new `HyperParams` where every `Optimize` field becomes `Fixed(sampled)`.
+    /// This is the "trial config" — pass the result to `to_training_config`.
+    pub fn sample(&self, rng: &mut Rng) -> Self {
+        Self {
+            learning_rate: self.learning_rate.sample_fixed(rng),
+            perplexity_ratio: self.perplexity_ratio.sample_fixed(rng),
+            momentum_main: self.momentum_main.sample_fixed(rng),
+            momentum_early: self.momentum_early.sample_fixed(rng),
+            centering_weight: self.centering_weight.sample_fixed(rng),
+            global_loss_weight: self.global_loss_weight.sample_fixed(rng),
+            norm_loss_weight: self.norm_loss_weight.sample_fixed(rng),
+            early_exaggeration_factor: self.early_exaggeration_factor.sample_fixed(rng),
+            n_iterations: self.n_iterations.sample_fixed(rng),
+            early_exaggeration_iterations: self.early_exaggeration_iterations.sample_fixed(rng),
+            curvature_magnitude: self.curvature_magnitude.sample_fixed(rng),
+            init_scale: self.init_scale.sample_fixed(rng),
+            embed_dim: self.embed_dim.sample_fixed(rng),
+            scaling_loss_type: self.scaling_loss_type,
+        }
+    }
+
+    /// Perturb a sampled `HyperParams` using this spec's bounds.
+    /// Fixed fields in the spec are left unchanged; Optimize fields are nudged.
+    pub fn mutate(&self, current: &Self, rng: &mut Rng) -> Self {
+        macro_rules! maybe_mutate {
+            ($field:ident) => {
+                ParamSpec::Fixed(if rng.uniform() < 0.3 {
+                    self.$field.mutate(current.$field.value(), rng)
+                } else {
+                    current.$field.value()
+                })
+            };
+        }
+        Self {
+            learning_rate: maybe_mutate!(learning_rate),
+            perplexity_ratio: maybe_mutate!(perplexity_ratio),
+            momentum_main: maybe_mutate!(momentum_main),
+            momentum_early: maybe_mutate!(momentum_early),
+            centering_weight: maybe_mutate!(centering_weight),
+            global_loss_weight: maybe_mutate!(global_loss_weight),
+            norm_loss_weight: maybe_mutate!(norm_loss_weight),
+            early_exaggeration_factor: maybe_mutate!(early_exaggeration_factor),
+            n_iterations: maybe_mutate!(n_iterations),
+            early_exaggeration_iterations: maybe_mutate!(early_exaggeration_iterations),
+            curvature_magnitude: maybe_mutate!(curvature_magnitude),
+            init_scale: maybe_mutate!(init_scale),
+            embed_dim: maybe_mutate!(embed_dim),
+            scaling_loss_type: current.scaling_loss_type,
+        }
+    }
+
+    /// Build a `TrainingConfig` from a fully-sampled `HyperParams` (all fields `Fixed`).
+    ///
+    /// `curvature_sign`: -1.0 for hyperbolic, +1.0 for spherical, 0.0 for Euclidean.
+    pub fn to_training_config(
+        &self,
+        n_points: usize,
+        curvature_sign: f64,
+        seed: u64,
+    ) -> TrainingConfig {
+        let perplexity = (self.perplexity_ratio.value() * count_to_f64(n_points)).max(2.0);
+        TrainingConfig {
+            n_points,
+            embed_dim: to_usize(self.embed_dim.value()),
+            curvature: curvature_sign * self.curvature_magnitude.value(),
+            perplexity,
+            n_iterations: to_usize(self.n_iterations.value()),
+            early_exaggeration_iterations: to_usize(self.early_exaggeration_iterations.value()),
+            early_exaggeration_factor: self.early_exaggeration_factor.value(),
+            learning_rate: self.learning_rate.value(),
+            momentum_early: self.momentum_early.value(),
+            momentum_main: self.momentum_main.value(),
+            init_method: InitMethod::Pca,
+            init_scale: self.init_scale.value(),
+            centering_weight: self.centering_weight.value(),
+            scaling_loss_type: self.scaling_loss_type,
+            global_loss_weight: self.global_loss_weight.value(),
+            norm_loss_weight: self.norm_loss_weight.value(),
+            seed,
+        }
+    }
+
+    // ─── Named constructors (experiment variants) ────────────────────────────
+
+    fn base() -> Self {
+        let (lr_lo, lr_hi, lr_log) = param_bounds("learning_rate");
+        let (perp_lo, perp_hi, perp_log) = param_bounds("perplexity_ratio");
+        let (eef_lo, eef_hi, eef_log) = param_bounds("early_exaggeration_factor");
+        Self {
+            learning_rate: ParamSpec::Optimize {
+                lo: lr_lo,
+                hi: lr_hi,
+                log_scale: lr_log,
+            },
+            perplexity_ratio: ParamSpec::Optimize {
+                lo: perp_lo,
+                hi: perp_hi,
+                log_scale: perp_log,
+            },
+            momentum_main: ParamSpec::Fixed(0.8),
+            momentum_early: ParamSpec::Fixed(0.5),
+            centering_weight: ParamSpec::Fixed(0.0),
+            global_loss_weight: ParamSpec::Fixed(0.0),
+            norm_loss_weight: ParamSpec::Fixed(0.0),
+            early_exaggeration_factor: ParamSpec::Optimize {
+                lo: eef_lo,
+                hi: eef_hi,
+                log_scale: eef_log,
+            },
+            n_iterations: ParamSpec::Fixed(count_to_f64(SWEEP_N_ITERATIONS)),
+            early_exaggeration_iterations: ParamSpec::Fixed(count_to_f64(
+                SWEEP_EARLY_EXAGGERATION_ITERATIONS,
+            )),
+            curvature_magnitude: ParamSpec::Fixed(0.0),
+            init_scale: ParamSpec::Fixed(get_default_init_scale(2)),
+            embed_dim: ParamSpec::Fixed(2.0),
+            scaling_loss_type: ScalingLossType::MeanDistance,
+        }
+    }
+
+    /// All three loss weights fixed to 0. Only lr, perp, eef are optimized.
+    pub fn all_off() -> Self {
+        Self::base()
+    }
+
+    /// Gauge-fixed setup for κ = |`K|·R²_max` experiments.
+    ///
+    /// Pins `R_max` ≈ 1 via the RMS scaling loss with a fixed, strong weight so
+    /// the `curvature_magnitude` knob can be interpreted directly as the
+    /// dimensionless invariant κ = |`K|·R²_max`.  Useful for validating that
+    /// post-hoc κ values measured in unanchored runs correspond to a
+    /// controllable hyperparameter — i.e. that κ is a reproducible setting,
+    /// not just a descriptive measurement.
+    pub fn rms_anchored() -> Self {
+        Self {
+            centering_weight: ParamSpec::Fixed(10.0),
+            scaling_loss_type: ScalingLossType::Rms,
+            ..Self::base()
+        }
+    }
+
+    /// Only `centering_weight` (`MeanDistance` scaling loss weight) is optimized.
+    pub fn centering_only() -> Self {
+        let (lo, hi, log_scale) = param_bounds("centering_weight");
+        Self {
+            centering_weight: ParamSpec::Optimize { lo, hi, log_scale },
+            ..Self::base()
+        }
+    }
+
+    /// Only `global_loss_weight` is optimized.
+    pub fn global_only() -> Self {
+        let (lo, hi, log_scale) = param_bounds("global_loss_weight");
+        Self {
+            global_loss_weight: ParamSpec::Optimize { lo, hi, log_scale },
+            ..Self::base()
+        }
+    }
+
+    /// Only `norm_loss_weight` is optimized.
+    pub fn norm_only() -> Self {
+        let (lo, hi, log_scale) = param_bounds("norm_loss_weight");
+        Self {
+            norm_loss_weight: ParamSpec::Optimize { lo, hi, log_scale },
+            ..Self::base()
+        }
+    }
+
+    /// All three loss weights are optimized alongside lr, perp, eef.
+    pub fn all_free() -> Self {
+        let (cen_lo, cen_hi, cen_log) = param_bounds("centering_weight");
+        let (glw_lo, glw_hi, glw_log) = param_bounds("global_loss_weight");
+        let (nlw_lo, nlw_hi, nlw_log) = param_bounds("norm_loss_weight");
+        Self {
+            centering_weight: ParamSpec::Optimize {
+                lo: cen_lo,
+                hi: cen_hi,
+                log_scale: cen_log,
+            },
+            global_loss_weight: ParamSpec::Optimize {
+                lo: glw_lo,
+                hi: glw_hi,
+                log_scale: glw_log,
+            },
+            norm_loss_weight: ParamSpec::Optimize {
+                lo: nlw_lo,
+                hi: nlw_hi,
+                log_scale: nlw_log,
+            },
+            ..Self::base()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fitting_core::synthetic_data::Rng;
+    use std::cmp::Ordering;
+
+    fn test_space() -> TrialConfig {
+        let mut hp = TrialConfig::all_free();
+        hp.curvature_magnitude = ParamSpec::Optimize {
+            lo: 0.001,
+            hi: 25.0,
+            log_scale: true,
+        };
+        hp
+    }
+
+    fn curvature_spec() -> ParamSpec {
+        ParamSpec::Optimize {
+            lo: 0.001,
+            hi: 25.0,
+            log_scale: true,
+        }
+    }
+
+    #[test]
+    fn sample_curvature_magnitude_is_within_bounds() {
+        let spec = curvature_spec();
+        let mut rng = Rng::new(42);
+        for _ in 0..1000 {
+            let v = spec.sample(&mut rng);
+            assert!(
+                (0.001..=25.0).contains(&v),
+                "sample {v} out of [0.001, 25.0]"
+            );
+        }
+    }
+
+    #[test]
+    fn sample_curvature_magnitude_is_varied() {
+        let spec = curvature_spec();
+        let mut rng = Rng::new(42);
+        let samples: Vec<f64> = (0..200).map(|_| spec.sample(&mut rng)).collect();
+        let min = samples.iter().copied().fold(f64::MAX, f64::min);
+        let max = samples.iter().copied().fold(f64::MIN, f64::max);
+        assert!(
+            max / min > 100.0,
+            "samples not varied enough: min={min:.4}, max={max:.4}, ratio={:.1}",
+            max / min
+        );
+        let at_max = samples.iter().filter(|&&v| v >= 24.9).count();
+        assert!(at_max < 20, "{at_max}/200 samples were at the upper bound");
+    }
+
+    #[test]
+    fn mutate_curvature_magnitude_is_within_bounds() {
+        let spec = curvature_spec();
+        let mut rng = Rng::new(99);
+        for start in [0.001, 0.1, 1.0, 10.0, 25.0] {
+            for _ in 0..200 {
+                let v = spec.mutate(start, &mut rng);
+                assert!(
+                    (0.001..=25.0).contains(&v),
+                    "mutate({start}) → {v} out of bounds"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mutate_curvature_magnitude_single_step_range() {
+        let spec = curvature_spec();
+        let mut rng = Rng::new(7);
+        for &start in &[0.01f64, 0.1, 1.0, 5.0, 10.0] {
+            for _ in 0..500 {
+                let v = spec.mutate(start, &mut rng);
+                let ratio = if v > start { v / start } else { start / v };
+                assert!(
+                    ratio <= 2.0_f64.sqrt() + 1e-9,
+                    "single step too large from {start}: {v}, ratio={ratio:.3}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mutate_curvature_magnitude_random_walk_explores_range() {
+        let spec = curvature_spec();
+        let mut rng = Rng::new(7);
+        let mut current = (0.001_f64 * 25.0_f64).sqrt();
+        let mut min_seen = current;
+        let mut max_seen = current;
+        for _ in 0..200 {
+            current = spec.mutate(current, &mut rng);
+            if current < min_seen {
+                min_seen = current;
+            }
+            if current > max_seen {
+                max_seen = current;
+            }
+        }
+        assert!(
+            max_seen / min_seen > 10.0,
+            "random walk not varied enough: min={min_seen:.4}, max={max_seen:.4}"
+        );
+    }
+
+    #[test]
+    fn mutate_curvature_magnitude_can_decrease_from_upper_bound() {
+        let spec = curvature_spec();
+        let mut rng = Rng::new(13);
+        let mut current = 25.0_f64;
+        for _ in 0..50 {
+            current = spec.mutate(current, &mut rng);
+        }
+        assert!(
+            current < 25.0 * 0.9,
+            "walk stuck at upper bound after 50 steps: {current:.3}"
+        );
+    }
+
+    #[test]
+    fn mutate_from_zero_clamps_to_lo() {
+        // Multiplicative mutation of 0.0 would stay at 0; clamp brings it to lo.
+        let spec = curvature_spec();
+        let mut rng = Rng::new(1);
+        for _ in 0..50 {
+            let v = spec.mutate(0.0, &mut rng);
+            assert_eq!(
+                v.partial_cmp(&0.001),
+                Some(Ordering::Equal),
+                "mutate(0.0) should clamp to lo=0.001"
+            );
+        }
+    }
+
+    #[test]
+    fn hyperparams_sample_produces_all_fixed() {
+        let spec = TrialConfig::all_free();
+        let mut rng = Rng::new(42);
+        let sampled = spec.sample(&mut rng);
+        // Every field in a sampled HP must be Fixed.
+        assert!(!sampled.learning_rate.is_optimized());
+        assert!(!sampled.perplexity_ratio.is_optimized());
+        assert!(!sampled.centering_weight.is_optimized());
+        assert!(!sampled.curvature_magnitude.is_optimized());
+    }
+
+    #[test]
+    fn hyperparams_to_training_config_basic() {
+        let mut hp = TrialConfig::all_free().sample(&mut Rng::new(7));
+        hp.curvature_magnitude = ParamSpec::Fixed(2.5);
+        let tc = hp.to_training_config(500, -1.0, 99);
+        assert_eq!(tc.n_points, 500);
+        assert!(
+            tc.curvature < 0.0,
+            "hyperbolic curvature should be negative"
+        );
+        assert!((tc.curvature / -2.5 - 1.0).abs() < 1e-12);
+        assert_eq!(tc.seed, 99);
+    }
+
+    #[test]
+    fn test_space_curvature_is_optimized() {
+        let space = test_space();
+        assert!(space.curvature_magnitude.is_optimized());
+    }
+}
